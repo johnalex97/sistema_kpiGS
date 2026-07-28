@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Frontend builds
+dist/
+
+# TypeScript and Vite generated files
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Tests and tooling
+coverage/
+.eslintcache
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
