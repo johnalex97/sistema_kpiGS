@@ -1,0 +1,790 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UsuarioEstado {
+  PENDING  @map("pending")
+  ACTIVE   @map("active")
+  BLOCKED  @map("blocked")
+  INACTIVE @map("inactive")
+
+  @@map("usuario_estado")
+}
+
+enum EstadoTecnico {
+  AVAILABLE @map("available")
+  BUSY      @map("busy")
+  ON_ROUTE  @map("on_route")
+  INACTIVE  @map("inactive")
+
+  @@map("estado_tecnico")
+}
+
+enum PrioridadOrden {
+  LOW      @map("low")
+  MEDIUM   @map("medium")
+  HIGH     @map("high")
+  CRITICAL @map("critical")
+
+  @@map("prioridad_orden")
+}
+
+enum EstadoOrden {
+  PENDING     @map("pending")
+  ASSIGNED    @map("assigned")
+  ON_ROUTE    @map("on_route")
+  IN_PROGRESS @map("in_progress")
+  PAUSED      @map("paused")
+  COMPLETED   @map("completed")
+  CANCELLED   @map("cancelled")
+
+  @@map("estado_orden")
+}
+
+enum RolOrdenTecnico {
+  PRIMARY @map("primary")
+  SUPPORT @map("support")
+
+  @@map("rol_orden_tecnico")
+}
+
+enum TipoRelacionOrden {
+  RECURRENCE  @map("recurrence")
+  FOLLOW_UP   @map("follow_up")
+  REPLACEMENT @map("replacement")
+  RELATED     @map("related")
+
+  @@map("tipo_relacion_orden")
+}
+
+enum EstadoActividad {
+  PENDING     @map("pending")
+  IN_PROGRESS @map("in_progress")
+  PAUSED      @map("paused")
+  COMPLETED   @map("completed")
+  CANCELLED   @map("cancelled")
+
+  @@map("estado_actividad")
+}
+
+enum RolActividadTecnico {
+  RESPONSIBLE @map("responsible")
+  PARTICIPANT @map("participant")
+
+  @@map("rol_actividad_tecnico")
+}
+
+enum NivelAccesoEvidencia {
+  INTERNAL   @map("internal")
+  TECHNICIAN @map("technician")
+  CLIENT     @map("client")
+
+  @@map("nivel_acceso_evidencia")
+}
+
+enum EstadoReincidencia {
+  OPEN       @map("open")
+  ANALYSIS   @map("analysis")
+  CORRECTION @map("correction")
+  CLOSED     @map("closed")
+
+  @@map("estado_reincidencia")
+}
+
+enum ImpactoReincidencia {
+  LOW    @map("low")
+  MEDIUM @map("medium")
+  HIGH   @map("high")
+
+  @@map("impacto_reincidencia")
+}
+
+enum ResponsabilidadReincidencia {
+  TECHNICAL_WORK @map("technical_work")
+  EQUIPMENT      @map("equipment")
+  CLIENT         @map("client")
+  THIRD_PARTY    @map("third_party")
+  UNDETERMINED   @map("undetermined")
+
+  @@map("responsabilidad_reincidencia")
+}
+
+enum ParticipacionReincidencia {
+  ORIGINAL_RESPONSIBLE   @map("original_responsible")
+  ORIGINAL_PARTICIPANT   @map("original_participant")
+  CORRECTION_PARTICIPANT @map("correction_participant")
+
+  @@map("participacion_reincidencia")
+}
+
+model Usuario {
+  id                  String        @id @default(uuid()) @db.Uuid
+  email               String        @unique @db.VarChar(254)
+  displayName         String        @map("display_name") @db.VarChar(160)
+  status              UsuarioEstado @default(PENDING)
+  passwordHash        String?       @map("password_hash") @db.VarChar(255)
+  failedLoginAttempts Int           @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime?     @map("locked_until") @db.Timestamptz(3)
+  lastLoginAt         DateTime?     @map("last_login_at") @db.Timestamptz(3)
+  mustChangePassword  Boolean       @default(true) @map("must_change_password")
+  passwordChangedAt   DateTime?     @map("password_changed_at") @db.Timestamptz(3)
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt           DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  version             Int           @default(1)
+
+  roles                  UsuarioRol[]
+  tecnico                Tecnico?
+  asignacionesRealizadas OrdenTecnico[]     @relation("OrdenAsignadaPor")
+  historialesOrden       HistorialOrden[]
+  relacionesOrdenCreadas OrdenRelacionada[]
+  pausasRegistradas      PausaActividad[]
+  evidenciasSubidas      Evidencia[]
+  configuracionesKpi     ConfiguracionKPI[]
+  metasTecnicoCreadas    MetaTecnico[]
+  auditorias             Auditoria[]
+  notificaciones         Notificacion[]
+  sesiones               Sesion[]
+
+  @@index([status, deletedAt])
+  @@map("usuario")
+}
+
+model Sesion {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt DateTime  @map("last_seen_at") @db.Timestamptz(3)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  ipAddress  String?   @map("ip_address") @db.VarChar(45)
+  userAgent  String?   @map("user_agent") @db.VarChar(500)
+
+  usuario Usuario @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sesion")
+}
+
+model Rol {
+  id          String    @id @default(uuid()) @db.Uuid
+  code        String    @unique @db.VarChar(50)
+  name        String    @db.VarChar(100)
+  description String?   @db.VarChar(500)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  users       UsuarioRol[]
+  permissions RolPermiso[]
+
+  @@index([isActive, deletedAt])
+  @@map("rol")
+}
+
+model Permiso {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(100)
+  resource    String   @db.VarChar(80)
+  action      String   @db.VarChar(50)
+  description String?  @db.VarChar(500)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  roles RolPermiso[]
+
+  @@unique([resource, action])
+  @@map("permiso")
+}
+
+model UsuarioRol {
+  usuarioId  String   @map("usuario_id") @db.Uuid
+  rolId      String   @map("rol_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  rol     Rol     @relation(fields: [rolId], references: [id], onDelete: Restrict)
+
+  @@id([usuarioId, rolId])
+  @@index([rolId])
+  @@map("usuario_rol")
+}
+
+model RolPermiso {
+  rolId     String @map("rol_id") @db.Uuid
+  permisoId String @map("permiso_id") @db.Uuid
+
+  rol     Rol     @relation(fields: [rolId], references: [id], onDelete: Cascade)
+  permiso Permiso @relation(fields: [permisoId], references: [id], onDelete: Restrict)
+
+  @@id([rolId, permisoId])
+  @@index([permisoId])
+  @@map("rol_permiso")
+}
+
+model Tecnico {
+  id        String        @id @default(uuid()) @db.Uuid
+  code      String        @unique @db.VarChar(30)
+  fullName  String        @map("full_name") @db.VarChar(160)
+  specialty String?       @db.VarChar(120)
+  workPhone String?       @map("work_phone") @db.VarChar(30)
+  workEmail String?       @map("work_email") @db.VarChar(254)
+  status    EstadoTecnico @default(AVAILABLE)
+  hiredOn   DateTime?     @map("hired_on") @db.Date
+  leftOn    DateTime?     @map("left_on") @db.Date
+  userId    String?       @unique @map("user_id") @db.Uuid
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  version   Int           @default(1)
+
+  usuario       Usuario?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  ordenes       OrdenTecnico[]
+  actividades   ActividadTecnico[]
+  reincidencias ReincidenciaTecnico[]
+  metas         MetaTecnico[]
+  resultadosKpi ResultadoKPI[]
+
+  @@index([status, deletedAt])
+  @@map("tecnico")
+}
+
+model Cliente {
+  id        String    @id @default(uuid()) @db.Uuid
+  code      String    @unique @db.VarChar(30)
+  tradeName String    @map("trade_name") @db.VarChar(180)
+  legalName String?   @map("legal_name") @db.VarChar(200)
+  taxId     String?   @map("tax_id") @db.VarChar(50)
+  phone     String?   @db.VarChar(30)
+  email     String?   @db.VarChar(254)
+  notes     String?   @db.Text
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  version   Int       @default(1)
+
+  sucursales SucursalCliente[]
+  contactos  ContactoCliente[]
+
+  @@index([isActive, deletedAt])
+  @@map("cliente")
+}
+
+model SucursalCliente {
+  id                String    @id @default(uuid()) @db.Uuid
+  clienteId         String    @map("cliente_id") @db.Uuid
+  code              String    @db.VarChar(30)
+  name              String    @db.VarChar(160)
+  address           String    @db.VarChar(300)
+  city              String?   @db.VarChar(100)
+  region            String?   @db.VarChar(100)
+  country           String    @default("HN") @db.VarChar(2)
+  latitude          Decimal?  @db.Decimal(9, 6)
+  longitude         Decimal?  @db.Decimal(9, 6)
+  locationReference String?   @map("location_reference") @db.VarChar(300)
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  cliente     Cliente           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  contactos   ContactoCliente[]
+  ordenes     OrdenTrabajo[]
+  actividades Actividad[]
+
+  @@unique([clienteId, code])
+  @@index([clienteId, isActive, deletedAt])
+  @@map("sucursal_cliente")
+}
+
+model ContactoCliente {
+  id         String    @id @default(uuid()) @db.Uuid
+  clienteId  String    @map("cliente_id") @db.Uuid
+  sucursalId String?   @map("sucursal_id") @db.Uuid
+  fullName   String    @map("full_name") @db.VarChar(160)
+  position   String?   @db.VarChar(120)
+  phone      String?   @db.VarChar(30)
+  email      String?   @db.VarChar(254)
+  isPrimary  Boolean   @default(false) @map("is_primary")
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  cliente  Cliente          @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  sucursal SucursalCliente? @relation(fields: [sucursalId], references: [id], onDelete: SetNull)
+
+  @@index([clienteId, isActive, deletedAt])
+  @@index([sucursalId])
+  @@map("contacto_cliente")
+}
+
+model TipoServicio {
+  id           String    @id @default(uuid()) @db.Uuid
+  code         String    @unique @db.VarChar(50)
+  name         String    @db.VarChar(120)
+  description  String?   @db.VarChar(500)
+  isActive     Boolean   @default(true) @map("is_active")
+  displayOrder Int       @default(0) @map("display_order")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  ordenes OrdenTrabajo[]
+
+  @@index([isActive, displayOrder])
+  @@map("tipo_servicio")
+}
+
+model TipoActividad {
+  id           String    @id @default(uuid()) @db.Uuid
+  code         String    @unique @db.VarChar(50)
+  name         String    @db.VarChar(120)
+  description  String?   @db.VarChar(500)
+  isActive     Boolean   @default(true) @map("is_active")
+  displayOrder Int       @default(0) @map("display_order")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  actividades Actividad[]
+
+  @@index([isActive, displayOrder])
+  @@map("tipo_actividad")
+}
+
+model OrdenTrabajo {
+  id                 String         @id @default(uuid()) @db.Uuid
+  orderNumber        String         @unique @map("order_number") @db.VarChar(40)
+  sucursalId         String         @map("sucursal_id") @db.Uuid
+  tipoServicioId     String         @map("tipo_servicio_id") @db.Uuid
+  priority           PrioridadOrden @default(MEDIUM)
+  status             EstadoOrden    @default(PENDING)
+  reportedProblem    String         @map("reported_problem") @db.Text
+  description        String?        @db.Text
+  scheduledFor       DateTime?      @map("scheduled_for") @db.Timestamptz(3)
+  startedAt          DateTime?      @map("started_at") @db.Timestamptz(3)
+  endedAt            DateTime?      @map("ended_at") @db.Timestamptz(3)
+  diagnosis          String?        @db.Text
+  result             String?        @db.Text
+  cancellationReason String?        @map("cancellation_reason") @db.Text
+  estimatedMinutes   Int?           @map("estimated_minutes")
+  totalMinutes       Int?           @map("total_minutes")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt          DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  version            Int            @default(1)
+
+  sucursal                SucursalCliente     @relation(fields: [sucursalId], references: [id], onDelete: Restrict)
+  tipoServicio            TipoServicio        @relation(fields: [tipoServicioId], references: [id], onDelete: Restrict)
+  tecnicos                OrdenTecnico[]
+  historial               HistorialOrden[]
+  relacionesOriginales    OrdenRelacionada[]  @relation("OrdenOriginal")
+  relacionesPosteriores   OrdenRelacionada[]  @relation("OrdenRelacionada")
+  actividades             Actividad[]
+  materiales              MaterialUtilizado[]
+  evidencias              Evidencia[]
+  reincidenciasOriginales Reincidencia[]
+  visitasReincidencia     ReincidenciaOrden[]
+
+  @@index([sucursalId, status])
+  @@index([tipoServicioId])
+  @@index([scheduledFor])
+  @@index([priority, status])
+  @@map("orden_trabajo")
+}
+
+model OrdenTecnico {
+  id           String          @id @default(uuid()) @db.Uuid
+  ordenId      String          @map("orden_id") @db.Uuid
+  tecnicoId    String          @map("tecnico_id") @db.Uuid
+  role         RolOrdenTecnico
+  assignedAt   DateTime        @default(now()) @map("assigned_at") @db.Timestamptz(3)
+  assignedById String?         @map("assigned_by_id") @db.Uuid
+  unassignedAt DateTime?       @map("unassigned_at") @db.Timestamptz(3)
+
+  orden      OrdenTrabajo @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  tecnico    Tecnico      @relation(fields: [tecnicoId], references: [id], onDelete: Restrict)
+  assignedBy Usuario?     @relation("OrdenAsignadaPor", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([ordenId, tecnicoId])
+  @@index([tecnicoId, unassignedAt])
+  @@index([assignedById])
+  @@map("orden_tecnico")
+}
+
+model HistorialOrden {
+  id             String       @id @default(uuid()) @db.Uuid
+  ordenId        String       @map("orden_id") @db.Uuid
+  previousStatus EstadoOrden? @map("previous_status")
+  newStatus      EstadoOrden? @map("new_status")
+  action         String       @db.VarChar(80)
+  comment        String?      @db.Text
+  userId         String?      @map("user_id") @db.Uuid
+  occurredAt     DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  requestId      String?      @map("request_id") @db.Uuid
+  metadata       Json?        @db.JsonB
+
+  orden   OrdenTrabajo @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  usuario Usuario?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([ordenId, occurredAt])
+  @@index([userId])
+  @@map("historial_orden")
+}
+
+model OrdenRelacionada {
+  id                 String            @id @default(uuid()) @db.Uuid
+  ordenOriginalId    String            @map("orden_original_id") @db.Uuid
+  ordenRelacionadaId String            @map("orden_relacionada_id") @db.Uuid
+  type               TipoRelacionOrden
+  reason             String?           @db.Text
+  createdById        String?           @map("created_by_id") @db.Uuid
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  ordenOriginal    OrdenTrabajo @relation("OrdenOriginal", fields: [ordenOriginalId], references: [id], onDelete: Restrict)
+  ordenRelacionada OrdenTrabajo @relation("OrdenRelacionada", fields: [ordenRelacionadaId], references: [id], onDelete: Restrict)
+  createdBy        Usuario?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([ordenOriginalId, ordenRelacionadaId, type])
+  @@index([ordenRelacionadaId])
+  @@index([createdById])
+  @@map("orden_relacionada")
+}
+
+model Actividad {
+  id                String          @id @default(uuid()) @db.Uuid
+  sucursalId        String          @map("sucursal_id") @db.Uuid
+  ordenId           String?         @map("orden_id") @db.Uuid
+  tipoActividadId   String          @map("tipo_actividad_id") @db.Uuid
+  status            EstadoActividad @default(PENDING)
+  description       String          @db.Text
+  observations      String?         @db.Text
+  result            String?         @db.Text
+  startedAt         DateTime?       @map("started_at") @db.Timestamptz(3)
+  endedAt           DateTime?       @map("ended_at") @db.Timestamptz(3)
+  pausedMinutes     Int             @default(0) @map("paused_minutes")
+  productiveMinutes Int?            @map("productive_minutes")
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt         DateTime?       @map("deleted_at") @db.Timestamptz(3)
+  version           Int             @default(1)
+
+  sucursal      SucursalCliente     @relation(fields: [sucursalId], references: [id], onDelete: Restrict)
+  orden         OrdenTrabajo?       @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  tipoActividad TipoActividad       @relation(fields: [tipoActividadId], references: [id], onDelete: Restrict)
+  tecnicos      ActividadTecnico[]
+  pausas        PausaActividad[]
+  materiales    MaterialUtilizado[]
+  evidencias    Evidencia[]
+
+  @@index([sucursalId, status])
+  @@index([ordenId])
+  @@index([tipoActividadId])
+  @@index([startedAt])
+  @@map("actividad")
+}
+
+model ActividadTecnico {
+  id                      String              @id @default(uuid()) @db.Uuid
+  actividadId             String              @map("actividad_id") @db.Uuid
+  tecnicoId               String              @map("tecnico_id") @db.Uuid
+  role                    RolActividadTecnico
+  participationPercentage Decimal             @default(100) @map("participation_percentage") @db.Decimal(5, 2)
+  startedAt               DateTime?           @map("started_at") @db.Timestamptz(3)
+  endedAt                 DateTime?           @map("ended_at") @db.Timestamptz(3)
+
+  actividad Actividad @relation(fields: [actividadId], references: [id], onDelete: Restrict)
+  tecnico   Tecnico   @relation(fields: [tecnicoId], references: [id], onDelete: Restrict)
+
+  @@unique([actividadId, tecnicoId])
+  @@index([tecnicoId])
+  @@map("actividad_tecnico")
+}
+
+model PausaActividad {
+  id          String    @id @default(uuid()) @db.Uuid
+  actividadId String    @map("actividad_id") @db.Uuid
+  startedAt   DateTime  @map("started_at") @db.Timestamptz(3)
+  endedAt     DateTime? @map("ended_at") @db.Timestamptz(3)
+  reason      String    @db.VarChar(500)
+  userId      String?   @map("user_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  actividad Actividad @relation(fields: [actividadId], references: [id], onDelete: Restrict)
+  usuario   Usuario?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([actividadId, startedAt])
+  @@index([userId])
+  @@map("pausa_actividad")
+}
+
+model Material {
+  id            String    @id @default(uuid()) @db.Uuid
+  code          String    @unique @db.VarChar(50)
+  name          String    @db.VarChar(180)
+  unit          String    @db.VarChar(30)
+  referenceCost Decimal?  @map("reference_cost") @db.Decimal(12, 2)
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  usos MaterialUtilizado[]
+
+  @@index([isActive, deletedAt])
+  @@map("material")
+}
+
+model MaterialUtilizado {
+  id                 String   @id @default(uuid()) @db.Uuid
+  materialId         String   @map("material_id") @db.Uuid
+  ordenId            String?  @map("orden_id") @db.Uuid
+  actividadId        String?  @map("actividad_id") @db.Uuid
+  quantity           Decimal  @db.Decimal(12, 3)
+  historicalUnitCost Decimal  @map("historical_unit_cost") @db.Decimal(12, 2)
+  observation        String?  @db.Text
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  material  Material      @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  orden     OrdenTrabajo? @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  actividad Actividad?    @relation(fields: [actividadId], references: [id], onDelete: Restrict)
+
+  @@index([materialId])
+  @@index([ordenId])
+  @@index([actividadId])
+  @@map("material_utilizado")
+}
+
+model CausaReincidencia {
+  id           String    @id @default(uuid()) @db.Uuid
+  code         String    @unique @db.VarChar(50)
+  name         String    @db.VarChar(160)
+  description  String?   @db.VarChar(500)
+  isActive     Boolean   @default(true) @map("is_active")
+  displayOrder Int       @default(0) @map("display_order")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  reincidencias Reincidencia[]
+
+  @@index([isActive, displayOrder])
+  @@map("causa_reincidencia")
+}
+
+model Reincidencia {
+  id                String                      @id @default(uuid()) @db.Uuid
+  originalOrderId   String                      @map("original_order_id") @db.Uuid
+  causeId           String                      @map("cause_id") @db.Uuid
+  status            EstadoReincidencia          @default(OPEN)
+  impact            ImpactoReincidencia         @default(MEDIUM)
+  responsibility    ResponsabilidadReincidencia @default(UNDETERMINED)
+  detectedProblem   String                      @map("detected_problem") @db.Text
+  analysis          String?                     @db.Text
+  correctiveAction  String?                     @map("corrective_action") @db.Text
+  preventiveAction  String?                     @map("preventive_action") @db.Text
+  observations      String?                     @db.Text
+  detectedAt        DateTime                    @default(now()) @map("detected_at") @db.Timestamptz(3)
+  closedAt          DateTime?                   @map("closed_at") @db.Timestamptz(3)
+  additionalMinutes Int                         @default(0) @map("additional_minutes")
+  estimatedCost     Decimal                     @default(0) @map("estimated_cost") @db.Decimal(12, 2)
+  createdAt         DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version           Int                         @default(1)
+
+  ordenOriginal OrdenTrabajo          @relation(fields: [originalOrderId], references: [id], onDelete: Restrict)
+  causa         CausaReincidencia     @relation(fields: [causeId], references: [id], onDelete: Restrict)
+  ordenes       ReincidenciaOrden[]
+  tecnicos      ReincidenciaTecnico[]
+  evidencias    Evidencia[]
+
+  @@index([originalOrderId])
+  @@index([causeId])
+  @@index([status, detectedAt])
+  @@map("reincidencia")
+}
+
+model ReincidenciaOrden {
+  id                String  @id @default(uuid()) @db.Uuid
+  reincidenciaId    String  @map("reincidencia_id") @db.Uuid
+  ordenId           String  @map("orden_id") @db.Uuid
+  visitNumber       Int     @map("visit_number")
+  additionalMinutes Int     @default(0) @map("additional_minutes")
+  observation       String? @db.Text
+
+  reincidencia Reincidencia @relation(fields: [reincidenciaId], references: [id], onDelete: Restrict)
+  orden        OrdenTrabajo @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+
+  @@unique([reincidenciaId, ordenId])
+  @@unique([reincidenciaId, visitNumber])
+  @@index([ordenId])
+  @@map("reincidencia_orden")
+}
+
+model ReincidenciaTecnico {
+  id             String                    @id @default(uuid()) @db.Uuid
+  reincidenciaId String                    @map("reincidencia_id") @db.Uuid
+  tecnicoId      String                    @map("tecnico_id") @db.Uuid
+  participation  ParticipacionReincidencia
+  affectsQuality Boolean                   @default(false) @map("affects_quality")
+  justification  String?                   @db.Text
+
+  reincidencia Reincidencia @relation(fields: [reincidenciaId], references: [id], onDelete: Restrict)
+  tecnico      Tecnico      @relation(fields: [tecnicoId], references: [id], onDelete: Restrict)
+
+  @@unique([reincidenciaId, tecnicoId, participation])
+  @@index([tecnicoId, affectsQuality])
+  @@map("reincidencia_tecnico")
+}
+
+model Evidencia {
+  id             String               @id @default(uuid()) @db.Uuid
+  originalName   String               @map("original_name") @db.VarChar(255)
+  storedName     String               @map("stored_name") @db.VarChar(255)
+  mimeType       String               @map("mime_type") @db.VarChar(150)
+  fileExtension  String               @map("file_extension") @db.VarChar(20)
+  sizeBytes      BigInt               @map("size_bytes")
+  storageKey     String               @unique @map("storage_key") @db.VarChar(500)
+  description    String?              @db.VarChar(500)
+  accessLevel    NivelAccesoEvidencia @default(INTERNAL) @map("access_level")
+  uploadedById   String               @map("uploaded_by_id") @db.Uuid
+  ordenId        String?              @map("orden_id") @db.Uuid
+  actividadId    String?              @map("actividad_id") @db.Uuid
+  reincidenciaId String?              @map("reincidencia_id") @db.Uuid
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz(3)
+
+  uploadedBy   Usuario       @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  orden        OrdenTrabajo? @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  actividad    Actividad?    @relation(fields: [actividadId], references: [id], onDelete: Restrict)
+  reincidencia Reincidencia? @relation(fields: [reincidenciaId], references: [id], onDelete: Restrict)
+
+  @@index([uploadedById])
+  @@index([ordenId])
+  @@index([actividadId])
+  @@index([reincidenciaId])
+  @@map("evidencia")
+}
+
+model ConfiguracionKPI {
+  id                 String    @id @default(uuid()) @db.Uuid
+  version            Int       @unique
+  validFrom          DateTime  @map("valid_from") @db.Date
+  validTo            DateTime? @map("valid_to") @db.Date
+  productivityWeight Decimal   @map("productivity_weight") @db.Decimal(5, 4)
+  complianceWeight   Decimal   @map("compliance_weight") @db.Decimal(5, 4)
+  efficiencyWeight   Decimal   @map("efficiency_weight") @db.Decimal(5, 4)
+  qualityWeight      Decimal   @map("quality_weight") @db.Decimal(5, 4)
+  isActive           Boolean   @default(true) @map("is_active")
+  description        String?   @db.VarChar(500)
+  createdById        String?   @map("created_by_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  createdBy Usuario?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  results   ResultadoKPI[]
+
+  @@index([isActive, validFrom])
+  @@index([createdById])
+  @@map("configuracion_kpi")
+}
+
+model MetaTecnico {
+  id                      String   @id @default(uuid()) @db.Uuid
+  tecnicoId               String   @map("tecnico_id") @db.Uuid
+  periodStart             DateTime @map("period_start") @db.Date
+  periodEnd               DateTime @map("period_end") @db.Date
+  targetJobs              Int      @map("target_jobs")
+  targetProductiveMinutes Int      @map("target_productive_minutes")
+  createdById             String?  @map("created_by_id") @db.Uuid
+  observation             String?  @db.VarChar(500)
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tecnico   Tecnico  @relation(fields: [tecnicoId], references: [id], onDelete: Restrict)
+  createdBy Usuario? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([tecnicoId, periodStart, periodEnd])
+  @@index([createdById])
+  @@map("meta_tecnico")
+}
+
+model ResultadoKPI {
+  id                      String   @id @default(uuid()) @db.Uuid
+  tecnicoId               String   @map("tecnico_id") @db.Uuid
+  configuracionId         String   @map("configuracion_id") @db.Uuid
+  periodStart             DateTime @map("period_start") @db.Date
+  periodEnd               DateTime @map("period_end") @db.Date
+  completedJobs           Int      @map("completed_jobs")
+  appliedTarget           Int      @map("applied_target")
+  registeredMinutes       Int      @map("registered_minutes")
+  productiveMinutes       Int      @map("productive_minutes")
+  onTimeJobs              Int      @map("on_time_jobs")
+  attributableRecurrences Int      @map("attributable_recurrences")
+  productivityScore       Decimal  @map("productivity_score") @db.Decimal(5, 2)
+  complianceScore         Decimal  @map("compliance_score") @db.Decimal(5, 2)
+  efficiencyScore         Decimal  @map("efficiency_score") @db.Decimal(5, 2)
+  qualityScore            Decimal  @map("quality_score") @db.Decimal(5, 2)
+  overallScore            Decimal  @map("overall_score") @db.Decimal(5, 2)
+  productivityWeight      Decimal  @map("productivity_weight") @db.Decimal(5, 4)
+  complianceWeight        Decimal  @map("compliance_weight") @db.Decimal(5, 4)
+  efficiencyWeight        Decimal  @map("efficiency_weight") @db.Decimal(5, 4)
+  qualityWeight           Decimal  @map("quality_weight") @db.Decimal(5, 4)
+  calculationMetadata     Json?    @map("calculation_metadata") @db.JsonB
+  calculatedAt            DateTime @default(now()) @map("calculated_at") @db.Timestamptz(3)
+
+  tecnico       Tecnico          @relation(fields: [tecnicoId], references: [id], onDelete: Restrict)
+  configuracion ConfiguracionKPI @relation(fields: [configuracionId], references: [id], onDelete: Restrict)
+
+  @@unique([tecnicoId, periodStart, periodEnd, configuracionId])
+  @@index([periodStart, periodEnd])
+  @@map("resultado_kpi")
+}
+
+model Auditoria {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String   @db.VarChar(100)
+  entity     String   @db.VarChar(100)
+  entityId   String   @map("entity_id") @db.VarChar(100)
+  beforeData Json?    @map("before_data") @db.JsonB
+  afterData  Json?    @map("after_data") @db.JsonB
+  reason     String?  @db.Text
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  userAgent  String?  @map("user_agent") @db.VarChar(500)
+  requestId  String?  @map("request_id") @db.Uuid
+
+  usuario Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([requestId])
+  @@map("auditoria")
+}
+
+model Notificacion {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  type      String    @db.VarChar(80)
+  title     String    @db.VarChar(180)
+  message   String    @db.Text
+  entity    String?   @db.VarChar(100)
+  entityId  String?   @map("entity_id") @db.VarChar(100)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  readAt    DateTime? @map("read_at") @db.Timestamptz(3)
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notificacion")
+}

@@ -1,12 +1,14 @@
 # Diagnóstico de arquitectura actual
 
-Fecha del análisis: 28 de julio de 2026.
+Fecha de actualización: 30 de julio de 2026.
 
 ## Resumen
 
-Geek Solution · Service Control es actualmente un frontend SPA modular
-construido con React, TypeScript, Vite, CSS personalizado y Lucide React. El
-diseño es navegable y responsive, pero todavía no existe una capa de datos real.
+Geek Solution · Service Control tiene un frontend SPA modular, una API Express
+independiente, persistencia PostgreSQL mediante Prisma y autenticación backend
+con sesiones opacas. El diseño es navegable y responsive, pero todavía no
+existen pantalla de acceso, endpoints de negocio ni conexión del frontend con
+la API.
 
 ## Estructura encontrada
 
@@ -24,10 +26,27 @@ src/
 ├── App.test.tsx  # Pruebas críticas del prototipo
 ├── main.tsx      # Punto de entrada de React
 └── styles.css    # Estilos visuales existentes
+
+server/
+├── database/          # Scripts seguros para pgAdmin y verificación
+├── prisma/            # Schema, migración inicial y seed por dominio
+├── generated/prisma/  # Cliente generado; ignorado por Git
+├── src/
+│   ├── auth/         # Sesión, contraseña, servicio, repositorio y HTTP
+│   ├── config/       # Entorno validado
+│   ├── controllers/  # Controlador de salud
+│   ├── middlewares/  # Correlación, 404 y errores
+│   ├── routes/       # API versionada
+│   ├── types/        # Contratos API y Express
+│   ├── utils/        # Logger y errores operativos
+│   ├── app.ts        # Composición sin abrir puertos
+│   └── server.ts     # Arranque del proceso
+└── tests/             # Pruebas unitarias, HTTP y PostgreSQL
 ```
 
-No existen todavía servicios de API, contexto de autenticación o validaciones
-de dominio compartidas con el futuro backend.
+No existen todavía servicios HTTP ni contexto de autenticación en el frontend.
+El backend ya consume persistencia para autenticación, pero aún no existen
+controladores o repositorios para órdenes, actividades, técnicos o clientes.
 
 ## Funcionalidades que operan en el navegador
 
@@ -68,14 +87,14 @@ al recargar la página.
 
 ## Problemas técnicos
 
-1. No hay servicios ni frontera entre UI y una API real.
+1. El frontend todavía no consume la API.
 2. No hay validaciones definitivas de negocio para actividades.
 3. Los indicadores KPI son valores fijos y no resultados calculados.
-4. No hay autenticación, autorización ni aislamiento por recurso.
-5. No hay tratamiento de carga, error de API o reintentos.
-6. No existe repositorio Git en la carpeta actual.
-7. Hay artefactos generados de TypeScript/Vite en la raíz; `.gitignore`
-    evitará versionarlos cuando se inicialice Git.
+4. La autorización por propiedad se implementará junto a cada recurso.
+5. No hay tratamiento de carga, error de API o reintentos en el frontend.
+6. Los usuarios demo no pueden iniciar sesión; el administrador requiere
+   variables privadas de seed.
+7. Prisma define el modelo, pero todavía no existen repositorios de dominio.
 8. Algunos controles visuales todavía no ejecutan ninguna acción.
 
 ## Validaciones ejecutadas
@@ -88,6 +107,21 @@ al recargar la página.
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm run test` | Correcto; 5 pruebas |
 | `npm audit --audit-level=moderate` | 0 vulnerabilidades |
+
+Backend, ejecutado desde `server/`:
+
+| Comando | Resultado |
+| --- | --- |
+| `npm run typecheck` | Correcto |
+| `npm run lint` | Correcto; 0 advertencias |
+| `npm run test` | Correcto; 48 pruebas |
+| `npm run test:db` | Correcto; 35 pruebas PostgreSQL |
+| `npm run build` | Correcto |
+| `npm run db:validate` | Schema Prisma válido |
+| `npm run db:verify` | 31 tablas de dominio, 31 checks y 4 índices parciales |
+| `npx prisma migrate status` | 2 migraciones aplicadas |
+| `GET /api/v1/health` | HTTP 200 con correlación |
+| Flujo auth compilado | Login 200, me 200 y logout 204 |
 
 ## Arquitectura objetivo
 
@@ -107,8 +141,10 @@ al recargar la página.
 
 ### Backend
 
-El backend vivirá en `server/` y utilizará Node.js, TypeScript, Express, Prisma y
-PostgreSQL. La API REST se versionará bajo `/api/v1`.
+El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
+PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
+`"Sistema_kpiGS"` tiene 31 tablas de dominio, dos migraciones, seed idempotente
+y un esquema `test` aislado.
 
 La separación será:
 
@@ -116,11 +152,12 @@ La separación será:
 HTTP route → middleware → controller → service → repository → Prisma/PostgreSQL
 ```
 
-- Los controllers traducirán HTTP, sin lógica de negocio compleja.
-- Los services aplicarán reglas, transacciones y auditoría.
-- Los repositories aislarán consultas persistentes.
+- Los controllers traducen HTTP, sin lógica de negocio compleja.
+- Los services aplican reglas, transacciones y auditoría.
+- Los repositories aíslan consultas persistentes.
 - Zod validará entradas y variables de entorno.
-- La autorización comprobará tanto roles como pertenencia del recurso.
+- La autenticación carga permisos persistidos; la pertenencia se comprobará
+  al implementar cada recurso.
 - Los KPIs se calcularán en un servicio central configurable.
 - Evidencias dependerán de una interfaz de almacenamiento intercambiable.
 

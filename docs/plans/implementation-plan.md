@@ -31,7 +31,11 @@ Salida verificada: frontend modular con lint, 5 pruebas y build correctos.
 - Añadir validación Zod, respuesta API consistente y endpoint de salud.
 - Configurar pruebas unitarias y de integración.
 
-Salida: API `/api/v1` ejecutable y probada, todavía sin módulos de negocio.
+Estado: completada. La API incluye entorno validado, correlación, logs seguros,
+Helmet, CORS, límite JSON, errores uniformes y `GET /api/v1/health`.
+
+Salida verificada: API `/api/v1` ejecutable con 16 pruebas, typecheck, lint y
+build correctos, todavía sin módulos de negocio.
 
 ## 4. Persistencia y modelo relacional
 
@@ -40,7 +44,13 @@ Salida: API `/api/v1` ejecutable y probada, todavía sin módulos de negocio.
 - Crear migración inicial y seed con datos ficticios.
 - Validar claves, índices, restricciones, borrado lógico y relaciones.
 
-Salida: base reproducible mediante migraciones y seed.
+Estado: completada. PostgreSQL 18.4 y Prisma 7.9.1 administran 30 tablas de
+dominio en `"Sistema_kpiGS"`. La migración inicial contiene 45 claves foráneas,
+31 restricciones `CHECK` y 4 índices únicos parciales. El seed ficticio es
+idempotente y los usuarios no tienen contraseñas utilizables.
+
+Salida verificada: migración aplicada en `public` y `test`, 24 pruebas backend,
+21 pruebas PostgreSQL, typecheck, lint, build y auditoría correctos.
 
 ## 5. Autenticación y autorización
 
@@ -49,7 +59,15 @@ Salida: base reproducible mediante migraciones y seed.
 - Autorizar por rol y por propiedad del recurso.
 - Registrar accesos y eventos relevantes en auditoría.
 
-Salida: login/logout y rutas protegidas con pruebas.
+Estado: completada. La API usa contraseñas `scrypt`, sesiones opacas
+persistidas en PostgreSQL, cookie `HttpOnly`, bloqueo al quinto intento,
+cambio obligatorio de contraseña, permisos con denegación por defecto y
+auditoría de login, bloqueo, logout y cambio de contraseña. La autorización por
+propiedad se aplicará cuando existan endpoints de recursos.
+
+Salida verificada: login/logout/me/change-password operativos, migración
+incremental aplicada en `public` y `test`, 48 pruebas backend, 35 pruebas
+PostgreSQL, typecheck, lint, build y auditoría correctos.
 
 ## 6. Técnicos y clientes
 
