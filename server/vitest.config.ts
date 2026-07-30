@@ -11,6 +11,7 @@ export default defineConfig({
       "**/tests/database/**",
       "**/tests/auth/auth-service.test.ts",
       "**/tests/auth/auth-http.test.ts",
+      "**/tests/technicians/technicians-http.test.ts",
     ],
     env: {
       DATABASE_URL:

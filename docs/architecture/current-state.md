@@ -6,9 +6,9 @@ Fecha de actualización: 30 de julio de 2026.
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express
 independiente, persistencia PostgreSQL mediante Prisma y autenticación backend
-con sesiones opacas. El diseño es navegable y responsive, pero todavía no
-existen pantalla de acceso, endpoints de negocio ni conexión del frontend con
-la API.
+con sesiones opacas y una API persistente de técnicos. El diseño es navegable
+y responsive, pero todavía no existen pantalla de acceso ni conexión del
+frontend con la API.
 
 ## Estructura encontrada
 
@@ -45,8 +45,8 @@ server/
 ```
 
 No existen todavía servicios HTTP ni contexto de autenticación en el frontend.
-El backend ya consume persistencia para autenticación, pero aún no existen
-controladores o repositorios para órdenes, actividades, técnicos o clientes.
+El backend ya consume persistencia para autenticación y técnicos. Aún no
+existen controladores o repositorios para órdenes, actividades o clientes.
 
 ## Funcionalidades que operan en el navegador
 
@@ -94,7 +94,7 @@ al recargar la página.
 5. No hay tratamiento de carga, error de API o reintentos en el frontend.
 6. Los usuarios demo no pueden iniciar sesión; el administrador requiere
    variables privadas de seed.
-7. Prisma define el modelo, pero todavía no existen repositorios de dominio.
+7. Clientes, órdenes y actividades todavía no tienen repositorios HTTP.
 8. Algunos controles visuales todavía no ejecutan ninguna acción.
 
 ## Validaciones ejecutadas
@@ -114,14 +114,15 @@ Backend, ejecutado desde `server/`:
 | --- | --- |
 | `npm run typecheck` | Correcto |
 | `npm run lint` | Correcto; 0 advertencias |
-| `npm run test` | Correcto; 48 pruebas |
-| `npm run test:db` | Correcto; 35 pruebas PostgreSQL |
+| `npm run test` | Correcto; 75 pruebas |
+| `npm run test:db` | Correcto; 46 pruebas PostgreSQL |
 | `npm run build` | Correcto |
 | `npm run db:validate` | Schema Prisma válido |
-| `npm run db:verify` | 31 tablas de dominio, 31 checks y 4 índices parciales |
-| `npx prisma migrate status` | 2 migraciones aplicadas |
+| `npm run db:verify` | 31 tablas de dominio, 31 checks, 5 índices parciales y secuencia de técnicos |
+| `npx prisma migrate status` | 3 migraciones aplicadas |
 | `GET /api/v1/health` | HTTP 200 con correlación |
 | Flujo auth compilado | Login 200, me 200 y logout 204 |
+| API de técnicos | 7 endpoints con ciclo completo |
 
 ## Arquitectura objetivo
 
@@ -143,7 +144,7 @@ Backend, ejecutado desde `server/`:
 
 El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
 PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
-`"Sistema_kpiGS"` tiene 31 tablas de dominio, dos migraciones, seed idempotente
+`"Sistema_kpiGS"` tiene 31 tablas de dominio, tres migraciones, seed idempotente
 y un esquema `test` aislado.
 
 La separación será:

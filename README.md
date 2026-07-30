@@ -9,7 +9,7 @@ cumplimiento, eficiencia y calidad.
 El repositorio contiene un frontend modular, una API Express independiente,
 persistencia PostgreSQL administrada mediante Prisma y autenticación backend
 con sesiones revocables. El frontend todavía usa datos de demostración porque
-la pantalla de acceso, los endpoints de negocio y la conexión entre ambas
+la pantalla de acceso y la conexión entre ambas
 aplicaciones corresponden a etapas posteriores. Las actividades creadas desde
 el formulario se conservan únicamente durante la sesión del navegador.
 
@@ -73,8 +73,9 @@ npm run db:verify
 `create-database.sql` se ejecuta una sola vez. Si la base ya existe,
 PostgreSQL devuelve un error sin modificar sus tablas. No se utiliza
 `prisma db push`; la estructura se reproduce mediante las migraciones
-versionadas `20260730160241_initial_schema` y
-`20260730182255_authentication_sessions`.
+versionadas. La tercera migración,
+`20260730194456_technicians_api_constraints`, incorpora la secuencia de
+códigos de técnico y la unicidad de correo laboral activo.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
 apuntarse al esquema `public`.
@@ -102,11 +103,25 @@ POST /api/v1/auth/login
 POST /api/v1/auth/logout
 GET /api/v1/auth/me
 POST /api/v1/auth/change-password
+GET /api/v1/technicians
+GET /api/v1/technicians/:id
+POST /api/v1/technicians
+PATCH /api/v1/technicians/:id
+PATCH /api/v1/technicians/:id/status
+DELETE /api/v1/technicians/:id
+POST /api/v1/technicians/:id/reactivate
 ```
 
 Los endpoints mutables de autenticación requieren un encabezado `Origin`
 incluido en `CORS_ORIGIN`. La cookie `gs_session` es `HttpOnly`,
 `SameSite=Lax` y no se guarda en `localStorage`.
+
+La API de técnicos requiere `TECHNICIANS_VIEW` para lecturas y
+`TECHNICIANS_MANAGE` para mutaciones. Las mutaciones también requieren
+`Origin: http://localhost:5173` en el entorno local. Usa control optimista con
+`version`; la desactivación es lógica, queda auditada y se bloquea cuando el
+técnico participa en una orden o actividad activa. La pantalla React de
+técnicos continúa usando mocks hasta la fase de integración del frontend.
 
 Respuesta:
 

@@ -19,12 +19,18 @@ SELECT indexname
 FROM pg_indexes
 WHERE schemaname = current_schema()
   AND indexname IN (
+    'uq_tecnico_work_email_active',
     'uq_contacto_principal_sucursal',
     'uq_orden_tecnico_principal_activo',
     'uq_actividad_tecnico_responsable',
     'uq_pausa_actividad_abierta'
   )
 ORDER BY indexname;
+
+SELECT sequencename
+FROM pg_sequences
+WHERE schemaname = current_schema()
+  AND sequencename = 'tecnico_code_seq';
 
 SELECT constraint_data.conname
 FROM pg_constraint AS constraint_data

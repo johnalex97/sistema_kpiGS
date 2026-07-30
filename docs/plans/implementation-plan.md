@@ -76,6 +76,15 @@ PostgreSQL, typecheck, lint, build y auditoría correctos.
 - Búsqueda, filtros, paginación y borrado lógico.
 - Reglas para evitar asignaciones a entidades inactivas.
 
+Estado 6A, técnicos: completada. La API permite buscar, paginar, consultar,
+crear, editar, cambiar estado, desactivar y reactivar técnicos. Incluye
+código automático, correo activo único, vínculo opcional con usuario elegible,
+control de versión, bloqueo por trabajo activo, permisos y cinco auditorías.
+
+Salida 6A verificada: 75 pruebas backend, 46 pruebas PostgreSQL, tres
+migraciones aplicadas, typecheck, lint, builds y auditorías sin
+vulnerabilidades. Clientes, contactos y sucursales quedan pendientes para 6B.
+
 Salida: maestros operativos conectados a datos reales.
 
 ## 7. Órdenes de trabajo
