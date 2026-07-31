@@ -18,6 +18,7 @@ vite.config.d.ts
 # Tests and tooling
 coverage/
 .eslintcache
+.worktrees/
 
 # Logs
 *.log
