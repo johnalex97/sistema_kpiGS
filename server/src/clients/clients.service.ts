@@ -8,6 +8,7 @@ import {
 import type { ClientsRepository } from "./clients.repository.js";
 import type {
   BranchListFilters,
+  CreateBranchInput,
   ClientActorContext,
   ClientListFilters,
   ContactListFilters,
@@ -19,6 +20,7 @@ import type {
   PublicClientSummary,
   PublicContact,
   UpdateClientInput,
+  UpdateBranchInput,
 } from "./clients.types.js";
 
 function notFound(): ApiError {
@@ -64,6 +66,10 @@ export interface ClientsService {
   ): Promise<PublicClientDetail>;
   deactivateClient(id: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicClientDetail>;
   reactivateClient(id: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicClientDetail>;
+  createBranch(clientId: string, input: CreateBranchInput, actor: ClientActorContext): Promise<PublicBranch>;
+  updateBranch(clientId: string, branchId: string, input: UpdateBranchInput, actor: ClientActorContext): Promise<PublicBranch>;
+  deactivateBranch(clientId: string, branchId: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicBranch>;
+  reactivateBranch(clientId: string, branchId: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicBranch>;
 }
 
 function mutationError(kind: string): ApiError {
@@ -78,6 +84,15 @@ function mutationError(kind: string): ApiError {
     return new ApiError(409, "El cliente tiene trabajo activo", "CLIENT_HAS_ACTIVE_WORK");
   }
   return new ApiError(409, "El cliente está inactivo", "RESOURCE_INACTIVE");
+}
+
+function branchError(kind: string): ApiError {
+  if (kind === "CLIENT_NOT_FOUND") return notFound();
+  if (kind === "BRANCH_NOT_FOUND") return new ApiError(404, "La sucursal solicitada no existe", "BRANCH_NOT_FOUND");
+  if (kind === "VERSION_CONFLICT") return new ApiError(409, "La sucursal fue modificada", "VERSION_CONFLICT");
+  if (kind === "ACTIVE_WORK") return new ApiError(409, "La sucursal tiene trabajo activo", "BRANCH_HAS_ACTIVE_WORK");
+  if (kind === "LAST_ACTIVE_BRANCH") return new ApiError(409, "El cliente requiere una sucursal activa", "CLIENT_REQUIRES_ACTIVE_BRANCH");
+  return new ApiError(409, "El recurso está inactivo", "RESOURCE_INACTIVE");
 }
 
 export function createClientsService(
@@ -148,6 +163,26 @@ export function createClientsService(
       const result = await repository.reactivateClient(id, input, actor, now());
       if (result.kind !== "UPDATED") throw mutationError(result.kind);
       return mapPublicClientDetail(result.client);
+    },
+    async createBranch(clientId, input, actor) {
+      const result = await repository.createBranch(clientId, input, actor, now());
+      if (result.kind !== "CREATED") throw branchError(result.kind);
+      return mapPublicBranch(result.branch, result.clientActive);
+    },
+    async updateBranch(clientId, branchId, input, actor) {
+      const result = await repository.updateBranch(clientId, branchId, input, actor, now());
+      if (result.kind !== "UPDATED") throw branchError(result.kind);
+      return mapPublicBranch(result.branch, result.clientActive);
+    },
+    async deactivateBranch(clientId, branchId, input, actor) {
+      const result = await repository.deactivateBranch(clientId, branchId, input, actor, now());
+      if (result.kind !== "UPDATED") throw branchError(result.kind);
+      return mapPublicBranch(result.branch, result.clientActive);
+    },
+    async reactivateBranch(clientId, branchId, input, actor) {
+      const result = await repository.reactivateBranch(clientId, branchId, input, actor, now());
+      if (result.kind !== "UPDATED") throw branchError(result.kind);
+      return mapPublicBranch(result.branch, result.clientActive);
     },
   };
 }

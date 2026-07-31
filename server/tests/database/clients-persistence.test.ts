@@ -513,3 +513,95 @@ describe("client persisted mutations", () => {
     }
   });
 });
+
+describe("branch persisted mutations", () => {
+  it("allocates concurrent codes and enforces branch lifecycle", async () => {
+    const service = createClientsService(createClientsRepository(database));
+    const admin = await database.usuario.findUniqueOrThrow({
+      where: { email: "admin.demo@geeksolution.example.test" },
+    });
+    const serviceType = await database.tipoServicio.findUniqueOrThrow({
+      where: { code: "SUPPORT" },
+    });
+    const actor = {
+      userId: admin.id,
+      requestId: randomUUID(),
+      ipAddress: null,
+      userAgent: "Branch lifecycle test",
+    };
+    let clientId: string | undefined;
+    const orderId = randomUUID();
+    const createdBranchIds: string[] = [];
+
+    try {
+      const client = await service.createClient(
+        {
+          tradeName: `Sucursales ${randomUUID().slice(0, 8)}`,
+          mainBranch: { name: "Principal", address: "Centro", country: "HN" },
+        },
+        actor,
+      );
+      clientId = client.id;
+      const [north, south] = await Promise.all([
+        service.createBranch(client.id, { name: "Norte", address: "Norte", country: "HN" }, actor),
+        service.createBranch(client.id, { name: "Sur", address: "Sur", country: "HN" }, actor),
+      ]);
+      createdBranchIds.push(north.id, south.id);
+      expect(new Set([north.code, south.code])).toEqual(new Set(["SUC-001", "SUC-002"]));
+
+      const updated = await service.updateBranch(
+        client.id,
+        north.id,
+        { version: 1, city: "Tegucigalpa" },
+        actor,
+      );
+      expect(updated).toMatchObject({ city: "Tegucigalpa", version: 2 });
+
+      await database.ordenTrabajo.create({
+        data: {
+          id: orderId,
+          orderNumber: `BR-${randomUUID().slice(0, 8)}`,
+          sucursalId: north.id,
+          tipoServicioId: serviceType.id,
+          status: "PENDING",
+          reportedProblem: "Trabajo de sucursal",
+        },
+      });
+      await expect(
+        service.deactivateBranch(
+          client.id,
+          north.id,
+          { version: 2, reason: "Cierre de ubicación aprobado" },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: "BRANCH_HAS_ACTIVE_WORK" });
+      await database.ordenTrabajo.delete({ where: { id: orderId } });
+
+      const inactive = await service.deactivateBranch(
+        client.id,
+        north.id,
+        { version: 2, reason: "Cierre de ubicación aprobado" },
+        actor,
+      );
+      expect(inactive).toMatchObject({ isActive: false, version: 3 });
+      const active = await service.reactivateBranch(
+        client.id,
+        north.id,
+        { version: 3, reason: "Reapertura de ubicación aprobada" },
+        actor,
+      );
+      expect(active).toMatchObject({ isActive: true, version: 4 });
+    } finally {
+      await database.ordenTrabajo.deleteMany({ where: { id: orderId } });
+      if (clientId) {
+        await database.auditoria.deleteMany({ where: { entityId: clientId } });
+        await database.auditoria.deleteMany({
+          where: { entity: "sucursal_cliente", entityId: { in: createdBranchIds } },
+        });
+        await database.contactoCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.sucursalCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.cliente.deleteMany({ where: { id: clientId } });
+      }
+    }
+  });
+});

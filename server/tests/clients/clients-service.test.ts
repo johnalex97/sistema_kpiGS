@@ -33,6 +33,24 @@ const detailRecord = {
   sucursales: [],
   contactos: [],
 };
+const branchRecord = {
+  id: "10000000-0000-4000-8000-000000000030",
+  clienteId: detailRecord.id,
+  code: "SUC-001",
+  name: "Sucursal norte",
+  address: "Norte",
+  city: null,
+  region: null,
+  country: "HN",
+  latitude: null,
+  longitude: null,
+  locationReference: null,
+  isActive: true,
+  createdAt: date,
+  updatedAt: date,
+  deletedAt: null,
+  version: 1,
+};
 
 function repositoryFake(
   overrides: Partial<ClientsRepository> = {},
@@ -54,6 +72,10 @@ function repositoryFake(
     updateClient: async () => ({ kind: "UPDATED", client: detailRecord }),
     deactivateClient: async () => ({ kind: "UPDATED", client: detailRecord }),
     reactivateClient: async () => ({ kind: "UPDATED", client: detailRecord }),
+    createBranch: async () => ({ kind: "CREATED", branch: branchRecord, clientActive: true }),
+    updateBranch: async () => ({ kind: "UPDATED", branch: branchRecord, clientActive: true }),
+    deactivateBranch: async () => ({ kind: "UPDATED", branch: branchRecord, clientActive: true }),
+    reactivateBranch: async () => ({ kind: "UPDATED", branch: branchRecord, clientActive: true }),
     ...overrides,
   };
 }
@@ -253,5 +275,46 @@ describe("client mutation service", () => {
         actor,
       ),
     ).rejects.toMatchObject({ statusCode: 409, code: "RESOURCE_INACTIVE" });
+  });
+});
+
+describe("branch mutation service", () => {
+  it("maps branch creation and protected lifecycle errors", async () => {
+    const service = createClientsService(repositoryFake(), () => date);
+    await expect(
+      service.createBranch(
+        detailRecord.id,
+        { name: "Sucursal norte", address: "Norte", country: "HN" },
+        actor,
+      ),
+    ).resolves.toMatchObject({ code: "SUC-001", version: 1 });
+
+    const lastBranch = createClientsService(
+      repositoryFake({
+        deactivateBranch: async () => ({ kind: "LAST_ACTIVE_BRANCH" }),
+      }),
+      () => date,
+    );
+    await expect(
+      lastBranch.deactivateBranch(
+        detailRecord.id,
+        branchRecord.id,
+        { version: 1, reason: "Cierre de ubicación aprobado" },
+        actor,
+      ),
+    ).rejects.toMatchObject({ code: "CLIENT_REQUIRES_ACTIVE_BRANCH" });
+
+    const activeWork = createClientsService(
+      repositoryFake({ deactivateBranch: async () => ({ kind: "ACTIVE_WORK" }) }),
+      () => date,
+    );
+    await expect(
+      activeWork.deactivateBranch(
+        detailRecord.id,
+        branchRecord.id,
+        { version: 1, reason: "Cierre de ubicación aprobado" },
+        actor,
+      ),
+    ).rejects.toMatchObject({ code: "BRANCH_HAS_ACTIVE_WORK" });
   });
 });

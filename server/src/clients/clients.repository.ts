@@ -1,12 +1,14 @@
 import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
 import type {
   BranchListFilters,
+  CreateBranchInput,
   ClientActorContext,
   ClientListFilters,
   ContactListFilters,
   CreateClientInput,
   LifecycleInput,
   UpdateClientInput,
+  UpdateBranchInput,
 } from "./clients.types.js";
 
 export const branchSelect = {
@@ -127,6 +129,10 @@ export interface ClientsRepository {
     actor: ClientActorContext,
     now: Date,
   ): Promise<ClientMutationResult>;
+  createBranch(clientId: string, input: CreateBranchInput, actor: ClientActorContext, now: Date): Promise<BranchMutationResult>;
+  updateBranch(clientId: string, branchId: string, input: UpdateBranchInput, actor: ClientActorContext, now: Date): Promise<BranchMutationResult>;
+  deactivateBranch(clientId: string, branchId: string, input: LifecycleInput, actor: ClientActorContext, now: Date): Promise<BranchMutationResult>;
+  reactivateBranch(clientId: string, branchId: string, input: LifecycleInput, actor: ClientActorContext, now: Date): Promise<BranchMutationResult>;
 }
 
 export type ClientMutationResult =
@@ -138,6 +144,10 @@ export type ClientMutationResult =
   | { kind: "TAX_ID_CONFLICT" }
   | { kind: "ACTIVE_WORK" }
   | { kind: "ALREADY_ACTIVE" };
+
+export type BranchMutationResult =
+  | { kind: "CREATED" | "UPDATED"; branch: BranchRecord; clientActive: boolean }
+  | { kind: "CLIENT_NOT_FOUND" | "BRANCH_NOT_FOUND" | "PARENT_INACTIVE" | "INACTIVE" | "ALREADY_ACTIVE" | "VERSION_CONFLICT" | "ACTIVE_WORK" | "LAST_ACTIVE_BRANCH" };
 
 type RepositoryClient = PrismaClient | Prisma.TransactionClient;
 
@@ -251,6 +261,40 @@ async function writeClientAudit(
       userAgent: input.actor.userAgent,
       requestId: input.actor.requestId,
       ...(input.reason !== undefined && { reason: input.reason }),
+    },
+  });
+}
+
+function branchSnapshot(record: BranchRecord) {
+  return {
+    code: record.code,
+    name: record.name,
+    address: record.address,
+    city: record.city,
+    region: record.region,
+    country: record.country,
+    isActive: record.isActive,
+    version: record.version,
+  };
+}
+
+async function writeBranchAudit(
+  client: Prisma.TransactionClient,
+  input: { action: string; branch: BranchRecord; actor: ClientActorContext; now: Date; before?: BranchRecord; reason?: string },
+): Promise<void> {
+  await client.auditoria.create({
+    data: {
+      userId: input.actor.userId,
+      action: input.action,
+      entity: "sucursal_cliente",
+      entityId: input.branch.id,
+      ...(input.before && { beforeData: branchSnapshot(input.before) }),
+      afterData: branchSnapshot(input.branch),
+      ...(input.reason !== undefined && { reason: input.reason }),
+      occurredAt: input.now,
+      ipAddress: input.actor.ipAddress,
+      userAgent: input.actor.userAgent,
+      requestId: input.actor.requestId,
     },
   });
 }
@@ -595,6 +639,113 @@ export function createClientsRepository(
           reason: input.reason,
         });
         return { kind: "UPDATED", client } as const;
+      });
+    },
+
+    async createBranch(clientId, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        await transaction.$queryRaw`SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE`;
+        const parent = await transaction.cliente.findUnique({ where: { id: clientId }, select: { isActive: true, deletedAt: true } });
+        if (!parent) return { kind: "CLIENT_NOT_FOUND" } as const;
+        if (!parent.isActive || parent.deletedAt) return { kind: "PARENT_INACTIVE" } as const;
+        await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${clientId}::text, 0))`;
+        const rows = await transaction.$queryRaw<Array<{ value: bigint }>>`
+          SELECT COALESCE(MAX(SUBSTRING("code" FROM '^SUC-([0-9]+)$')::BIGINT), 0) AS value
+          FROM "sucursal_cliente" WHERE "cliente_id" = ${clientId}::uuid AND "code" ~ '^SUC-[0-9]+$'
+        `;
+        const code = `SUC-${String((rows[0]?.value ?? 0n) + 1n).padStart(3, "0")}`;
+        const branch = await transaction.sucursalCliente.create({
+          data: {
+            clienteId: clientId,
+            code,
+            name: input.name,
+            address: input.address,
+            country: input.country,
+            ...(input.city !== undefined && { city: input.city }),
+            ...(input.region !== undefined && { region: input.region }),
+            ...(input.lat !== undefined && { latitude: input.lat }),
+            ...(input.long !== undefined && { longitude: input.long }),
+            ...(input.locationReference !== undefined && { locationReference: input.locationReference }),
+          },
+          select: branchSelect,
+        });
+        await writeBranchAudit(transaction, { action: "BRANCH_CREATED", branch, actor, now });
+        return { kind: "CREATED", branch, clientActive: true } as const;
+      });
+    },
+
+    async updateBranch(clientId, branchId, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        await transaction.$queryRaw`SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE`;
+        const parent = await transaction.cliente.findUnique({ where: { id: clientId }, select: { isActive: true, deletedAt: true } });
+        if (!parent) return { kind: "CLIENT_NOT_FOUND" } as const;
+        if (!parent.isActive || parent.deletedAt) return { kind: "PARENT_INACTIVE" } as const;
+        const before = await transaction.sucursalCliente.findFirst({ where: { id: branchId, clienteId: clientId }, select: branchSelect });
+        if (!before) return { kind: "BRANCH_NOT_FOUND" } as const;
+        if (!before.isActive || before.deletedAt) return { kind: "INACTIVE" } as const;
+        if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+        const changed = await transaction.sucursalCliente.updateMany({
+          where: { id: branchId, clienteId: clientId, version: input.version },
+          data: {
+            ...(input.name !== undefined && { name: input.name }),
+            ...(input.address !== undefined && { address: input.address }),
+            ...(input.city !== undefined && { city: input.city }),
+            ...(input.region !== undefined && { region: input.region }),
+            ...(input.country !== undefined && { country: input.country }),
+            ...(input.lat !== undefined && { latitude: input.lat }),
+            ...(input.long !== undefined && { longitude: input.long }),
+            ...(input.locationReference !== undefined && { locationReference: input.locationReference }),
+            version: { increment: 1 },
+          },
+        });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+        const branch = await transaction.sucursalCliente.findUniqueOrThrow({ where: { id: branchId }, select: branchSelect });
+        await writeBranchAudit(transaction, { action: "BRANCH_UPDATED", branch, before, actor, now });
+        return { kind: "UPDATED", branch, clientActive: true } as const;
+      });
+    },
+
+    async deactivateBranch(clientId, branchId, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        await transaction.$queryRaw`SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE`;
+        const parent = await transaction.cliente.findUnique({ where: { id: clientId }, select: { isActive: true, deletedAt: true } });
+        if (!parent) return { kind: "CLIENT_NOT_FOUND" } as const;
+        if (!parent.isActive || parent.deletedAt) return { kind: "PARENT_INACTIVE" } as const;
+        await transaction.$queryRaw`SELECT "id" FROM "sucursal_cliente" WHERE "id" = ${branchId}::uuid AND "cliente_id" = ${clientId}::uuid FOR UPDATE`;
+        const before = await transaction.sucursalCliente.findFirst({ where: { id: branchId, clienteId: clientId }, select: branchSelect });
+        if (!before) return { kind: "BRANCH_NOT_FOUND" } as const;
+        if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+        if (!before.isActive || before.deletedAt) return { kind: "INACTIVE" } as const;
+        const [orders, activities, activeBranches] = await Promise.all([
+          transaction.ordenTrabajo.count({ where: { sucursalId: branchId, status: { in: ["PENDING", "ASSIGNED", "ON_ROUTE", "IN_PROGRESS", "PAUSED"] }, deletedAt: null } }),
+          transaction.actividad.count({ where: { sucursalId: branchId, status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] }, deletedAt: null } }),
+          transaction.sucursalCliente.count({ where: { clienteId: clientId, isActive: true, deletedAt: null } }),
+        ]);
+        if (orders > 0 || activities > 0) return { kind: "ACTIVE_WORK" } as const;
+        if (activeBranches <= 1) return { kind: "LAST_ACTIVE_BRANCH" } as const;
+        const changed = await transaction.sucursalCliente.updateMany({ where: { id: branchId, version: input.version }, data: { isActive: false, deletedAt: now, version: { increment: 1 } } });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+        const branch = await transaction.sucursalCliente.findUniqueOrThrow({ where: { id: branchId }, select: branchSelect });
+        await writeBranchAudit(transaction, { action: "BRANCH_DEACTIVATED", branch, before, actor, now, reason: input.reason });
+        return { kind: "UPDATED", branch, clientActive: true } as const;
+      });
+    },
+
+    async reactivateBranch(clientId, branchId, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        await transaction.$queryRaw`SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE`;
+        const parent = await transaction.cliente.findUnique({ where: { id: clientId }, select: { isActive: true, deletedAt: true } });
+        if (!parent) return { kind: "CLIENT_NOT_FOUND" } as const;
+        if (!parent.isActive || parent.deletedAt) return { kind: "PARENT_INACTIVE" } as const;
+        const before = await transaction.sucursalCliente.findFirst({ where: { id: branchId, clienteId: clientId }, select: branchSelect });
+        if (!before) return { kind: "BRANCH_NOT_FOUND" } as const;
+        if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+        if (before.isActive && !before.deletedAt) return { kind: "ALREADY_ACTIVE" } as const;
+        const changed = await transaction.sucursalCliente.updateMany({ where: { id: branchId, version: input.version }, data: { isActive: true, deletedAt: null, version: { increment: 1 } } });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+        const branch = await transaction.sucursalCliente.findUniqueOrThrow({ where: { id: branchId }, select: branchSelect });
+        await writeBranchAudit(transaction, { action: "BRANCH_REACTIVATED", branch, before, actor, now, reason: input.reason });
+        return { kind: "UPDATED", branch, clientActive: true } as const;
       });
     },
   };
