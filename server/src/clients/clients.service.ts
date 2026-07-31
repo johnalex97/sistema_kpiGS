@@ -12,6 +12,7 @@ import type {
   ClientListFilters,
   ContactListFilters,
   CreateClientInput,
+  LifecycleInput,
   PaginatedResult,
   PublicBranch,
   PublicClientDetail,
@@ -61,6 +62,8 @@ export interface ClientsService {
     input: UpdateClientInput,
     actor: ClientActorContext,
   ): Promise<PublicClientDetail>;
+  deactivateClient(id: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicClientDetail>;
+  reactivateClient(id: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicClientDetail>;
 }
 
 function mutationError(kind: string): ApiError {
@@ -70,6 +73,9 @@ function mutationError(kind: string): ApiError {
   }
   if (kind === "VERSION_CONFLICT") {
     return new ApiError(409, "El cliente fue modificado por otro usuario", "VERSION_CONFLICT");
+  }
+  if (kind === "ACTIVE_WORK") {
+    return new ApiError(409, "El cliente tiene trabajo activo", "CLIENT_HAS_ACTIVE_WORK");
   }
   return new ApiError(409, "El cliente está inactivo", "RESOURCE_INACTIVE");
 }
@@ -130,6 +136,16 @@ export function createClientsService(
     },
     async updateClient(id, input, actor) {
       const result = await repository.updateClient(id, input, actor, now());
+      if (result.kind !== "UPDATED") throw mutationError(result.kind);
+      return mapPublicClientDetail(result.client);
+    },
+    async deactivateClient(id, input, actor) {
+      const result = await repository.deactivateClient(id, input, actor, now());
+      if (result.kind !== "UPDATED") throw mutationError(result.kind);
+      return mapPublicClientDetail(result.client);
+    },
+    async reactivateClient(id, input, actor) {
+      const result = await repository.reactivateClient(id, input, actor, now());
       if (result.kind !== "UPDATED") throw mutationError(result.kind);
       return mapPublicClientDetail(result.client);
     },

@@ -407,4 +407,109 @@ describe("client persisted mutations", () => {
       }
     }
   });
+
+  it("blocks active work and preserves child state across client lifecycle", async () => {
+    const service = createClientsService(
+      createClientsRepository(database),
+      () => new Date("2026-07-31T18:30:00.000Z"),
+    );
+    const admin = await database.usuario.findUniqueOrThrow({
+      where: { email: "admin.demo@geeksolution.example.test" },
+    });
+    const serviceType = await database.tipoServicio.findUniqueOrThrow({
+      where: { code: "SUPPORT" },
+    });
+    const activityType = await database.tipoActividad.findUniqueOrThrow({
+      where: { code: "SUPPORT" },
+    });
+    const actor = {
+      userId: admin.id,
+      requestId: randomUUID(),
+      ipAddress: null,
+      userAgent: "Client lifecycle test",
+    };
+    let clientId: string | undefined;
+    let branchId: string | undefined;
+    const orderId = randomUUID();
+    const activityId = randomUUID();
+
+    try {
+      const created = await service.createClient(
+        {
+          tradeName: `Ciclo ${randomUUID().slice(0, 8)}`,
+          mainBranch: { name: "Principal", address: "Centro", country: "HN" },
+          primaryContact: { scope: "MAIN_BRANCH", fullName: "Contacto ciclo" },
+        },
+        actor,
+      );
+      clientId = created.id;
+      branchId = created.branches[0]!.id;
+      const branchVersion = created.branches[0]!.version;
+      const contactVersion = created.contacts[0]!.version;
+
+      await database.ordenTrabajo.create({
+        data: {
+          id: orderId,
+          orderNumber: `LIFE-${randomUUID().slice(0, 8)}`,
+          sucursalId: branchId,
+          tipoServicioId: serviceType.id,
+          status: "PENDING",
+          reportedProblem: "Trabajo activo de prueba",
+        },
+      });
+      await expect(
+        service.deactivateClient(created.id, { version: 1, reason: "Pausa comercial aprobada" }, actor),
+      ).rejects.toMatchObject({ code: "CLIENT_HAS_ACTIVE_WORK" });
+      await database.ordenTrabajo.delete({ where: { id: orderId } });
+
+      await database.actividad.create({
+        data: {
+          id: activityId,
+          sucursalId: branchId,
+          tipoActividadId: activityType.id,
+          status: "PENDING",
+          description: "Actividad activa de prueba",
+        },
+      });
+      await expect(
+        service.deactivateClient(created.id, { version: 1, reason: "Pausa comercial aprobada" }, actor),
+      ).rejects.toMatchObject({ code: "CLIENT_HAS_ACTIVE_WORK" });
+      await database.actividad.delete({ where: { id: activityId } });
+
+      const inactive = await service.deactivateClient(
+        created.id,
+        { version: 1, reason: "Pausa comercial aprobada" },
+        actor,
+      );
+      expect(inactive).toMatchObject({ isActive: false, version: 2 });
+      expect(inactive.branches[0]).toMatchObject({
+        isActive: true,
+        isEffectivelyActive: false,
+        version: branchVersion,
+      });
+      expect(inactive.contacts[0]).toMatchObject({
+        isActive: true,
+        isEffectivelyActive: false,
+        version: contactVersion,
+      });
+
+      const active = await service.reactivateClient(
+        created.id,
+        { version: 2, reason: "Reactivación comercial aprobada" },
+        actor,
+      );
+      expect(active).toMatchObject({ isActive: true, version: 3 });
+      expect(active.branches[0]?.isEffectivelyActive).toBe(true);
+      expect(active.contacts[0]?.isEffectivelyActive).toBe(true);
+    } finally {
+      await database.actividad.deleteMany({ where: { id: activityId } });
+      await database.ordenTrabajo.deleteMany({ where: { id: orderId } });
+      if (clientId) {
+        await database.auditoria.deleteMany({ where: { entity: "cliente", entityId: clientId } });
+        await database.contactoCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.sucursalCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.cliente.deleteMany({ where: { id: clientId } });
+      }
+    }
+  });
 });

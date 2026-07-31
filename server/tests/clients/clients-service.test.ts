@@ -52,6 +52,8 @@ function repositoryFake(
     }),
     createClient: async () => ({ kind: "CREATED", client: detailRecord }),
     updateClient: async () => ({ kind: "UPDATED", client: detailRecord }),
+    deactivateClient: async () => ({ kind: "UPDATED", client: detailRecord }),
+    reactivateClient: async () => ({ kind: "UPDATED", client: detailRecord }),
     ...overrides,
   };
 }
@@ -218,5 +220,38 @@ describe("client mutation service", () => {
         actor,
       ),
     ).rejects.toMatchObject({ statusCode: 409, code: "VERSION_CONFLICT" });
+  });
+
+  it("maps active work and lifecycle state conflicts", async () => {
+    const activeWork = createClientsService(
+      repositoryFake({
+        deactivateClient: async () => ({ kind: "ACTIVE_WORK" }),
+      }),
+      () => date,
+    );
+    await expect(
+      activeWork.deactivateClient(
+        detailRecord.id,
+        { version: 1, reason: "Cliente con trabajo activo" },
+        actor,
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "CLIENT_HAS_ACTIVE_WORK",
+    });
+
+    const alreadyActive = createClientsService(
+      repositoryFake({
+        reactivateClient: async () => ({ kind: "ALREADY_ACTIVE" }),
+      }),
+      () => date,
+    );
+    await expect(
+      alreadyActive.reactivateClient(
+        detailRecord.id,
+        { version: 1, reason: "Cliente ya se encuentra activo" },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "RESOURCE_INACTIVE" });
   });
 });

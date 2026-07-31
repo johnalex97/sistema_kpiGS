@@ -5,6 +5,7 @@ import type {
   ClientListFilters,
   ContactListFilters,
   CreateClientInput,
+  LifecycleInput,
   UpdateClientInput,
 } from "./clients.types.js";
 
@@ -114,6 +115,18 @@ export interface ClientsRepository {
     actor: ClientActorContext,
     now: Date,
   ): Promise<ClientMutationResult>;
+  deactivateClient(
+    id: string,
+    input: LifecycleInput,
+    actor: ClientActorContext,
+    now: Date,
+  ): Promise<ClientMutationResult>;
+  reactivateClient(
+    id: string,
+    input: LifecycleInput,
+    actor: ClientActorContext,
+    now: Date,
+  ): Promise<ClientMutationResult>;
 }
 
 export type ClientMutationResult =
@@ -122,7 +135,9 @@ export type ClientMutationResult =
   | { kind: "NOT_FOUND" }
   | { kind: "INACTIVE" }
   | { kind: "VERSION_CONFLICT" }
-  | { kind: "TAX_ID_CONFLICT" };
+  | { kind: "TAX_ID_CONFLICT" }
+  | { kind: "ACTIVE_WORK" }
+  | { kind: "ALREADY_ACTIVE" };
 
 type RepositoryClient = PrismaClient | Prisma.TransactionClient;
 
@@ -220,6 +235,7 @@ async function writeClientAudit(
     now: Date;
     before?: ClientSummaryRecord;
     after: ClientSummaryRecord;
+    reason?: string;
   },
 ): Promise<void> {
   await client.auditoria.create({
@@ -234,6 +250,7 @@ async function writeClientAudit(
       ipAddress: input.actor.ipAddress,
       userAgent: input.actor.userAgent,
       requestId: input.actor.requestId,
+      ...(input.reason !== undefined && { reason: input.reason }),
     },
   });
 }
@@ -495,6 +512,90 @@ export function createClientsRepository(
         }
         throw error;
       }
+    },
+
+    async deactivateClient(id, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        await transaction.$queryRaw`
+          SELECT "id" FROM "cliente" WHERE "id" = ${id}::uuid FOR UPDATE
+        `;
+        const before = await transaction.cliente.findUnique({
+          where: { id },
+          select: clientSummarySelect,
+        });
+        if (!before) return { kind: "NOT_FOUND" } as const;
+        if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+        if (!before.isActive || before.deletedAt) return { kind: "INACTIVE" } as const;
+        const [orders, activities] = await Promise.all([
+          transaction.ordenTrabajo.count({
+            where: {
+              sucursal: { clienteId: id },
+              status: { in: ["PENDING", "ASSIGNED", "ON_ROUTE", "IN_PROGRESS", "PAUSED"] },
+              deletedAt: null,
+            },
+          }),
+          transaction.actividad.count({
+            where: {
+              sucursal: { clienteId: id },
+              status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+              deletedAt: null,
+            },
+          }),
+        ]);
+        if (orders > 0 || activities > 0) return { kind: "ACTIVE_WORK" } as const;
+        const changed = await transaction.cliente.updateMany({
+          where: { id, version: input.version },
+          data: { isActive: false, deletedAt: now, version: { increment: 1 } },
+        });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+        const client = await findClientDetail(transaction, id, true);
+        if (!client) throw new Error("Cliente desactivado no encontrado");
+        await writeClientAudit(transaction, {
+          action: "CLIENT_DEACTIVATED",
+          entityId: id,
+          actor,
+          now,
+          before,
+          after: client,
+          reason: input.reason,
+        });
+        return { kind: "UPDATED", client } as const;
+      });
+    },
+
+    async reactivateClient(id, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        await transaction.$queryRaw`
+          SELECT "id" FROM "cliente" WHERE "id" = ${id}::uuid FOR UPDATE
+        `;
+        const before = await transaction.cliente.findUnique({
+          where: { id },
+          select: clientSummarySelect,
+        });
+        if (!before) return { kind: "NOT_FOUND" } as const;
+        if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+        if (before.isActive && !before.deletedAt) return { kind: "ALREADY_ACTIVE" } as const;
+        if (before.taxId && (await hasTaxConflict(transaction, before.taxId, id))) {
+          return { kind: "TAX_ID_CONFLICT" } as const;
+        }
+        const changed = await transaction.cliente.updateMany({
+          where: { id, version: input.version },
+          data: { isActive: true, deletedAt: null, version: { increment: 1 } },
+        });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+        const client = await findClientDetail(transaction, id, true);
+        if (!client) throw new Error("Cliente reactivado no encontrado");
+        await writeClientAudit(transaction, {
+          action: "CLIENT_REACTIVATED",
+          entityId: id,
+          actor,
+          now,
+          before,
+          after: client,
+          reason: input.reason,
+        });
+        return { kind: "UPDATED", client } as const;
+      });
     },
   };
 }
