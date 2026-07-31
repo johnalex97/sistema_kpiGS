@@ -51,6 +51,22 @@ const branchRecord = {
   deletedAt: null,
   version: 1,
 };
+const contactRecord = {
+  id: "10000000-0000-4000-8000-000000000040",
+  clienteId: detailRecord.id,
+  sucursalId: null,
+  fullName: "Ana López",
+  position: "Administración",
+  phone: null,
+  email: "ana@example.test",
+  isPrimary: true,
+  isActive: true,
+  createdAt: date,
+  updatedAt: date,
+  deletedAt: null,
+  version: 1,
+  sucursal: null,
+};
 
 function repositoryFake(
   overrides: Partial<ClientsRepository> = {},
@@ -76,6 +92,10 @@ function repositoryFake(
     updateBranch: async () => ({ kind: "UPDATED", branch: branchRecord, clientActive: true }),
     deactivateBranch: async () => ({ kind: "UPDATED", branch: branchRecord, clientActive: true }),
     reactivateBranch: async () => ({ kind: "UPDATED", branch: branchRecord, clientActive: true }),
+    createContact: async () => ({ kind: "CREATED", contact: contactRecord, clientActive: true }),
+    updateContact: async () => ({ kind: "UPDATED", contact: contactRecord, clientActive: true }),
+    deactivateContact: async () => ({ kind: "UPDATED", contact: contactRecord, clientActive: true }),
+    reactivateContact: async () => ({ kind: "UPDATED", contact: contactRecord, clientActive: true }),
     ...overrides,
   };
 }
@@ -316,5 +336,89 @@ describe("branch mutation service", () => {
         actor,
       ),
     ).rejects.toMatchObject({ code: "BRANCH_HAS_ACTIVE_WORK" });
+  });
+});
+
+describe("contact mutation service", () => {
+  it("creates and maps a client-wide primary contact", async () => {
+    const service = createClientsService(repositoryFake(), () => date);
+
+    await expect(
+      service.createContact(
+        detailRecord.id,
+        {
+          scope: "CLIENT",
+          fullName: "Ana López",
+          email: "ana@example.test",
+          isPrimary: true,
+        },
+        actor,
+      ),
+    ).resolves.toMatchObject({
+      scope: "CLIENT",
+      branchId: null,
+      isPrimary: true,
+      version: 1,
+    });
+  });
+
+  it("maps missing nested resources and stale versions", async () => {
+    const missingBranch = createClientsService(
+      repositoryFake({ createContact: async () => ({ kind: "BRANCH_NOT_FOUND" }) }),
+      () => date,
+    );
+    await expect(
+      missingBranch.createContact(
+        detailRecord.id,
+        {
+          scope: "BRANCH",
+          branchId: branchRecord.id,
+          fullName: "Encargado local",
+          isPrimary: false,
+        },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 404, code: "BRANCH_NOT_FOUND" });
+
+    const stale = createClientsService(
+      repositoryFake({ updateContact: async () => ({ kind: "VERSION_CONFLICT" }) }),
+      () => date,
+    );
+    await expect(
+      stale.updateContact(
+        detailRecord.id,
+        contactRecord.id,
+        { version: 1, fullName: "Nombre actualizado" },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "VERSION_CONFLICT" });
+  });
+
+  it("maps primary reassignment and lifecycle conflicts", async () => {
+    const conflict = createClientsService(
+      repositoryFake({ reactivateContact: async () => ({ kind: "PRIMARY_CONFLICT" }) }),
+      () => date,
+    );
+    await expect(
+      conflict.reactivateContact(
+        detailRecord.id,
+        contactRecord.id,
+        { version: 2, reason: "Contacto nuevamente disponible" },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "PRIMARY_CONTACT_CONFLICT" });
+
+    const parentInactive = createClientsService(
+      repositoryFake({ deactivateContact: async () => ({ kind: "PARENT_INACTIVE" }) }),
+      () => date,
+    );
+    await expect(
+      parentInactive.deactivateContact(
+        detailRecord.id,
+        contactRecord.id,
+        { version: 1, reason: "Contacto ya no trabaja con el cliente" },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "RESOURCE_INACTIVE" });
   });
 });

@@ -9,6 +9,7 @@ import type { ClientsRepository } from "./clients.repository.js";
 import type {
   BranchListFilters,
   CreateBranchInput,
+  CreateContactInput,
   ClientActorContext,
   ClientListFilters,
   ContactListFilters,
@@ -21,6 +22,7 @@ import type {
   PublicContact,
   UpdateClientInput,
   UpdateBranchInput,
+  UpdateContactInput,
 } from "./clients.types.js";
 
 function notFound(): ApiError {
@@ -70,6 +72,10 @@ export interface ClientsService {
   updateBranch(clientId: string, branchId: string, input: UpdateBranchInput, actor: ClientActorContext): Promise<PublicBranch>;
   deactivateBranch(clientId: string, branchId: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicBranch>;
   reactivateBranch(clientId: string, branchId: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicBranch>;
+  createContact(clientId: string, input: CreateContactInput, actor: ClientActorContext): Promise<PublicContact>;
+  updateContact(clientId: string, contactId: string, input: UpdateContactInput, actor: ClientActorContext): Promise<PublicContact>;
+  deactivateContact(clientId: string, contactId: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicContact>;
+  reactivateContact(clientId: string, contactId: string, input: LifecycleInput, actor: ClientActorContext): Promise<PublicContact>;
 }
 
 function mutationError(kind: string): ApiError {
@@ -92,6 +98,15 @@ function branchError(kind: string): ApiError {
   if (kind === "VERSION_CONFLICT") return new ApiError(409, "La sucursal fue modificada", "VERSION_CONFLICT");
   if (kind === "ACTIVE_WORK") return new ApiError(409, "La sucursal tiene trabajo activo", "BRANCH_HAS_ACTIVE_WORK");
   if (kind === "LAST_ACTIVE_BRANCH") return new ApiError(409, "El cliente requiere una sucursal activa", "CLIENT_REQUIRES_ACTIVE_BRANCH");
+  return new ApiError(409, "El recurso está inactivo", "RESOURCE_INACTIVE");
+}
+
+function contactError(kind: string): ApiError {
+  if (kind === "CLIENT_NOT_FOUND") return notFound();
+  if (kind === "BRANCH_NOT_FOUND") return new ApiError(404, "La sucursal solicitada no existe", "BRANCH_NOT_FOUND");
+  if (kind === "CONTACT_NOT_FOUND") return new ApiError(404, "El contacto solicitado no existe", "CONTACT_NOT_FOUND");
+  if (kind === "VERSION_CONFLICT") return new ApiError(409, "El contacto fue modificado", "VERSION_CONFLICT");
+  if (kind === "PRIMARY_CONFLICT") return new ApiError(409, "Ya existe un contacto principal activo en este alcance", "PRIMARY_CONTACT_CONFLICT");
   return new ApiError(409, "El recurso está inactivo", "RESOURCE_INACTIVE");
 }
 
@@ -183,6 +198,26 @@ export function createClientsService(
       const result = await repository.reactivateBranch(clientId, branchId, input, actor, now());
       if (result.kind !== "UPDATED") throw branchError(result.kind);
       return mapPublicBranch(result.branch, result.clientActive);
+    },
+    async createContact(clientId, input, actor) {
+      const result = await repository.createContact(clientId, input, actor, now());
+      if (result.kind !== "CREATED") throw contactError(result.kind);
+      return mapPublicContact(result.contact, result.clientActive);
+    },
+    async updateContact(clientId, contactId, input, actor) {
+      const result = await repository.updateContact(clientId, contactId, input, actor, now());
+      if (result.kind !== "UPDATED") throw contactError(result.kind);
+      return mapPublicContact(result.contact, result.clientActive);
+    },
+    async deactivateContact(clientId, contactId, input, actor) {
+      const result = await repository.deactivateContact(clientId, contactId, input, actor, now());
+      if (result.kind !== "UPDATED") throw contactError(result.kind);
+      return mapPublicContact(result.contact, result.clientActive);
+    },
+    async reactivateContact(clientId, contactId, input, actor) {
+      const result = await repository.reactivateContact(clientId, contactId, input, actor, now());
+      if (result.kind !== "UPDATED") throw contactError(result.kind);
+      return mapPublicContact(result.contact, result.clientActive);
     },
   };
 }

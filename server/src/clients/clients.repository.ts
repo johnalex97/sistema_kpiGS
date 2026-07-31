@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
 import type {
   BranchListFilters,
   CreateBranchInput,
+  CreateContactInput,
   ClientActorContext,
   ClientListFilters,
   ContactListFilters,
@@ -9,6 +10,7 @@ import type {
   LifecycleInput,
   UpdateClientInput,
   UpdateBranchInput,
+  UpdateContactInput,
 } from "./clients.types.js";
 
 export const branchSelect = {
@@ -133,6 +135,10 @@ export interface ClientsRepository {
   updateBranch(clientId: string, branchId: string, input: UpdateBranchInput, actor: ClientActorContext, now: Date): Promise<BranchMutationResult>;
   deactivateBranch(clientId: string, branchId: string, input: LifecycleInput, actor: ClientActorContext, now: Date): Promise<BranchMutationResult>;
   reactivateBranch(clientId: string, branchId: string, input: LifecycleInput, actor: ClientActorContext, now: Date): Promise<BranchMutationResult>;
+  createContact(clientId: string, input: CreateContactInput, actor: ClientActorContext, now: Date): Promise<ContactMutationResult>;
+  updateContact(clientId: string, contactId: string, input: UpdateContactInput, actor: ClientActorContext, now: Date): Promise<ContactMutationResult>;
+  deactivateContact(clientId: string, contactId: string, input: LifecycleInput, actor: ClientActorContext, now: Date): Promise<ContactMutationResult>;
+  reactivateContact(clientId: string, contactId: string, input: LifecycleInput, actor: ClientActorContext, now: Date): Promise<ContactMutationResult>;
 }
 
 export type ClientMutationResult =
@@ -148,6 +154,10 @@ export type ClientMutationResult =
 export type BranchMutationResult =
   | { kind: "CREATED" | "UPDATED"; branch: BranchRecord; clientActive: boolean }
   | { kind: "CLIENT_NOT_FOUND" | "BRANCH_NOT_FOUND" | "PARENT_INACTIVE" | "INACTIVE" | "ALREADY_ACTIVE" | "VERSION_CONFLICT" | "ACTIVE_WORK" | "LAST_ACTIVE_BRANCH" };
+
+export type ContactMutationResult =
+  | { kind: "CREATED" | "UPDATED"; contact: ContactRecord; clientActive: boolean }
+  | { kind: "CLIENT_NOT_FOUND" | "BRANCH_NOT_FOUND" | "CONTACT_NOT_FOUND" | "PARENT_INACTIVE" | "INACTIVE" | "ALREADY_ACTIVE" | "VERSION_CONFLICT" | "PRIMARY_CONFLICT" };
 
 type RepositoryClient = PrismaClient | Prisma.TransactionClient;
 
@@ -291,6 +301,123 @@ async function writeBranchAudit(
       ...(input.before && { beforeData: branchSnapshot(input.before) }),
       afterData: branchSnapshot(input.branch),
       ...(input.reason !== undefined && { reason: input.reason }),
+      occurredAt: input.now,
+      ipAddress: input.actor.ipAddress,
+      userAgent: input.actor.userAgent,
+      requestId: input.actor.requestId,
+    },
+  });
+}
+
+function contactSnapshot(record: ContactRecord) {
+  return {
+    branchId: record.sucursalId,
+    fullName: record.fullName,
+    position: record.position,
+    phone: record.phone,
+    email: record.email,
+    isPrimary: record.isPrimary,
+    isActive: record.isActive,
+    version: record.version,
+  };
+}
+
+async function writeContactAudit(
+  client: Prisma.TransactionClient,
+  input: {
+    action: string;
+    contact: ContactRecord;
+    actor: ClientActorContext;
+    now: Date;
+    before?: ContactRecord;
+    reason?: string;
+  },
+): Promise<void> {
+  await client.auditoria.create({
+    data: {
+      userId: input.actor.userId,
+      action: input.action,
+      entity: "contacto_cliente",
+      entityId: input.contact.id,
+      ...(input.before && { beforeData: contactSnapshot(input.before) }),
+      afterData: contactSnapshot(input.contact),
+      ...(input.reason !== undefined && { reason: input.reason }),
+      occurredAt: input.now,
+      ipAddress: input.actor.ipAddress,
+      userAgent: input.actor.userAgent,
+      requestId: input.actor.requestId,
+    },
+  });
+}
+
+async function lockContactScope(
+  client: Prisma.TransactionClient,
+  clientId: string,
+  branchId: string | null,
+): Promise<void> {
+  if (branchId === null) {
+    await client.$queryRaw`
+      SELECT "id" FROM "contacto_cliente"
+      WHERE "cliente_id" = ${clientId}::uuid AND "sucursal_id" IS NULL
+      FOR UPDATE
+    `;
+    return;
+  }
+  await client.$queryRaw`
+    SELECT "id" FROM "contacto_cliente"
+    WHERE "cliente_id" = ${clientId}::uuid AND "sucursal_id" = ${branchId}::uuid
+    FOR UPDATE
+  `;
+}
+
+async function demotePrimaryContacts(
+  client: Prisma.TransactionClient,
+  clientId: string,
+  branchId: string | null,
+  excludedId: string | null,
+): Promise<string[]> {
+  await lockContactScope(client, clientId, branchId);
+  const where: Prisma.ContactoClienteWhereInput = {
+    clienteId: clientId,
+    sucursalId: branchId,
+    isPrimary: true,
+    isActive: true,
+    deletedAt: null,
+    ...(excludedId && { id: { not: excludedId } }),
+  };
+  const demoted = await client.contactoCliente.findMany({
+    where,
+    select: { id: true },
+  });
+  if (demoted.length > 0) {
+    await client.contactoCliente.updateMany({
+      where,
+      data: { isPrimary: false, version: { increment: 1 } },
+    });
+  }
+  return demoted.map(({ id }) => id);
+}
+
+async function writePrimaryContactAudit(
+  client: Prisma.TransactionClient,
+  input: {
+    contactId: string;
+    demotedContactIds: string[];
+    actor: ClientActorContext;
+    now: Date;
+  },
+): Promise<void> {
+  if (input.demotedContactIds.length === 0) return;
+  await client.auditoria.create({
+    data: {
+      userId: input.actor.userId,
+      action: "CONTACT_PRIMARY_CHANGED",
+      entity: "contacto_cliente",
+      entityId: input.contactId,
+      afterData: {
+        promotedContactId: input.contactId,
+        demotedContactIds: input.demotedContactIds,
+      },
       occurredAt: input.now,
       ipAddress: input.actor.ipAddress,
       userAgent: input.actor.userAgent,
@@ -747,6 +874,255 @@ export function createClientsRepository(
         await writeBranchAudit(transaction, { action: "BRANCH_REACTIVATED", branch, before, actor, now, reason: input.reason });
         return { kind: "UPDATED", branch, clientActive: true } as const;
       });
+    },
+
+    async createContact(clientId, input, actor, now) {
+      try {
+        return await database.$transaction(async (transaction) => {
+          await transaction.$queryRaw`SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE`;
+          const parent = await transaction.cliente.findUnique({
+            where: { id: clientId },
+            select: { isActive: true, deletedAt: true },
+          });
+          if (!parent) return { kind: "CLIENT_NOT_FOUND" } as const;
+          if (!parent.isActive || parent.deletedAt) return { kind: "PARENT_INACTIVE" } as const;
+
+          const branchId = input.scope === "BRANCH" ? input.branchId ?? null : null;
+          if (input.scope === "BRANCH") {
+            if (!branchId) return { kind: "BRANCH_NOT_FOUND" } as const;
+            const branch = await transaction.sucursalCliente.findFirst({
+              where: { id: branchId, clienteId: clientId, isActive: true, deletedAt: null },
+              select: { id: true },
+            });
+            if (!branch) return { kind: "BRANCH_NOT_FOUND" } as const;
+          }
+
+          const demotedContactIds = input.isPrimary
+            ? await demotePrimaryContacts(transaction, clientId, branchId, null)
+            : [];
+          const contact = await transaction.contactoCliente.create({
+            data: {
+              clienteId: clientId,
+              sucursalId: branchId,
+              fullName: input.fullName,
+              ...(input.position !== undefined && { position: input.position }),
+              ...(input.phone !== undefined && { phone: input.phone }),
+              ...(input.email !== undefined && {
+                email: input.email?.trim().toLowerCase() ?? null,
+              }),
+              isPrimary: input.isPrimary,
+            },
+            select: contactSelect,
+          });
+          await writeContactAudit(transaction, {
+            action: "CONTACT_CREATED",
+            contact,
+            actor,
+            now,
+          });
+          await writePrimaryContactAudit(transaction, {
+            contactId: contact.id,
+            demotedContactIds,
+            actor,
+            now,
+          });
+          return { kind: "CREATED", contact, clientActive: true } as const;
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === "P2002") {
+          return { kind: "PRIMARY_CONFLICT" } as const;
+        }
+        throw error;
+      }
+    },
+
+    async updateContact(clientId, contactId, input, actor, now) {
+      try {
+        return await database.$transaction(async (transaction) => {
+          await transaction.$queryRaw`SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE`;
+          const parent = await transaction.cliente.findUnique({
+            where: { id: clientId },
+            select: { isActive: true, deletedAt: true },
+          });
+          if (!parent) return { kind: "CLIENT_NOT_FOUND" } as const;
+          if (!parent.isActive || parent.deletedAt) return { kind: "PARENT_INACTIVE" } as const;
+          await transaction.$queryRaw`
+            SELECT "id" FROM "contacto_cliente"
+            WHERE "id" = ${contactId}::uuid AND "cliente_id" = ${clientId}::uuid
+            FOR UPDATE
+          `;
+          const before = await transaction.contactoCliente.findFirst({
+            where: { id: contactId, clienteId: clientId },
+            select: contactSelect,
+          });
+          if (!before) return { kind: "CONTACT_NOT_FOUND" } as const;
+          if (!before.isActive || before.deletedAt) return { kind: "INACTIVE" } as const;
+          if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+
+          const branchId =
+            input.scope === "CLIENT"
+              ? null
+              : input.scope === "BRANCH"
+                ? input.branchId ?? null
+                : before.sucursalId;
+          if (input.scope === "BRANCH") {
+            if (!branchId) return { kind: "BRANCH_NOT_FOUND" } as const;
+            const branch = await transaction.sucursalCliente.findFirst({
+              where: { id: branchId, clienteId: clientId, isActive: true, deletedAt: null },
+              select: { id: true },
+            });
+            if (!branch) return { kind: "BRANCH_NOT_FOUND" } as const;
+          }
+          const isPrimary = input.isPrimary ?? before.isPrimary;
+          const demotedContactIds = isPrimary
+            ? await demotePrimaryContacts(transaction, clientId, branchId, contactId)
+            : [];
+          const changed = await transaction.contactoCliente.updateMany({
+            where: { id: contactId, clienteId: clientId, version: input.version },
+            data: {
+              ...(input.fullName !== undefined && { fullName: input.fullName }),
+              ...(input.position !== undefined && { position: input.position }),
+              ...(input.phone !== undefined && { phone: input.phone }),
+              ...(input.email !== undefined && {
+                email: input.email?.trim().toLowerCase() ?? null,
+              }),
+              sucursalId: branchId,
+              isPrimary,
+              version: { increment: 1 },
+            },
+          });
+          if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+          const contact = await transaction.contactoCliente.findUniqueOrThrow({
+            where: { id: contactId },
+            select: contactSelect,
+          });
+          await writeContactAudit(transaction, {
+            action: "CONTACT_UPDATED",
+            contact,
+            before,
+            actor,
+            now,
+          });
+          await writePrimaryContactAudit(transaction, {
+            contactId,
+            demotedContactIds,
+            actor,
+            now,
+          });
+          return { kind: "UPDATED", contact, clientActive: true } as const;
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === "P2002") {
+          return { kind: "PRIMARY_CONFLICT" } as const;
+        }
+        throw error;
+      }
+    },
+
+    async deactivateContact(clientId, contactId, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        await transaction.$queryRaw`SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE`;
+        const parent = await transaction.cliente.findUnique({
+          where: { id: clientId },
+          select: { isActive: true, deletedAt: true },
+        });
+        if (!parent) return { kind: "CLIENT_NOT_FOUND" } as const;
+        if (!parent.isActive || parent.deletedAt) return { kind: "PARENT_INACTIVE" } as const;
+        await transaction.$queryRaw`
+          SELECT "id" FROM "contacto_cliente"
+          WHERE "id" = ${contactId}::uuid AND "cliente_id" = ${clientId}::uuid
+          FOR UPDATE
+        `;
+        const before = await transaction.contactoCliente.findFirst({
+          where: { id: contactId, clienteId: clientId },
+          select: contactSelect,
+        });
+        if (!before) return { kind: "CONTACT_NOT_FOUND" } as const;
+        if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+        if (!before.isActive || before.deletedAt) return { kind: "INACTIVE" } as const;
+        const changed = await transaction.contactoCliente.updateMany({
+          where: { id: contactId, clienteId: clientId, version: input.version },
+          data: { isActive: false, deletedAt: now, version: { increment: 1 } },
+        });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+        const contact = await transaction.contactoCliente.findUniqueOrThrow({
+          where: { id: contactId },
+          select: contactSelect,
+        });
+        await writeContactAudit(transaction, {
+          action: "CONTACT_DEACTIVATED",
+          contact,
+          before,
+          actor,
+          now,
+          reason: input.reason,
+        });
+        return { kind: "UPDATED", contact, clientActive: true } as const;
+      });
+    },
+
+    async reactivateContact(clientId, contactId, input, actor, now) {
+      try {
+        return await database.$transaction(async (transaction) => {
+          await transaction.$queryRaw`SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE`;
+          const parent = await transaction.cliente.findUnique({
+            where: { id: clientId },
+            select: { isActive: true, deletedAt: true },
+          });
+          if (!parent) return { kind: "CLIENT_NOT_FOUND" } as const;
+          if (!parent.isActive || parent.deletedAt) return { kind: "PARENT_INACTIVE" } as const;
+          await transaction.$queryRaw`
+            SELECT "id" FROM "contacto_cliente"
+            WHERE "id" = ${contactId}::uuid AND "cliente_id" = ${clientId}::uuid
+            FOR UPDATE
+          `;
+          const before = await transaction.contactoCliente.findFirst({
+            where: { id: contactId, clienteId: clientId },
+            select: contactSelect,
+          });
+          if (!before) return { kind: "CONTACT_NOT_FOUND" } as const;
+          if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+          if (before.isActive && !before.deletedAt) return { kind: "ALREADY_ACTIVE" } as const;
+          if (before.isPrimary) {
+            await lockContactScope(transaction, clientId, before.sucursalId);
+            const primary = await transaction.contactoCliente.findFirst({
+              where: {
+                clienteId: clientId,
+                sucursalId: before.sucursalId,
+                id: { not: contactId },
+                isPrimary: true,
+                isActive: true,
+                deletedAt: null,
+              },
+              select: { id: true },
+            });
+            if (primary) return { kind: "PRIMARY_CONFLICT" } as const;
+          }
+          const changed = await transaction.contactoCliente.updateMany({
+            where: { id: contactId, clienteId: clientId, version: input.version },
+            data: { isActive: true, deletedAt: null, version: { increment: 1 } },
+          });
+          if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+          const contact = await transaction.contactoCliente.findUniqueOrThrow({
+            where: { id: contactId },
+            select: contactSelect,
+          });
+          await writeContactAudit(transaction, {
+            action: "CONTACT_REACTIVATED",
+            contact,
+            before,
+            actor,
+            now,
+            reason: input.reason,
+          });
+          return { kind: "UPDATED", contact, clientActive: true } as const;
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === "P2002") {
+          return { kind: "PRIMARY_CONFLICT" } as const;
+        }
+        throw error;
+      }
     },
   };
 }
