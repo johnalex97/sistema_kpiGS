@@ -10,6 +10,7 @@ const permissionData = [
   { code: "USERS_MANAGE", resource: "users", action: "manage" },
   { code: "TECHNICIANS_VIEW", resource: "technicians", action: "view" },
   { code: "TECHNICIANS_MANAGE", resource: "technicians", action: "manage" },
+  { code: "CLIENTS_VIEW", resource: "clients", action: "view" },
   { code: "CLIENTS_MANAGE", resource: "clients", action: "manage" },
   { code: "ORDERS_VIEW_OWN", resource: "orders", action: "view_own" },
   { code: "ORDERS_MANAGE", resource: "orders", action: "manage" },
@@ -102,6 +103,7 @@ export async function seedCatalogs(
     SUPERVISOR: [
       "TECHNICIANS_VIEW",
       "TECHNICIANS_MANAGE",
+      "CLIENTS_VIEW",
       "CLIENTS_MANAGE",
       "ORDERS_MANAGE",
       "ACTIVITIES_MANAGE",
@@ -109,6 +111,7 @@ export async function seedCatalogs(
       "KPIS_VIEW_TEAM",
     ],
     TECHNICIAN: [
+      "CLIENTS_VIEW",
       "ORDERS_VIEW_OWN",
       "ACTIVITIES_MANAGE_OWN",
       "KPIS_VIEW_OWN",

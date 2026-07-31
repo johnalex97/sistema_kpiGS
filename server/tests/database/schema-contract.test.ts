@@ -40,4 +40,13 @@ describe("Prisma schema contract", () => {
       expect(Object.values(Prisma.ModelName)).toContain(model);
     }
   });
+
+  it("exposes optimistic versions for client branches and contacts", () => {
+    expect(Object.values(Prisma.SucursalClienteScalarFieldEnum)).toContain(
+      "version",
+    );
+    expect(Object.values(Prisma.ContactoClienteScalarFieldEnum)).toContain(
+      "version",
+    );
+  });
 });

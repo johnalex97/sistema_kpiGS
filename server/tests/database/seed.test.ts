@@ -10,6 +10,29 @@ import {
 afterAll(disconnectTestDatabase);
 
 describe("database seed", () => {
+  it("assigns client reading to every role and management only to leaders", async () => {
+    await seedDatabase(database);
+    const roles = await database.rol.findMany({
+      where: { code: { in: ["ADMIN", "SUPERVISOR", "TECHNICIAN"] } },
+      include: { permissions: { include: { permiso: true } } },
+    });
+    const rolePermissions = Object.fromEntries(
+      roles.map((role) => [
+        role.code,
+        role.permissions.map(({ permiso }) => permiso.code),
+      ]),
+    );
+
+    expect(rolePermissions.ADMIN).toEqual(
+      expect.arrayContaining(["CLIENTS_VIEW", "CLIENTS_MANAGE"]),
+    );
+    expect(rolePermissions.SUPERVISOR).toEqual(
+      expect.arrayContaining(["CLIENTS_VIEW", "CLIENTS_MANAGE"]),
+    );
+    expect(rolePermissions.TECHNICIAN).toContain("CLIENTS_VIEW");
+    expect(rolePermissions.TECHNICIAN).not.toContain("CLIENTS_MANAGE");
+  });
+
   it("seeds twice without duplicating natural keys", async () => {
     await seedDatabase(database);
     const first = {

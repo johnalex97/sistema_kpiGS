@@ -294,6 +294,7 @@ model SucursalCliente {
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(3)
+  version           Int       @default(1)
 
   cliente     Cliente           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   contactos   ContactoCliente[]
@@ -318,6 +319,7 @@ model ContactoCliente {
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(3)
+  version    Int       @default(1)
 
   cliente  Cliente          @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   sucursal SucursalCliente? @relation(fields: [sucursalId], references: [id], onDelete: SetNull)
