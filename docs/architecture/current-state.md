@@ -1,12 +1,12 @@
 # Diagnóstico de arquitectura actual
 
-Fecha de actualización: 30 de julio de 2026.
+Fecha de actualización: 31 de julio de 2026.
 
 ## Resumen
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express
 independiente, persistencia PostgreSQL mediante Prisma y autenticación backend
-con sesiones opacas y una API persistente de técnicos. El diseño es navegable
+con sesiones opacas y APIs persistentes de técnicos y clientes. El diseño es navegable
 y responsive, pero todavía no existen pantalla de acceso ni conexión del
 frontend con la API.
 
@@ -33,6 +33,7 @@ server/
 ├── generated/prisma/  # Cliente generado; ignorado por Git
 ├── src/
 │   ├── auth/         # Sesión, contraseña, servicio, repositorio y HTTP
+│   ├── clients/      # Clientes, sucursales, contactos y reglas de ciclo
 │   ├── config/       # Entorno validado
 │   ├── controllers/  # Controlador de salud
 │   ├── middlewares/  # Correlación, 404 y errores
@@ -45,8 +46,9 @@ server/
 ```
 
 No existen todavía servicios HTTP ni contexto de autenticación en el frontend.
-El backend ya consume persistencia para autenticación y técnicos. Aún no
-existen controladores o repositorios para órdenes, actividades o clientes.
+El backend ya consume persistencia para autenticación, técnicos, clientes,
+sucursales y contactos. Aún no existen controladores o repositorios para
+órdenes o actividades.
 
 ## Funcionalidades que operan en el navegador
 
@@ -94,7 +96,7 @@ al recargar la página.
 5. No hay tratamiento de carga, error de API o reintentos en el frontend.
 6. Los usuarios demo no pueden iniciar sesión; el administrador requiere
    variables privadas de seed.
-7. Clientes, órdenes y actividades todavía no tienen repositorios HTTP.
+7. Órdenes y actividades todavía no tienen repositorios HTTP.
 8. Algunos controles visuales todavía no ejecutan ninguna acción.
 
 ## Validaciones ejecutadas
@@ -114,15 +116,16 @@ Backend, ejecutado desde `server/`:
 | --- | --- |
 | `npm run typecheck` | Correcto |
 | `npm run lint` | Correcto; 0 advertencias |
-| `npm run test` | Correcto; 75 pruebas |
-| `npm run test:db` | Correcto; 46 pruebas PostgreSQL |
+| `npm run test` | Correcto; 95 pruebas |
+| `npm run test:db` | Correcto; 62 pruebas HTTP y PostgreSQL |
 | `npm run build` | Correcto |
 | `npm run db:validate` | Schema Prisma válido |
-| `npm run db:verify` | 31 tablas de dominio, 31 checks, 5 índices parciales y secuencia de técnicos |
-| `npx prisma migrate status` | 3 migraciones aplicadas |
+| `npm run db:verify` | 31 tablas de dominio, 33 checks, 7 índices parciales y 2 secuencias |
+| `npx prisma migrate status` | 4 migraciones aplicadas |
 | `GET /api/v1/health` | HTTP 200 con correlación |
 | Flujo auth compilado | Login 200, me 200 y logout 204 |
 | API de técnicos | 7 endpoints con ciclo completo |
+| API de clientes | 16 endpoints con ciclo completo de clientes, sucursales y contactos |
 
 ## Arquitectura objetivo
 
@@ -144,8 +147,14 @@ Backend, ejecutado desde `server/`:
 
 El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
 PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
-`"Sistema_kpiGS"` tiene 31 tablas de dominio, tres migraciones, seed idempotente
+`"Sistema_kpiGS"` tiene 31 tablas de dominio, cuatro migraciones, seed idempotente
 y un esquema `test` aislado.
+
+El módulo `clients` sigue la cadena completa route → middleware → controller →
+service → repository → Prisma. Expone 16 endpoints protegidos para consultar y
+administrar clientes, sucursales y contactos. Las transacciones asignan códigos
+inmutables, validan propiedad anidada, aplican concurrencia optimista, mantienen
+un principal por alcance y escriben auditoría junto con cada mutación.
 
 La separación será:
 

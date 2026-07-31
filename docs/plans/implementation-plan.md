@@ -83,7 +83,15 @@ control de versión, bloqueo por trabajo activo, permisos y cinco auditorías.
 
 Salida 6A verificada: 75 pruebas backend, 46 pruebas PostgreSQL, tres
 migraciones aplicadas, typecheck, lint, builds y auditorías sin
-vulnerabilidades. Clientes, contactos y sucursales quedan pendientes para 6B.
+vulnerabilidades.
+
+Estado 6B, clientes: completada. La API permite buscar, paginar, consultar,
+crear, editar, desactivar y reactivar clientes, sucursales y contactos. Incluye
+códigos automáticos, RTN histórico único, contactos generales o por sucursal,
+reasignación atómica del principal, control de versión, reglas de trabajo
+activo, permisos `CLIENTS_VIEW`/`CLIENTS_MANAGE` y auditoría transaccional.
+La cuarta migración está aplicada en `public` y `test`. El frontend React no
+consume todavía estos endpoints; esa integración permanece en la etapa 12.
 
 Salida: maestros operativos conectados a datos reales.
 

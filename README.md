@@ -75,7 +75,10 @@ PostgreSQL devuelve un error sin modificar sus tablas. No se utiliza
 `prisma db push`; la estructura se reproduce mediante las migraciones
 versionadas. La tercera migración,
 `20260730194456_technicians_api_constraints`, incorpora la secuencia de
-códigos de técnico y la unicidad de correo laboral activo.
+códigos de técnico y la unicidad de correo laboral activo. La cuarta,
+`20260731120000_clients_api_constraints`, agrega versiones para sucursales y
+contactos, la secuencia de clientes y las restricciones de RTN y contactos
+principales.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
 apuntarse al esquema `public`.
@@ -110,6 +113,22 @@ PATCH /api/v1/technicians/:id
 PATCH /api/v1/technicians/:id/status
 DELETE /api/v1/technicians/:id
 POST /api/v1/technicians/:id/reactivate
+GET /api/v1/clients
+GET /api/v1/clients/:clientId
+POST /api/v1/clients
+PATCH /api/v1/clients/:clientId
+DELETE /api/v1/clients/:clientId
+POST /api/v1/clients/:clientId/reactivate
+GET /api/v1/clients/:clientId/branches
+POST /api/v1/clients/:clientId/branches
+PATCH /api/v1/clients/:clientId/branches/:branchId
+DELETE /api/v1/clients/:clientId/branches/:branchId
+POST /api/v1/clients/:clientId/branches/:branchId/reactivate
+GET /api/v1/clients/:clientId/contacts
+POST /api/v1/clients/:clientId/contacts
+PATCH /api/v1/clients/:clientId/contacts/:contactId
+DELETE /api/v1/clients/:clientId/contacts/:contactId
+POST /api/v1/clients/:clientId/contacts/:contactId/reactivate
 ```
 
 Los endpoints mutables de autenticación requieren un encabezado `Origin`
@@ -122,6 +141,17 @@ La API de técnicos requiere `TECHNICIANS_VIEW` para lecturas y
 `version`; la desactivación es lógica, queda auditada y se bloquea cuando el
 técnico participa en una orden o actividad activa. La pantalla React de
 técnicos continúa usando mocks hasta la fase de integración del frontend.
+
+La API de clientes requiere `CLIENTS_VIEW` para lecturas; ADMIN, SUPERVISOR y
+TECHNICIAN lo reciben. Las mutaciones requieren `CLIENTS_MANAGE`, disponible
+solo para ADMIN y SUPERVISOR, además de un `Origin` permitido. Los códigos se
+asignan automáticamente (`CLI-001`, `MAIN`, `SUC-001`) y no son editables. La
+desactivación es lógica y auditada: un cliente conserva el estado interno de
+sus hijos, una sucursal no puede cerrarse si es la última activa o tiene
+trabajo activo, y desactivar un contacto principal no promueve otro. Solo
+puede existir un principal general activo y uno activo por cada sucursal.
+Todas las ediciones y transiciones usan `version` para evitar sobrescrituras.
+El frontend React todavía no consume esta API de clientes.
 
 Respuesta:
 
@@ -150,8 +180,8 @@ Comandos del backend:
 | `npm run dev` | Ejecuta la API con recarga |
 | `npm run typecheck` | Valida TypeScript sin emitir |
 | `npm run lint` | Ejecuta ESLint |
-| `npm run test` | Ejecuta pruebas unitarias e integración HTTP |
-| `npm run test:db` | Ejecuta pruebas contra el esquema PostgreSQL `test` |
+| `npm run test` | Ejecuta 95 pruebas unitarias y de contrato |
+| `npm run test:db` | Ejecuta 62 pruebas HTTP y PostgreSQL contra el esquema `test` |
 | `npm run build` | Genera `server/dist/` |
 | `npm run start` | Ejecuta el build |
 | `npm run db:format` | Formatea `schema.prisma` |
@@ -228,7 +258,7 @@ explícitamente en `src/mocks/data.ts`.
 
 PostgreSQL posee además un seed independiente con:
 
-- 3 roles y 12 permisos.
+- 3 roles y 13 permisos.
 - 3 técnicos, uno vinculado a usuario y dos sin cuenta.
 - 2 clientes y sus sucursales/contactos.
 - 3 órdenes.
