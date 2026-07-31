@@ -9,6 +9,7 @@ export default defineConfig({
       "tests/auth/auth-service.test.ts",
       "tests/auth/auth-http.test.ts",
       "tests/technicians/technicians-http.test.ts",
+      "tests/clients/clients-http.test.ts",
     ],
     fileParallelism: false,
     sequence: { concurrent: false },

@@ -105,6 +105,10 @@ export const clientListQuerySchema = z
   .strict()
   .transform(includeExplicitInactive);
 
+export const clientDetailQuerySchema = z
+  .object({ includeInactive: booleanText.default(false) })
+  .strict();
+
 export const branchListQuerySchema = z
   .object({
     ...paginationFields,
