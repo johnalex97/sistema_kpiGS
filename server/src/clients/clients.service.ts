@@ -8,13 +8,16 @@ import {
 import type { ClientsRepository } from "./clients.repository.js";
 import type {
   BranchListFilters,
+  ClientActorContext,
   ClientListFilters,
   ContactListFilters,
+  CreateClientInput,
   PaginatedResult,
   PublicBranch,
   PublicClientDetail,
   PublicClientSummary,
   PublicContact,
+  UpdateClientInput,
 } from "./clients.types.js";
 
 function notFound(): ApiError {
@@ -49,10 +52,31 @@ export interface ClientsService {
     clientId: string,
     filters: ContactListFilters,
   ): Promise<PaginatedResult<PublicContact>>;
+  createClient(
+    input: CreateClientInput,
+    actor: ClientActorContext,
+  ): Promise<PublicClientDetail>;
+  updateClient(
+    id: string,
+    input: UpdateClientInput,
+    actor: ClientActorContext,
+  ): Promise<PublicClientDetail>;
+}
+
+function mutationError(kind: string): ApiError {
+  if (kind === "NOT_FOUND") return notFound();
+  if (kind === "TAX_ID_CONFLICT") {
+    return new ApiError(409, "El RTN ya pertenece a otro cliente", "TAX_ID_ALREADY_EXISTS");
+  }
+  if (kind === "VERSION_CONFLICT") {
+    return new ApiError(409, "El cliente fue modificado por otro usuario", "VERSION_CONFLICT");
+  }
+  return new ApiError(409, "El cliente está inactivo", "RESOURCE_INACTIVE");
 }
 
 export function createClientsService(
   repository: ClientsRepository,
+  now: () => Date = () => new Date(),
 ): ClientsService {
   return {
     async listClients(filters) {
@@ -98,6 +122,16 @@ export function createClientsService(
           result.totalItems,
         ),
       };
+    },
+    async createClient(input, actor) {
+      const result = await repository.createClient(input, actor, now());
+      if (result.kind !== "CREATED") throw mutationError(result.kind);
+      return mapPublicClientDetail(result.client);
+    },
+    async updateClient(id, input, actor) {
+      const result = await repository.updateClient(id, input, actor, now());
+      if (result.kind !== "UPDATED") throw mutationError(result.kind);
+      return mapPublicClientDetail(result.client);
     },
   };
 }

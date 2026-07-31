@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seedDatabase } from "../../prisma/seed.js";
 import { createClientsRepository } from "../../src/clients/clients.repository.js";
+import { createClientsService } from "../../src/clients/clients.service.js";
 import {
   database,
   disconnectTestDatabase,
@@ -317,6 +318,93 @@ describe("client repository reads", () => {
         where: { id: { in: [...branchIds] } },
       });
       await database.cliente.deleteMany({ where: { id: clientId } });
+    }
+  });
+});
+
+describe("client persisted mutations", () => {
+  it("creates the initial aggregate and edits with optimistic concurrency", async () => {
+    const service = createClientsService(
+      createClientsRepository(database),
+      () => new Date("2026-07-31T18:00:00.000Z"),
+    );
+    const admin = await database.usuario.findUniqueOrThrow({
+      where: { email: "admin.demo@geeksolution.example.test" },
+    });
+    const suffix = randomUUID().slice(0, 8);
+    const actor = {
+      userId: admin.id,
+      requestId: randomUUID(),
+      ipAddress: "127.0.0.1",
+      userAgent: "Client persistence test",
+    };
+    let clientId: string | undefined;
+
+    try {
+      const created = await service.createClient(
+        {
+          tradeName: `Mutación ${suffix}`,
+          taxId: `TAX-${suffix}`,
+          email: `CLIENT.${suffix}@EXAMPLE.TEST`,
+          mainBranch: {
+            name: "Principal",
+            address: "Centro",
+            country: "HN",
+          },
+          primaryContact: {
+            scope: "MAIN_BRANCH",
+            fullName: "Contacto inicial",
+          },
+        },
+        actor,
+      );
+      clientId = created.id;
+      expect(created).toMatchObject({
+        version: 1,
+        email: `client.${suffix}@example.test`,
+      });
+      expect(created.code).toMatch(/^CLI-\d{3,}$/);
+      expect(created.branches).toHaveLength(1);
+      expect(created.branches[0]).toMatchObject({ code: "MAIN", version: 1 });
+      expect(created.contacts[0]).toMatchObject({
+        scope: "BRANCH",
+        isPrimary: true,
+      });
+
+      const updated = await service.updateClient(
+        created.id,
+        { version: 1, tradeName: `Actualizado ${suffix}` },
+        actor,
+      );
+      expect(updated).toMatchObject({
+        tradeName: `Actualizado ${suffix}`,
+        version: 2,
+      });
+      await expect(
+        service.updateClient(
+          created.id,
+          { version: 1, phone: "+504 2200-0000" },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+
+      const audits = await database.auditoria.findMany({
+        where: { entity: "cliente", entityId: created.id },
+        orderBy: { occurredAt: "asc" },
+      });
+      expect(audits.map(({ action }) => action)).toEqual([
+        "CLIENT_CREATED",
+        "CLIENT_UPDATED",
+      ]);
+    } finally {
+      if (clientId) {
+        await database.auditoria.deleteMany({
+          where: { entity: "cliente", entityId: clientId },
+        });
+        await database.contactoCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.sucursalCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.cliente.deleteMany({ where: { id: clientId } });
+      }
     }
   });
 });

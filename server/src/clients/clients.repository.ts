@@ -1,8 +1,11 @@
 import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
 import type {
   BranchListFilters,
+  ClientActorContext,
   ClientListFilters,
   ContactListFilters,
+  CreateClientInput,
+  UpdateClientInput,
 } from "./clients.types.js";
 
 export const branchSelect = {
@@ -100,7 +103,28 @@ export interface ClientsRepository {
     clientId: string,
     filters: ContactListFilters,
   ): Promise<ChildPageRecord<ContactRecord> | null>;
+  createClient(
+    input: CreateClientInput,
+    actor: ClientActorContext,
+    now: Date,
+  ): Promise<ClientMutationResult>;
+  updateClient(
+    id: string,
+    input: UpdateClientInput,
+    actor: ClientActorContext,
+    now: Date,
+  ): Promise<ClientMutationResult>;
 }
+
+export type ClientMutationResult =
+  | { kind: "CREATED"; client: ClientDetailRecord }
+  | { kind: "UPDATED"; client: ClientDetailRecord }
+  | { kind: "NOT_FOUND" }
+  | { kind: "INACTIVE" }
+  | { kind: "VERSION_CONFLICT" }
+  | { kind: "TAX_ID_CONFLICT" };
+
+type RepositoryClient = PrismaClient | Prisma.TransactionClient;
 
 function visibleState(includeInactive: boolean): Prisma.ClienteWhereInput {
   return includeInactive ? {} : { isActive: true, deletedAt: null };
@@ -126,6 +150,92 @@ function contactState(
     return { OR: [{ isActive: false }, { deletedAt: { not: null } }] };
   }
   return includeInactive ? {} : { isActive: true, deletedAt: null };
+}
+
+async function findClientDetail(
+  client: RepositoryClient,
+  id: string,
+  includeInactive: boolean,
+): Promise<ClientDetailRecord | null> {
+  const relationWhere = includeInactive
+    ? {}
+    : { isActive: true, deletedAt: null };
+  const result = await client.cliente.findFirst({
+    where: { id, ...visibleState(includeInactive) },
+    select: {
+      ...clientSummarySelect,
+      sucursales: {
+        where: relationWhere,
+        select: branchSelect,
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+      },
+      contactos: {
+        where: relationWhere,
+        select: contactSelect,
+        orderBy: [{ fullName: "asc" }, { id: "asc" }],
+      },
+    },
+  });
+  return result as ClientDetailRecord | null;
+}
+
+function normalizedTaxId(value: string): string {
+  return value.replaceAll(/[\s-]/g, "").toUpperCase();
+}
+
+async function hasTaxConflict(
+  client: RepositoryClient,
+  taxId: string,
+  excludedId: string | null,
+): Promise<boolean> {
+  const rows = await client.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "cliente"
+    WHERE UPPER(REGEXP_REPLACE("tax_id", '[-[:space:]]', '', 'g')) = ${normalizedTaxId(taxId)}
+      AND (${excludedId}::uuid IS NULL OR "id" <> ${excludedId}::uuid)
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+function clientSnapshot(record: ClientSummaryRecord) {
+  return {
+    code: record.code,
+    tradeName: record.tradeName,
+    legalName: record.legalName,
+    taxId: record.taxId,
+    phone: record.phone,
+    email: record.email,
+    isActive: record.isActive,
+    version: record.version,
+  };
+}
+
+async function writeClientAudit(
+  client: Prisma.TransactionClient,
+  input: {
+    action: string;
+    entityId: string;
+    actor: ClientActorContext;
+    now: Date;
+    before?: ClientSummaryRecord;
+    after: ClientSummaryRecord;
+  },
+): Promise<void> {
+  await client.auditoria.create({
+    data: {
+      userId: input.actor.userId,
+      action: input.action,
+      entity: "cliente",
+      entityId: input.entityId,
+      ...(input.before && { beforeData: clientSnapshot(input.before) }),
+      afterData: clientSnapshot(input.after),
+      occurredAt: input.now,
+      ipAddress: input.actor.ipAddress,
+      userAgent: input.actor.userAgent,
+      requestId: input.actor.requestId,
+    },
+  });
 }
 
 export function createClientsRepository(
@@ -164,26 +274,7 @@ export function createClientsRepository(
     },
 
     async findClientById(id, includeInactive) {
-      const relationWhere = includeInactive
-        ? {}
-        : { isActive: true, deletedAt: null };
-      const client = await database.cliente.findFirst({
-        where: { id, ...visibleState(includeInactive) },
-        select: {
-          ...clientSummarySelect,
-          sucursales: {
-            where: relationWhere,
-            select: branchSelect,
-            orderBy: [{ name: "asc" }, { id: "asc" }],
-          },
-          contactos: {
-            where: relationWhere,
-            select: contactSelect,
-            orderBy: [{ fullName: "asc" }, { id: "asc" }],
-          },
-        },
-      });
-      return client as ClientDetailRecord | null;
+      return findClientDetail(database, id, includeInactive);
     },
 
     async listBranches(clientId, filters) {
@@ -263,6 +354,147 @@ export function createClientsRepository(
         items,
         totalItems,
       };
+    },
+
+    async createClient(input, actor, now) {
+      try {
+        return await database.$transaction(async (transaction) => {
+          if (input.taxId && (await hasTaxConflict(transaction, input.taxId, null))) {
+            return { kind: "TAX_ID_CONFLICT" } as const;
+          }
+          const rows = await transaction.$queryRaw<Array<{ value: bigint }>>`
+            SELECT nextval('cliente_code_seq') AS value
+          `;
+          const value = rows[0]?.value;
+          if (value === undefined) throw new Error("No se pudo asignar código de cliente");
+          const code = `CLI-${String(value).padStart(3, "0")}`;
+          const created = await transaction.cliente.create({
+            data: {
+              code,
+              tradeName: input.tradeName,
+              ...(input.legalName !== undefined && { legalName: input.legalName }),
+              ...(input.taxId !== undefined && { taxId: input.taxId }),
+              ...(input.phone !== undefined && { phone: input.phone }),
+              ...(input.email !== undefined && {
+                email: input.email?.trim().toLowerCase() ?? null,
+              }),
+              ...(input.notes !== undefined && { notes: input.notes }),
+            },
+            select: { id: true },
+          });
+          const branch = await transaction.sucursalCliente.create({
+            data: {
+              clienteId: created.id,
+              code: "MAIN",
+              name: input.mainBranch.name,
+              address: input.mainBranch.address,
+              ...(input.mainBranch.city !== undefined && { city: input.mainBranch.city }),
+              ...(input.mainBranch.region !== undefined && { region: input.mainBranch.region }),
+              country: input.mainBranch.country,
+              ...(input.mainBranch.lat !== undefined && { latitude: input.mainBranch.lat }),
+              ...(input.mainBranch.long !== undefined && { longitude: input.mainBranch.long }),
+              ...(input.mainBranch.locationReference !== undefined && {
+                locationReference: input.mainBranch.locationReference,
+              }),
+            },
+          });
+          if (input.primaryContact) {
+            await transaction.contactoCliente.create({
+              data: {
+                clienteId: created.id,
+                sucursalId:
+                  input.primaryContact.scope === "MAIN_BRANCH"
+                    ? branch.id
+                    : null,
+                fullName: input.primaryContact.fullName,
+                ...(input.primaryContact.position !== undefined && {
+                  position: input.primaryContact.position,
+                }),
+                ...(input.primaryContact.phone !== undefined && {
+                  phone: input.primaryContact.phone,
+                }),
+                ...(input.primaryContact.email !== undefined && {
+                  email: input.primaryContact.email?.trim().toLowerCase() ?? null,
+                }),
+                isPrimary: true,
+              },
+            });
+          }
+          const client = await findClientDetail(transaction, created.id, true);
+          if (!client) throw new Error("Cliente creado no encontrado");
+          await writeClientAudit(transaction, {
+            action: "CLIENT_CREATED",
+            entityId: created.id,
+            actor,
+            now,
+            after: client,
+          });
+          return { kind: "CREATED", client } as const;
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === "P2002") {
+          return { kind: "TAX_ID_CONFLICT" };
+        }
+        throw error;
+      }
+    },
+
+    async updateClient(id, input, actor, now) {
+      try {
+        return await database.$transaction(async (transaction) => {
+          const before = await transaction.cliente.findUnique({
+            where: { id },
+            select: clientSummarySelect,
+          });
+          if (!before) return { kind: "NOT_FOUND" } as const;
+          if (!before.isActive || before.deletedAt) return { kind: "INACTIVE" } as const;
+          if (before.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+          if (
+            input.taxId &&
+            (await hasTaxConflict(transaction, input.taxId, id))
+          ) {
+            return { kind: "TAX_ID_CONFLICT" } as const;
+          }
+          const updated = await transaction.cliente.updateMany({
+            where: { id, version: input.version },
+            data: {
+              ...(input.tradeName !== undefined && { tradeName: input.tradeName }),
+              ...(input.legalName !== undefined && { legalName: input.legalName }),
+              ...(input.taxId !== undefined && { taxId: input.taxId }),
+              ...(input.phone !== undefined && { phone: input.phone }),
+              ...(input.email !== undefined && {
+                email:
+                  typeof input.email === "string"
+                    ? input.email.trim().toLowerCase()
+                    : input.email,
+              }),
+              ...(input.notes !== undefined && { notes: input.notes }),
+              version: { increment: 1 },
+            },
+          });
+          if (updated.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+          const after = await transaction.cliente.findUniqueOrThrow({
+            where: { id },
+            select: clientSummarySelect,
+          });
+          await writeClientAudit(transaction, {
+            action: "CLIENT_UPDATED",
+            entityId: id,
+            actor,
+            now,
+            before,
+            after,
+          });
+          const client = await findClientDetail(transaction, id, true);
+          if (!client) throw new Error("Cliente actualizado no encontrado");
+          return { kind: "UPDATED", client } as const;
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === "P2002") {
+          return { kind: "TAX_ID_CONFLICT" };
+        }
+        throw error;
+      }
     },
   };
 }

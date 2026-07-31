@@ -8,6 +8,31 @@ import type { ClientsRepository } from "../../src/clients/clients.repository.js"
 import { createClientsService } from "../../src/clients/clients.service.js";
 
 const date = new Date("2026-07-31T12:00:00.000Z");
+const actor = {
+  userId: "10000000-0000-4000-8000-000000000010",
+  requestId: "10000000-0000-4000-8000-000000000011",
+  ipAddress: "127.0.0.1",
+  userAgent: "Client service test",
+};
+
+const detailRecord = {
+  id: "10000000-0000-4000-8000-000000000020",
+  code: "CLI-020",
+  tradeName: "Cliente prueba",
+  legalName: null,
+  taxId: null,
+  phone: null,
+  email: null,
+  notes: null,
+  isActive: true,
+  createdAt: date,
+  updatedAt: date,
+  deletedAt: null,
+  version: 1,
+  _count: { sucursales: 1, contactos: 0 },
+  sucursales: [],
+  contactos: [],
+};
 
 function repositoryFake(
   overrides: Partial<ClientsRepository> = {},
@@ -25,6 +50,8 @@ function repositoryFake(
       items: [],
       totalItems: 0,
     }),
+    createClient: async () => ({ kind: "CREATED", client: detailRecord }),
+    updateClient: async () => ({ kind: "UPDATED", client: detailRecord }),
     ...overrides,
   };
 }
@@ -140,5 +167,56 @@ describe("client read service", () => {
     await expect(
       service.listContacts("10000000-0000-4000-8000-000000000099", filters),
     ).rejects.toMatchObject({ code: "CLIENT_NOT_FOUND" });
+  });
+});
+
+describe("client mutation service", () => {
+  it("creates and maps an atomic client aggregate", async () => {
+    const service = createClientsService(repositoryFake(), () => date);
+    const result = await service.createClient(
+      {
+        tradeName: "Cliente prueba",
+        mainBranch: {
+          name: "Principal",
+          address: "Centro",
+          country: "HN",
+        },
+      },
+      actor,
+    );
+    expect(result).toMatchObject({ code: "CLI-020", version: 1 });
+  });
+
+  it("maps duplicate tax and stale edit outcomes to conflicts", async () => {
+    const duplicate = createClientsService(
+      repositoryFake({
+        createClient: async () => ({ kind: "TAX_ID_CONFLICT" }),
+      }),
+      () => date,
+    );
+    await expect(
+      duplicate.createClient(
+        {
+          tradeName: "Duplicado",
+          taxId: "0801-1999",
+          mainBranch: { name: "Principal", address: "Centro", country: "HN" },
+        },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "TAX_ID_ALREADY_EXISTS" });
+
+    const stale = createClientsService(
+      repositoryFake({
+        updateClient: async () => ({ kind: "VERSION_CONFLICT" }),
+      }),
+      () => date,
+    );
+    await expect(
+      stale.updateClient(
+        detailRecord.id,
+        { version: 1, tradeName: "Cambio" },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "VERSION_CONFLICT" });
   });
 });
