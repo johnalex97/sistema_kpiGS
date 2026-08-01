@@ -37,6 +37,7 @@ describe("database seed", () => {
     await seedDatabase(database);
     const first = {
       roles: await database.rol.count(),
+      rolePermissions: await database.rolPermiso.count(),
       technicians: await database.tecnico.count(),
       recurrences: await database.reincidencia.count(),
     };
@@ -44,11 +45,36 @@ describe("database seed", () => {
     await seedDatabase(database);
     const second = {
       roles: await database.rol.count(),
+      rolePermissions: await database.rolPermiso.count(),
       technicians: await database.tecnico.count(),
       recurrences: await database.reincidencia.count(),
     };
 
     expect(second).toEqual(first);
+  });
+
+  it("grants the order permissions after an idempotent second seed", async () => {
+    await seedDatabase(database);
+    await seedDatabase(database);
+    const roles = await database.rol.findMany({
+      where: { code: { in: ["SUPERVISOR", "TECHNICIAN"] } },
+      include: { permissions: { include: { permiso: true } } },
+    });
+    const rolePermissions = Object.fromEntries(
+      roles.map((role) => [
+        role.code,
+        role.permissions.map(({ permiso }) => permiso.code),
+      ]),
+    );
+    const supervisorPermissions = rolePermissions.SUPERVISOR ?? [];
+    const technicianPermissions = rolePermissions.TECHNICIAN ?? [];
+
+    expect(supervisorPermissions).toEqual(
+      expect.arrayContaining(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]),
+    );
+    expect(technicianPermissions).toEqual(
+      expect.arrayContaining(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]),
+    );
   });
 
   it("keeps demo users unable to authenticate", async () => {

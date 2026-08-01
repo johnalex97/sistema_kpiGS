@@ -34,3 +34,22 @@ export function requirePermission(code: string): RequestHandler {
     next();
   };
 }
+
+export function requireAnyPermission(
+  ...codes: readonly string[]
+): RequestHandler {
+  return (request, _response, next) => {
+    const granted = request.auth?.permissions ?? [];
+    if (!codes.some((code) => granted.includes(code))) {
+      next(
+        new ApiError(
+          403,
+          "No tiene permiso para realizar esta acción",
+          "FORBIDDEN",
+        ),
+      );
+      return;
+    }
+    next();
+  };
+}
