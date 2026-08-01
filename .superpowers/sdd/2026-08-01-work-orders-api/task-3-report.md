@@ -156,3 +156,37 @@ exit 0
 ```
 
 La salida de base de datos anterior no contiene ninguna advertencia deprecada de `pg`.
+
+## Fix round 3
+
+### Cambio
+
+- La materialización de resumen desestructura y descarta `sucursalId` y `tipoServicioId` después de usarlos para hidratar las relaciones públicas.
+- La materialización de historial desestructura y descarta `userId` después de resolver la identidad pública de usuario.
+- Se mantienen las transacciones interactivas `RepeatableRead`, consultas secuenciales y la carga de relaciones sin advertencias del adaptador.
+
+### Cobertura añadida
+
+- La prueba de página de órdenes comprueba que ningún `OrderSummaryRecord` contiene `sucursalId`, `tipoServicioId` ni `userId`.
+- La prueba de historial comprueba que ningún `OrderHistoryRecord` contiene `userId`.
+- RED observado: las aserciones negativas fallaron inicialmente al encontrar `sucursalId` y `userId`; GREEN tras descartar los auxiliares antes de construir los objetos de salida.
+
+### Verificación final (salida prístina)
+
+```text
+npm run test:db -- tests/database/orders-read-persistence.test.ts
+Test Files  1 passed (1)
+Tests       4 passed (4)
+
+npm test -- tests/orders/orders-mapper.test.ts
+Test Files  1 passed (1)
+Tests       4 passed (4)
+
+npm run typecheck
+exit 0
+
+npm run lint
+exit 0
+```
+
+La salida de `test:db` no contiene advertencias deprecadas de `pg`.

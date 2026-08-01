@@ -146,6 +146,11 @@ describe("orders read repository", () => {
       fixture.completedOrderId,
     ]);
     expect(all.items.map(({ id }) => id)).not.toContain(fixture.deletedOrderId);
+    for (const item of all.items) {
+      expect(item).not.toHaveProperty("sucursalId");
+      expect(item).not.toHaveProperty("tipoServicioId");
+      expect(item).not.toHaveProperty("userId");
+    }
     expect(first.items.map(({ id }) => id)).toEqual([
       fixture.activeOrderId,
       fixture.scheduledTieNewerId,
@@ -185,6 +190,7 @@ describe("orders read repository", () => {
     expect(deniedDetail).toBeNull();
     expect(ownHistory).toMatchObject({ totalItems: 2 });
     expect(ownHistory?.items).toHaveLength(1);
+    expect(ownHistory?.items[0]).not.toHaveProperty("userId");
     expect(deniedHistory).toBeNull();
   });
 });

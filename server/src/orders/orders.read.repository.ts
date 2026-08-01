@@ -130,8 +130,8 @@ async function loadOrderSummaryPage(
 
   return {
     totalItems,
-    items: orders.map((order) => {
-      const branch = branchesById.get(order.sucursalId)!;
+    items: orders.map(({ sucursalId, tipoServicioId, ...order }) => {
+      const branch = branchesById.get(sucursalId)!;
       const client = clientsById.get(branch.clienteId)!;
       const primary = primaryByOrderId.get(order.id);
       const technician = primary
@@ -140,7 +140,7 @@ async function loadOrderSummaryPage(
       return {
         ...order,
         sucursal: { id: branch.id, code: branch.code, name: branch.name, cliente: client },
-        tipoServicio: serviceTypesById.get(order.tipoServicioId)!,
+        tipoServicio: serviceTypesById.get(tipoServicioId)!,
         tecnicos: primary && technician
           ? [{ role: primary.role, unassignedAt: primary.unassignedAt, tecnico: technician }]
           : [],
@@ -173,9 +173,9 @@ async function loadOrderHistoryPage(
   const usersById = new Map(users.map((user) => [user.id, user]));
   return {
     totalItems,
-    items: histories.map((history) => ({
+    items: histories.map(({ userId, ...history }) => ({
       ...history,
-      usuario: history.userId ? usersById.get(history.userId) ?? null : null,
+      usuario: userId ? usersById.get(userId) ?? null : null,
     })) as OrderHistoryRecord[],
   };
 }
