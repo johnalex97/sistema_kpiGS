@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { seedDatabase } from "../../prisma/seed.js";
 import { createOrdersReadRepository } from "../../src/orders/orders.read.repository.js";
 import type { OrderListFilters } from "../../src/orders/orders.types.js";
 import {
@@ -20,7 +19,6 @@ function listFilters(
   return { page: 1, pageSize: 20, ...overrides };
 }
 
-beforeAll(() => seedDatabase(database));
 afterAll(disconnectTestDatabase);
 
 describe("orders read repository", () => {

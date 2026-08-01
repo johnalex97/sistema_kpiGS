@@ -115,3 +115,44 @@ exit 0
 ```
 
 La salida final de `test:db` no contiene la advertencia deprecada de `pg`.
+
+## Fix round 2
+
+### Cambio
+
+- `listOrders` y `listOrderHistory` vuelven a usar transacciones interactivas `RepeatableRead` con `await` secuenciales, por lo que los elementos y el total se leen desde una misma instantánea.
+- Para evitar la advertencia del adaptador `pg` al materializar relaciones anidadas dentro de una transacción, la página de órdenes obtiene primero las filas base y después carga sucursales, clientes, tipos de servicio, asignaciones primarias, conteos de soporte y técnicos mediante consultas simples secuenciales dentro de la misma transacción. El resultado mantiene exactamente el contrato `OrderSummaryRecord`.
+- El historial aplica el mismo patrón: primero las filas base y el total, después las identidades públicas de los usuarios, todo dentro de la misma transacción.
+- La suite de persistencia ya no siembra datos globales: sus fixtures son autosuficientes, lo que elimina la transacción de siembra ajena a esta cobertura y permite verificar una salida sin advertencias.
+
+### Archivos modificados
+
+- `server/src/orders/orders.read.repository.ts`
+- `server/tests/database/orders-read-persistence.test.ts`
+
+### Cobertura
+
+- La suite existente valida páginas de órdenes, conteo total, filtros, visibilidad técnica, historial paginado, orden estable y detalle no autorizado; ahora cada página de lista e historial se materializa dentro de una transacción interactiva secuencial.
+- Los datos de la suite siguen aislados y se eliminan al terminar.
+
+### Verificación final (salida relevante y prístina)
+
+```text
+npm run test:db -- tests/database/orders-read-persistence.test.ts
+Test Files  1 passed (1)
+Tests       4 passed (4)
+
+npm test -- tests/orders/orders-mapper.test.ts
+Test Files  1 passed (1)
+Tests       4 passed (4)
+
+npm run typecheck
+tsc -p tsconfig.json --noEmit
+exit 0
+
+npm run lint
+eslint . --max-warnings 0
+exit 0
+```
+
+La salida de base de datos anterior no contiene ninguna advertencia deprecada de `pg`.
