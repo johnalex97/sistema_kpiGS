@@ -20,6 +20,8 @@ FROM pg_indexes
 WHERE schemaname = current_schema()
   AND indexname IN (
     'uq_tecnico_work_email_active',
+    'uq_cliente_tax_id_normalized',
+    'uq_contacto_principal_cliente',
     'uq_contacto_principal_sucursal',
     'uq_orden_tecnico_principal_activo',
     'uq_actividad_tecnico_responsable',
@@ -30,7 +32,8 @@ ORDER BY indexname;
 SELECT sequencename
 FROM pg_sequences
 WHERE schemaname = current_schema()
-  AND sequencename = 'tecnico_code_seq';
+  AND sequencename IN ('tecnico_code_seq', 'cliente_code_seq')
+ORDER BY sequencename;
 
 SELECT constraint_data.conname
 FROM pg_constraint AS constraint_data

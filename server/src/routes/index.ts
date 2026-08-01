@@ -4,6 +4,7 @@ import { createAuthRouter } from "../auth/auth.routes.js";
 import { createAuthRepository } from "../auth/auth.repository.js";
 import { createAuthService } from "../auth/auth.service.js";
 import type { Environment } from "../config/env.js";
+import { createClientsRouter } from "../clients/clients.routes.js";
 import { createTechniciansRouter } from "../technicians/technicians.routes.js";
 import { createHealthRouter } from "./health.routes.js";
 
@@ -24,6 +25,7 @@ export function createApiRouter(
   });
   router.use("/health", createHealthRouter(env));
   router.use("/auth", createAuthRouter(env, authService));
+  router.use("/clients", createClientsRouter(env, database, authService));
   router.use(
     "/technicians",
     createTechniciansRouter(env, database, authService),

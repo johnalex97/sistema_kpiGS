@@ -1,0 +1,874 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { seedDatabase } from "../../prisma/seed.js";
+import { createClientsRepository } from "../../src/clients/clients.repository.js";
+import { createClientsService } from "../../src/clients/clients.service.js";
+import {
+  database,
+  disconnectTestDatabase,
+} from "./database-test-context.js";
+
+beforeAll(() => seedDatabase(database));
+afterAll(disconnectTestDatabase);
+
+describe("client persistence constraints", () => {
+  it("allocates a client code number after the seeded range", async () => {
+    const rows = await database.$queryRaw<Array<{ value: bigint }>>`
+      SELECT nextval('cliente_code_seq') AS value
+    `;
+
+    expect(Number(rows[0]?.value)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("starts branch and contact versions at one", async () => {
+    const clientId = randomUUID();
+    const branchId = randomUUID();
+    const contactId = randomUUID();
+
+    try {
+      await database.cliente.create({
+        data: {
+          id: clientId,
+          code: `VERS-${randomUUID().slice(0, 8)}`,
+          tradeName: "Cliente con versiones",
+        },
+      });
+      const branch = await database.sucursalCliente.create({
+        data: {
+          id: branchId,
+          clienteId: clientId,
+          code: "MAIN",
+          name: "Principal",
+          address: "Dirección de prueba",
+        },
+      });
+      const contact = await database.contactoCliente.create({
+        data: {
+          id: contactId,
+          clienteId: clientId,
+          fullName: "Contacto de prueba",
+        },
+      });
+
+      expect(branch).toMatchObject({ version: 1 });
+      expect(contact).toMatchObject({ version: 1 });
+    } finally {
+      await database.contactoCliente.deleteMany({ where: { id: contactId } });
+      await database.sucursalCliente.deleteMany({ where: { id: branchId } });
+      await database.cliente.deleteMany({ where: { id: clientId } });
+    }
+  });
+
+  it("rejects a normalized tax ID already used by inactive history", async () => {
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
+    const firstId = randomUUID();
+    const secondId = randomUUID();
+
+    try {
+      await database.cliente.create({
+        data: {
+          id: firstId,
+          code: `TAX-${suffix}-A`,
+          tradeName: "Cliente fiscal histórico",
+          taxId: `${suffix.slice(0, 4)}-${suffix.slice(4, 8)} ${suffix.slice(8)}`,
+          isActive: false,
+          deletedAt: new Date("2026-07-31T12:00:00.000Z"),
+        },
+      });
+
+      await expect(
+        database.cliente.create({
+          data: {
+            id: secondId,
+            code: `TAX-${suffix}-B`,
+            tradeName: "Cliente fiscal duplicado",
+            taxId: suffix.toUpperCase(),
+          },
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await database.cliente.deleteMany({
+        where: { id: { in: [firstId, secondId] } },
+      });
+    }
+  });
+
+  it("rejects two active general primary contacts for one client", async () => {
+    const clientId = randomUUID();
+    const contactIds = [randomUUID(), randomUUID()] as const;
+
+    try {
+      await database.cliente.create({
+        data: {
+          id: clientId,
+          code: `GPRI-${randomUUID().slice(0, 8)}`,
+          tradeName: "Cliente principal general",
+        },
+      });
+      await database.contactoCliente.create({
+        data: {
+          id: contactIds[0],
+          clienteId: clientId,
+          fullName: "Principal general A",
+          isPrimary: true,
+        },
+      });
+
+      await expect(
+        database.contactoCliente.create({
+          data: {
+            id: contactIds[1],
+            clienteId: clientId,
+            fullName: "Principal general B",
+            isPrimary: true,
+          },
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await database.contactoCliente.deleteMany({
+        where: { id: { in: [...contactIds] } },
+      });
+      await database.cliente.deleteMany({ where: { id: clientId } });
+    }
+  });
+
+  it("allows a new branch primary when the former primary is inactive", async () => {
+    const clientId = randomUUID();
+    const branchId = randomUUID();
+    const contactIds = [randomUUID(), randomUUID()] as const;
+
+    try {
+      await database.cliente.create({
+        data: {
+          id: clientId,
+          code: `BPRI-${randomUUID().slice(0, 8)}`,
+          tradeName: "Cliente principal de sucursal",
+        },
+      });
+      await database.sucursalCliente.create({
+        data: {
+          id: branchId,
+          clienteId: clientId,
+          code: "MAIN",
+          name: "Principal",
+          address: "Dirección de prueba",
+        },
+      });
+      await database.contactoCliente.create({
+        data: {
+          id: contactIds[0],
+          clienteId: clientId,
+          sucursalId: branchId,
+          fullName: "Principal inactivo",
+          isPrimary: true,
+          isActive: false,
+        },
+      });
+
+      const activePrimary = await database.contactoCliente.create({
+        data: {
+          id: contactIds[1],
+          clienteId: clientId,
+          sucursalId: branchId,
+          fullName: "Principal activo",
+          isPrimary: true,
+        },
+      });
+
+      expect(activePrimary.isPrimary).toBe(true);
+    } finally {
+      await database.contactoCliente.deleteMany({
+        where: { id: { in: [...contactIds] } },
+      });
+      await database.sucursalCliente.deleteMany({ where: { id: branchId } });
+      await database.cliente.deleteMany({ where: { id: clientId } });
+    }
+  });
+});
+
+describe("client repository reads", () => {
+  it("searches clients and hides inactive records by default", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const clientIds = [randomUUID(), randomUUID()] as const;
+    const repository = createClientsRepository(database);
+
+    try {
+      await database.cliente.createMany({
+        data: [
+          {
+            id: clientIds[0],
+            code: `READ-${suffix}-A`,
+            tradeName: `Alpha ${suffix}`,
+            legalName: `Legal ${suffix}`,
+          },
+          {
+            id: clientIds[1],
+            code: `READ-${suffix}-B`,
+            tradeName: `Beta ${suffix}`,
+            isActive: false,
+            deletedAt: new Date("2026-07-31T12:00:00.000Z"),
+          },
+        ],
+      });
+
+      const active = await repository.listClients({
+        search: suffix.toUpperCase(),
+        page: 1,
+        pageSize: 20,
+        includeInactive: false,
+      });
+      const all = await repository.listClients({
+        search: suffix,
+        page: 1,
+        pageSize: 20,
+        includeInactive: true,
+      });
+
+      expect(active.items.map(({ id }) => id)).toEqual([clientIds[0]]);
+      expect(all.totalItems).toBe(2);
+      expect(all.items.map(({ id }) => id)).toEqual([
+        clientIds[0],
+        clientIds[1],
+      ]);
+    } finally {
+      await database.cliente.deleteMany({
+        where: { id: { in: [...clientIds] } },
+      });
+    }
+  });
+
+  it("filters owned branches and contacts", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const clientId = randomUUID();
+    const branchIds = [randomUUID(), randomUUID()] as const;
+    const contactIds = [randomUUID(), randomUUID()] as const;
+    const repository = createClientsRepository(database);
+
+    try {
+      await database.cliente.create({
+        data: {
+          id: clientId,
+          code: `OWN-${suffix}`,
+          tradeName: `Owned ${suffix}`,
+        },
+      });
+      await database.sucursalCliente.createMany({
+        data: [
+          {
+            id: branchIds[0],
+            clienteId: clientId,
+            code: "MAIN",
+            name: "Principal",
+            address: "Centro",
+            city: "Tegucigalpa",
+          },
+          {
+            id: branchIds[1],
+            clienteId: clientId,
+            code: "SUC-001",
+            name: "Norte",
+            address: "Norte",
+            city: "San Pedro Sula",
+          },
+        ],
+      });
+      await database.contactoCliente.createMany({
+        data: [
+          {
+            id: contactIds[0],
+            clienteId: clientId,
+            fullName: "Contacto general",
+          },
+          {
+            id: contactIds[1],
+            clienteId: clientId,
+            sucursalId: branchIds[1],
+            fullName: "Contacto norte",
+          },
+        ],
+      });
+
+      const branches = await repository.listBranches(clientId, {
+        city: "san pedro",
+        page: 1,
+        pageSize: 20,
+        includeInactive: false,
+      });
+      const general = await repository.listContacts(clientId, {
+        scope: "CLIENT",
+        page: 1,
+        pageSize: 20,
+        includeInactive: false,
+      });
+      const branch = await repository.listContacts(clientId, {
+        branchId: branchIds[1],
+        page: 1,
+        pageSize: 20,
+        includeInactive: false,
+      });
+
+      expect(branches?.items.map(({ id }) => id)).toEqual([branchIds[1]]);
+      expect(general?.items.map(({ id }) => id)).toEqual([contactIds[0]]);
+      expect(branch?.items.map(({ id }) => id)).toEqual([contactIds[1]]);
+    } finally {
+      await database.contactoCliente.deleteMany({
+        where: { id: { in: [...contactIds] } },
+      });
+      await database.sucursalCliente.deleteMany({
+        where: { id: { in: [...branchIds] } },
+      });
+      await database.cliente.deleteMany({ where: { id: clientId } });
+    }
+  });
+});
+
+describe("client persisted mutations", () => {
+  it("creates the initial aggregate and edits with optimistic concurrency", async () => {
+    const service = createClientsService(
+      createClientsRepository(database),
+      () => new Date("2026-07-31T18:00:00.000Z"),
+    );
+    const admin = await database.usuario.findUniqueOrThrow({
+      where: { email: "admin.demo@geeksolution.example.test" },
+    });
+    const suffix = randomUUID().slice(0, 8);
+    const actor = {
+      userId: admin.id,
+      requestId: randomUUID(),
+      ipAddress: "127.0.0.1",
+      userAgent: "Client persistence test",
+    };
+    let clientId: string | undefined;
+
+    try {
+      const created = await service.createClient(
+        {
+          tradeName: `Mutación ${suffix}`,
+          taxId: `TAX-${suffix}`,
+          email: `CLIENT.${suffix}@EXAMPLE.TEST`,
+          mainBranch: {
+            name: "Principal",
+            address: "Centro",
+            country: "HN",
+          },
+          primaryContact: {
+            scope: "MAIN_BRANCH",
+            fullName: "Contacto inicial",
+          },
+        },
+        actor,
+      );
+      clientId = created.id;
+      expect(created).toMatchObject({
+        version: 1,
+        email: `client.${suffix}@example.test`,
+      });
+      expect(created.code).toMatch(/^CLI-\d{3,}$/);
+      expect(created.branches).toHaveLength(1);
+      expect(created.branches[0]).toMatchObject({ code: "MAIN", version: 1 });
+      expect(created.contacts[0]).toMatchObject({
+        scope: "BRANCH",
+        isPrimary: true,
+      });
+
+      const updated = await service.updateClient(
+        created.id,
+        { version: 1, tradeName: `Actualizado ${suffix}` },
+        actor,
+      );
+      expect(updated).toMatchObject({
+        tradeName: `Actualizado ${suffix}`,
+        version: 2,
+      });
+      await expect(
+        service.updateClient(
+          created.id,
+          { version: 1, phone: "+504 2200-0000" },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+
+      const audits = await database.auditoria.findMany({
+        where: { entity: "cliente", entityId: created.id },
+        orderBy: { occurredAt: "asc" },
+      });
+      expect(audits.map(({ action }) => action)).toEqual([
+        "CLIENT_CREATED",
+        "CLIENT_UPDATED",
+      ]);
+    } finally {
+      if (clientId) {
+        await database.auditoria.deleteMany({
+          where: { entity: "cliente", entityId: clientId },
+        });
+        await database.contactoCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.sucursalCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.cliente.deleteMany({ where: { id: clientId } });
+      }
+    }
+  });
+
+  it("blocks active work and preserves child state across client lifecycle", async () => {
+    const service = createClientsService(
+      createClientsRepository(database),
+      () => new Date("2026-07-31T18:30:00.000Z"),
+    );
+    const admin = await database.usuario.findUniqueOrThrow({
+      where: { email: "admin.demo@geeksolution.example.test" },
+    });
+    const serviceType = await database.tipoServicio.findUniqueOrThrow({
+      where: { code: "SUPPORT" },
+    });
+    const activityType = await database.tipoActividad.findUniqueOrThrow({
+      where: { code: "SUPPORT" },
+    });
+    const actor = {
+      userId: admin.id,
+      requestId: randomUUID(),
+      ipAddress: null,
+      userAgent: "Client lifecycle test",
+    };
+    let clientId: string | undefined;
+    let branchId: string | undefined;
+    const orderId = randomUUID();
+    const activityId = randomUUID();
+
+    try {
+      const created = await service.createClient(
+        {
+          tradeName: `Ciclo ${randomUUID().slice(0, 8)}`,
+          mainBranch: { name: "Principal", address: "Centro", country: "HN" },
+          primaryContact: { scope: "MAIN_BRANCH", fullName: "Contacto ciclo" },
+        },
+        actor,
+      );
+      clientId = created.id;
+      branchId = created.branches[0]!.id;
+      const branchVersion = created.branches[0]!.version;
+      const contactVersion = created.contacts[0]!.version;
+
+      await database.ordenTrabajo.create({
+        data: {
+          id: orderId,
+          orderNumber: `LIFE-${randomUUID().slice(0, 8)}`,
+          sucursalId: branchId,
+          tipoServicioId: serviceType.id,
+          status: "PENDING",
+          reportedProblem: "Trabajo activo de prueba",
+        },
+      });
+      await expect(
+        service.deactivateClient(created.id, { version: 1, reason: "Pausa comercial aprobada" }, actor),
+      ).rejects.toMatchObject({ code: "CLIENT_HAS_ACTIVE_WORK" });
+      await database.ordenTrabajo.delete({ where: { id: orderId } });
+
+      await database.actividad.create({
+        data: {
+          id: activityId,
+          sucursalId: branchId,
+          tipoActividadId: activityType.id,
+          status: "PENDING",
+          description: "Actividad activa de prueba",
+        },
+      });
+      await expect(
+        service.deactivateClient(created.id, { version: 1, reason: "Pausa comercial aprobada" }, actor),
+      ).rejects.toMatchObject({ code: "CLIENT_HAS_ACTIVE_WORK" });
+      await database.actividad.delete({ where: { id: activityId } });
+
+      const inactive = await service.deactivateClient(
+        created.id,
+        { version: 1, reason: "Pausa comercial aprobada" },
+        actor,
+      );
+      expect(inactive).toMatchObject({ isActive: false, version: 2 });
+      expect(inactive.branches[0]).toMatchObject({
+        isActive: true,
+        isEffectivelyActive: false,
+        version: branchVersion,
+      });
+      expect(inactive.contacts[0]).toMatchObject({
+        isActive: true,
+        isEffectivelyActive: false,
+        version: contactVersion,
+      });
+
+      const active = await service.reactivateClient(
+        created.id,
+        { version: 2, reason: "Reactivación comercial aprobada" },
+        actor,
+      );
+      expect(active).toMatchObject({ isActive: true, version: 3 });
+      expect(active.branches[0]?.isEffectivelyActive).toBe(true);
+      expect(active.contacts[0]?.isEffectivelyActive).toBe(true);
+    } finally {
+      await database.actividad.deleteMany({ where: { id: activityId } });
+      await database.ordenTrabajo.deleteMany({ where: { id: orderId } });
+      if (clientId) {
+        await database.auditoria.deleteMany({ where: { entity: "cliente", entityId: clientId } });
+        await database.contactoCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.sucursalCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.cliente.deleteMany({ where: { id: clientId } });
+      }
+    }
+  });
+});
+
+describe("branch persisted mutations", () => {
+  it("allocates concurrent codes and enforces branch lifecycle", async () => {
+    const service = createClientsService(createClientsRepository(database));
+    const admin = await database.usuario.findUniqueOrThrow({
+      where: { email: "admin.demo@geeksolution.example.test" },
+    });
+    const serviceType = await database.tipoServicio.findUniqueOrThrow({
+      where: { code: "SUPPORT" },
+    });
+    const actor = {
+      userId: admin.id,
+      requestId: randomUUID(),
+      ipAddress: null,
+      userAgent: "Branch lifecycle test",
+    };
+    let clientId: string | undefined;
+    const orderId = randomUUID();
+    const createdBranchIds: string[] = [];
+
+    try {
+      const client = await service.createClient(
+        {
+          tradeName: `Sucursales ${randomUUID().slice(0, 8)}`,
+          mainBranch: { name: "Principal", address: "Centro", country: "HN" },
+        },
+        actor,
+      );
+      clientId = client.id;
+      const [north, south] = await Promise.all([
+        service.createBranch(client.id, { name: "Norte", address: "Norte", country: "HN" }, actor),
+        service.createBranch(client.id, { name: "Sur", address: "Sur", country: "HN" }, actor),
+      ]);
+      createdBranchIds.push(north.id, south.id);
+      expect(new Set([north.code, south.code])).toEqual(new Set(["SUC-001", "SUC-002"]));
+
+      const updated = await service.updateBranch(
+        client.id,
+        north.id,
+        { version: 1, city: "Tegucigalpa" },
+        actor,
+      );
+      expect(updated).toMatchObject({ city: "Tegucigalpa", version: 2 });
+
+      await database.ordenTrabajo.create({
+        data: {
+          id: orderId,
+          orderNumber: `BR-${randomUUID().slice(0, 8)}`,
+          sucursalId: north.id,
+          tipoServicioId: serviceType.id,
+          status: "PENDING",
+          reportedProblem: "Trabajo de sucursal",
+        },
+      });
+      await expect(
+        service.deactivateBranch(
+          client.id,
+          north.id,
+          { version: 2, reason: "Cierre de ubicación aprobado" },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: "BRANCH_HAS_ACTIVE_WORK" });
+      await database.ordenTrabajo.delete({ where: { id: orderId } });
+
+      const inactive = await service.deactivateBranch(
+        client.id,
+        north.id,
+        { version: 2, reason: "Cierre de ubicación aprobado" },
+        actor,
+      );
+      expect(inactive).toMatchObject({ isActive: false, version: 3 });
+      const active = await service.reactivateBranch(
+        client.id,
+        north.id,
+        { version: 3, reason: "Reapertura de ubicación aprobada" },
+        actor,
+      );
+      expect(active).toMatchObject({ isActive: true, version: 4 });
+    } finally {
+      await database.ordenTrabajo.deleteMany({ where: { id: orderId } });
+      if (clientId) {
+        await database.auditoria.deleteMany({ where: { entityId: clientId } });
+        await database.auditoria.deleteMany({
+          where: { entity: "sucursal_cliente", entityId: { in: createdBranchIds } },
+        });
+        await database.contactoCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.sucursalCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.cliente.deleteMany({ where: { id: clientId } });
+      }
+    }
+  });
+});
+
+describe("contact persisted mutations", () => {
+  it("keeps primary contacts isolated by scope and demotes the previous primary", async () => {
+    const service = createClientsService(createClientsRepository(database));
+    const admin = await database.usuario.findUniqueOrThrow({
+      where: { email: "admin.demo@geeksolution.example.test" },
+    });
+    const actor = {
+      userId: admin.id,
+      requestId: randomUUID(),
+      ipAddress: null,
+      userAgent: "Contact primary test",
+    };
+    let clientId: string | undefined;
+    const contactIds: string[] = [];
+    const branchIds: string[] = [];
+
+    try {
+      const client = await service.createClient(
+        {
+          tradeName: `Contactos ${randomUUID().slice(0, 8)}`,
+          mainBranch: { name: "Principal", address: "Centro", country: "HN" },
+        },
+        actor,
+      );
+      clientId = client.id;
+      const mainBranch = client.branches[0]!;
+      const northBranch = await service.createBranch(
+        client.id,
+        { name: "Norte", address: "Norte", country: "HN" },
+        actor,
+      );
+      branchIds.push(northBranch.id);
+
+      const firstGeneral = await service.createContact(
+        client.id,
+        {
+          scope: "CLIENT",
+          fullName: "Administración central",
+          email: "  CENTRAL@EXAMPLE.TEST  ",
+          isPrimary: true,
+        },
+        actor,
+      );
+      const branchPrimary = await service.createContact(
+        client.id,
+        {
+          scope: "BRANCH",
+          branchId: mainBranch.id,
+          fullName: "Encargado principal",
+          isPrimary: true,
+        },
+        actor,
+      );
+      const secondGeneral = await service.createContact(
+        client.id,
+        {
+          scope: "CLIENT",
+          fullName: "Nueva administración",
+          isPrimary: true,
+        },
+        actor,
+      );
+      const northPrimary = await service.createContact(
+        client.id,
+        {
+          scope: "BRANCH",
+          branchId: northBranch.id,
+          fullName: "Encargado norte",
+          isPrimary: true,
+        },
+        actor,
+      );
+      contactIds.push(firstGeneral.id, branchPrimary.id, secondGeneral.id, northPrimary.id);
+
+      const demoted = await database.contactoCliente.findUniqueOrThrow({
+        where: { id: firstGeneral.id },
+      });
+      expect(demoted).toMatchObject({ isPrimary: false, version: 2 });
+      expect(demoted.email).toBe("central@example.test");
+      expect(branchPrimary).toMatchObject({
+        scope: "BRANCH",
+        branchId: mainBranch.id,
+        isPrimary: true,
+      });
+      expect(secondGeneral).toMatchObject({
+        scope: "CLIENT",
+        branchId: null,
+        isPrimary: true,
+      });
+      expect(northPrimary).toMatchObject({
+        scope: "BRANCH",
+        branchId: northBranch.id,
+        isPrimary: true,
+      });
+
+      const primaryAudits = await database.auditoria.findMany({
+        where: {
+          action: "CONTACT_PRIMARY_CHANGED",
+          entity: "contacto_cliente",
+          entityId: secondGeneral.id,
+        },
+      });
+      expect(primaryAudits).toHaveLength(1);
+      expect(primaryAudits[0]?.afterData).toMatchObject({
+        promotedContactId: secondGeneral.id,
+        demotedContactIds: [firstGeneral.id],
+      });
+    } finally {
+      if (clientId) {
+        await database.auditoria.deleteMany({
+          where: {
+            OR: [
+              { entity: "cliente", entityId: clientId },
+              { entity: "contacto_cliente", entityId: { in: contactIds } },
+              { entity: "sucursal_cliente", entityId: { in: branchIds } },
+            ],
+          },
+        });
+        await database.contactoCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.sucursalCliente.deleteMany({ where: { clienteId: clientId } });
+        await database.cliente.deleteMany({ where: { id: clientId } });
+      }
+    }
+  });
+
+  it("does not promote on deactivation and rejects an old primary conflict on reactivation", async () => {
+    const service = createClientsService(createClientsRepository(database));
+    const admin = await database.usuario.findUniqueOrThrow({
+      where: { email: "admin.demo@geeksolution.example.test" },
+    });
+    const actor = {
+      userId: admin.id,
+      requestId: randomUUID(),
+      ipAddress: null,
+      userAgent: "Contact lifecycle test",
+    };
+    let clientId: string | undefined;
+    let otherClientId: string | undefined;
+    const contactIds: string[] = [];
+
+    try {
+      const client = await service.createClient(
+        {
+          tradeName: `Ciclo contacto ${randomUUID().slice(0, 8)}`,
+          mainBranch: { name: "Principal", address: "Centro", country: "HN" },
+        },
+        actor,
+      );
+      const otherClient = await service.createClient(
+        {
+          tradeName: `Otro contacto ${randomUUID().slice(0, 8)}`,
+          mainBranch: { name: "Principal", address: "Norte", country: "HN" },
+        },
+        actor,
+      );
+      clientId = client.id;
+      otherClientId = otherClient.id;
+
+      await expect(
+        service.createContact(
+          otherClient.id,
+          {
+            scope: "BRANCH",
+            branchId: client.branches[0]!.id,
+            fullName: "Sucursal ajena",
+            isPrimary: false,
+          },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: "BRANCH_NOT_FOUND" });
+
+      const oldPrimary = await service.createContact(
+        client.id,
+        { scope: "CLIENT", fullName: "Principal anterior", isPrimary: true },
+        actor,
+      );
+      const replacement = await service.createContact(
+        client.id,
+        { scope: "CLIENT", fullName: "Contacto alterno", isPrimary: false },
+        actor,
+      );
+      contactIds.push(oldPrimary.id, replacement.id);
+
+      const inactive = await service.deactivateContact(
+        client.id,
+        oldPrimary.id,
+        { version: 1, reason: "Contacto dejó la empresa" },
+        actor,
+      );
+      expect(inactive).toMatchObject({ isActive: false, isPrimary: true, version: 2 });
+      expect(
+        await database.contactoCliente.findUniqueOrThrow({ where: { id: replacement.id } }),
+      ).toMatchObject({ isPrimary: false, version: 1 });
+
+      const promoted = await service.updateContact(
+        client.id,
+        replacement.id,
+        { version: 1, isPrimary: true },
+        actor,
+      );
+      expect(promoted).toMatchObject({ isPrimary: true, version: 2 });
+
+      await expect(
+        service.reactivateContact(
+          client.id,
+          oldPrimary.id,
+          { version: 2, reason: "Contacto regresó a la empresa" },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: "PRIMARY_CONTACT_CONFLICT" });
+
+      const secondaryAgain = await service.updateContact(
+        client.id,
+        replacement.id,
+        { version: 2, isPrimary: false },
+        actor,
+      );
+      expect(secondaryAgain).toMatchObject({ isPrimary: false, version: 3 });
+      const reactivated = await service.reactivateContact(
+        client.id,
+        oldPrimary.id,
+        { version: 2, reason: "Contacto regresó a la empresa" },
+        actor,
+      );
+      expect(reactivated).toMatchObject({ isActive: true, isPrimary: true, version: 3 });
+
+      await expect(
+        service.updateContact(
+          otherClient.id,
+          oldPrimary.id,
+          { version: 3, fullName: "Contacto de otro cliente" },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: "CONTACT_NOT_FOUND" });
+
+      await service.deactivateClient(
+        client.id,
+        { version: 1, reason: "Cliente cerrado para validar contactos" },
+        actor,
+      );
+      await expect(
+        service.updateContact(
+          client.id,
+          replacement.id,
+          { version: 3, fullName: "Cambio con cliente inactivo" },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: "RESOURCE_INACTIVE" });
+    } finally {
+      const clientIds = [clientId, otherClientId].filter((id): id is string => Boolean(id));
+      if (clientIds.length > 0) {
+        await database.auditoria.deleteMany({
+          where: {
+            OR: [
+              { entity: "cliente", entityId: { in: clientIds } },
+              { entity: "contacto_cliente", entityId: { in: contactIds } },
+            ],
+          },
+        });
+        await database.contactoCliente.deleteMany({ where: { clienteId: { in: clientIds } } });
+        await database.sucursalCliente.deleteMany({ where: { clienteId: { in: clientIds } } });
+        await database.cliente.deleteMany({ where: { id: { in: clientIds } } });
+      }
+    }
+  });
+});
