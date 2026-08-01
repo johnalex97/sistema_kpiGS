@@ -1250,6 +1250,8 @@ git commit -m "feat(orders): add authorized order service"
 - Create: `server/src/orders/orders.controller.ts`
 - Create: `server/src/orders/orders.routes.ts`
 - Modify: `server/src/routes/index.ts`
+- Modify: `server/vitest.config.ts`
+- Modify: `server/vitest.database.config.ts`
 - Create: `server/tests/orders/orders-http.test.ts`
 - Modify: `server/database/verify-database.sql`
 - Modify: `README.md`
@@ -1348,6 +1350,11 @@ DELETE /:orderId/materials/:usageId
 
 Mount with `router.use("/orders", createOrdersRouter(env, database, authService))`.
 
+Add `**/tests/orders/orders-http.test.ts` to the unit configuration's
+`exclude` list and `tests/orders/orders-http.test.ts` to the PostgreSQL
+configuration's `include` list. This keeps repository-backed HTTP tests out of
+the dummy unit database environment and inside the serial database suite.
+
 - [ ] **Step 4: Test complete HTTP lifecycles**
 
 Exercise:
@@ -1417,7 +1424,7 @@ git diff --stat main...HEAD
 Confirm there are no frontend source changes, no `.env`, generated Prisma client, logs or build outputs staged, and no unrelated user changes.
 
 ```bash
-git add server/src/orders server/src/routes/index.ts server/tests/orders server/database/verify-database.sql README.md docs/architecture/current-state.md
+git add server/src/orders server/src/routes/index.ts server/vitest.config.ts server/vitest.database.config.ts server/tests/orders server/database/verify-database.sql README.md docs/architecture/current-state.md
 git commit -m "feat(orders): expose protected work orders API"
 ```
 
