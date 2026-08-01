@@ -46,6 +46,8 @@ export const orderSummarySelect = {
     orderBy: { assignedAt: "desc" },
     take: 1,
     select: {
+      role: true,
+      unassignedAt: true,
       tecnico: { select: { id: true, code: true, fullName: true } },
     },
   },

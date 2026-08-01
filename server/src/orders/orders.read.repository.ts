@@ -86,20 +86,18 @@ export function createOrdersReadRepository(
   return {
     async listOrders(filters, scope, now) {
       const where = listOrderWhere(filters, scope, now);
-      const [items, totalItems] = await database.$transaction([
-        database.ordenTrabajo.findMany({
-          where,
-          select: orderSummarySelect,
-          orderBy: [
-            { scheduledFor: { sort: "asc", nulls: "last" } },
-            { createdAt: "desc" },
-            { id: "asc" },
-          ],
-          skip: (filters.page - 1) * filters.pageSize,
-          take: filters.pageSize,
-        }),
-        database.ordenTrabajo.count({ where }),
-      ]);
+      const items = await database.ordenTrabajo.findMany({
+        where,
+        select: orderSummarySelect,
+        orderBy: [
+          { scheduledFor: { sort: "asc", nulls: "last" } },
+          { createdAt: "desc" },
+          { id: "asc" },
+        ],
+        skip: (filters.page - 1) * filters.pageSize,
+        take: filters.pageSize,
+      });
+      const totalItems = await database.ordenTrabajo.count({ where });
       return { items: items as OrderSummaryRecord[], totalItems };
     },
 
@@ -119,16 +117,14 @@ export function createOrdersReadRepository(
       if (!visibleOrder) return null;
 
       const where: Prisma.HistorialOrdenWhereInput = { ordenId: id };
-      const [items, totalItems] = await database.$transaction([
-        database.historialOrden.findMany({
-          where,
-          select: orderHistorySelect,
-          orderBy: [{ occurredAt: "desc" }, { id: "asc" }],
-          skip: (filters.page - 1) * filters.pageSize,
-          take: filters.pageSize,
-        }),
-        database.historialOrden.count({ where }),
-      ]);
+      const items = await database.historialOrden.findMany({
+        where,
+        select: orderHistorySelect,
+        orderBy: [{ occurredAt: "desc" }, { id: "asc" }],
+        skip: (filters.page - 1) * filters.pageSize,
+        take: filters.pageSize,
+      });
+      const totalItems = await database.historialOrden.count({ where });
       return { items: items as OrderHistoryRecord[], totalItems };
     },
   };

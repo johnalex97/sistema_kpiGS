@@ -10,6 +10,9 @@ export interface OrdersReadFixture {
   otherTechnicianId: string;
   activeOrderId: string;
   historicalOrderId: string;
+  scheduledTieNewerId: string;
+  createdAtTieFirstId: string;
+  createdAtTieSecondId: string;
   completedOrderId: string;
   deletedOrderId: string;
 }
@@ -18,6 +21,7 @@ export async function createOrdersReadFixture(
   database: PrismaClient,
 ): Promise<OrdersReadFixture> {
   const suffix = randomUUID().slice(0, 8);
+  const createdAtTiePrefix = randomUUID().slice(0, -1);
   const fixture: OrdersReadFixture = {
     suffix,
     clientId: randomUUID(),
@@ -27,6 +31,9 @@ export async function createOrdersReadFixture(
     otherTechnicianId: randomUUID(),
     activeOrderId: randomUUID(),
     historicalOrderId: randomUUID(),
+    scheduledTieNewerId: randomUUID(),
+    createdAtTieFirstId: `${createdAtTiePrefix}0`,
+    createdAtTieSecondId: `${createdAtTiePrefix}f`,
     completedOrderId: randomUUID(),
     deletedOrderId: randomUUID(),
   };
@@ -92,6 +99,39 @@ export async function createOrdersReadFixture(
         createdAt: new Date("2026-08-01T08:02:00.000Z"),
       },
       {
+        id: fixture.scheduledTieNewerId,
+        orderNumber: `OT-${suffix}-005`,
+        sucursalId: fixture.branchId,
+        tipoServicioId: fixture.serviceTypeId,
+        priority: "MEDIUM",
+        status: "PENDING",
+        reportedProblem: `Desempate de programación ${suffix}`,
+        scheduledFor: new Date("2026-08-01T13:00:00.000Z"),
+        createdAt: new Date("2026-08-01T08:03:00.000Z"),
+      },
+      {
+        id: fixture.createdAtTieFirstId,
+        orderNumber: `OT-${suffix}-006`,
+        sucursalId: fixture.branchId,
+        tipoServicioId: fixture.serviceTypeId,
+        priority: "MEDIUM",
+        status: "PENDING",
+        reportedProblem: `Desempate de identificador ${suffix}`,
+        scheduledFor: new Date("2026-08-01T14:00:00.000Z"),
+        createdAt: new Date("2026-08-01T08:04:00.000Z"),
+      },
+      {
+        id: fixture.createdAtTieSecondId,
+        orderNumber: `OT-${suffix}-007`,
+        sucursalId: fixture.branchId,
+        tipoServicioId: fixture.serviceTypeId,
+        priority: "MEDIUM",
+        status: "PENDING",
+        reportedProblem: `Desempate de identificador ${suffix}`,
+        scheduledFor: new Date("2026-08-01T14:00:00.000Z"),
+        createdAt: new Date("2026-08-01T08:04:00.000Z"),
+      },
+      {
         id: fixture.deletedOrderId,
         orderNumber: `OT-${suffix}-004`,
         sucursalId: fixture.branchId,
@@ -146,6 +186,9 @@ export async function removeOrdersReadFixture(
   const orderIds = [
     fixture.activeOrderId,
     fixture.historicalOrderId,
+    fixture.scheduledTieNewerId,
+    fixture.createdAtTieFirstId,
+    fixture.createdAtTieSecondId,
     fixture.completedOrderId,
     fixture.deletedOrderId,
   ];

@@ -14,7 +14,10 @@ export function mapPublicOrderSummary(
   record: OrderSummaryRecord,
   now: Date,
 ): PublicOrderSummary {
-  const primary = record.tecnicos[0]?.tecnico ?? null;
+  const primary = record.tecnicos.find(
+    (assignment) =>
+      assignment.role === "PRIMARY" && assignment.unassignedAt === null,
+  )?.tecnico ?? null;
   return {
     id: record.id,
     orderNumber: record.orderNumber,

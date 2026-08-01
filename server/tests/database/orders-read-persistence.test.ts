@@ -51,7 +51,7 @@ describe("orders read repository", () => {
       now,
     );
 
-    expect(allPage.totalItems).toBe(3);
+    expect(allPage.totalItems).toBe(6);
     expect(ownPage.items.map((item) => item.id)).toEqual(
       expect.arrayContaining([fixture.activeOrderId, fixture.historicalOrderId]),
     );
@@ -72,12 +72,18 @@ describe("orders read repository", () => {
     const byBranch = await repository.listOrders(
       listFilters({ search: `sucursal ${fixture.suffix}` }), { kind: "ALL" }, now,
     );
-    const byIds = await Promise.all([
-      repository.listOrders(listFilters({ clientId: fixture.clientId }), { kind: "ALL" }, now),
-      repository.listOrders(listFilters({ branchId: fixture.branchId }), { kind: "ALL" }, now),
-      repository.listOrders(listFilters({ technicianId: fixture.technicianId }), { kind: "ALL" }, now),
-      repository.listOrders(listFilters({ serviceTypeId: fixture.serviceTypeId }), { kind: "ALL" }, now),
-    ]);
+    const byClientId = await repository.listOrders(
+      listFilters({ clientId: fixture.clientId }), { kind: "ALL" }, now,
+    );
+    const byBranchId = await repository.listOrders(
+      listFilters({ branchId: fixture.branchId }), { kind: "ALL" }, now,
+    );
+    const byTechnicianId = await repository.listOrders(
+      listFilters({ technicianId: fixture.technicianId }), { kind: "ALL" }, now,
+    );
+    const byServiceTypeId = await repository.listOrders(
+      listFilters({ serviceTypeId: fixture.serviceTypeId }), { kind: "ALL" }, now,
+    );
     const enumPage = await repository.listOrders(
       listFilters({
         search: fixture.suffix,
@@ -100,36 +106,60 @@ describe("orders read repository", () => {
 
     expect(byOrder.items.map(({ id }) => id)).toEqual([fixture.activeOrderId]);
     expect(byProblem.items.map(({ id }) => id)).toEqual([fixture.activeOrderId]);
-    expect(byClient.totalItems).toBe(3);
-    expect(byBranch.totalItems).toBe(3);
-    expect(byIds.map((page) => page.totalItems)).toEqual([3, 3, 2, 3]);
+    expect(byClient.totalItems).toBe(6);
+    expect(byBranch.totalItems).toBe(6);
+    expect([
+      byClientId.totalItems,
+      byBranchId.totalItems,
+      byTechnicianId.totalItems,
+      byServiceTypeId.totalItems,
+    ]).toEqual([6, 6, 2, 6]);
     expect(enumPage.items.map(({ id }) => id)).toEqual(
       expect.arrayContaining([fixture.activeOrderId, fixture.historicalOrderId]),
     );
-    expect(scheduled.items.map(({ id }) => id)).toEqual([fixture.historicalOrderId]);
+    expect(scheduled.items.map(({ id }) => id)).toEqual([
+      fixture.scheduledTieNewerId,
+      fixture.historicalOrderId,
+    ]);
     expect(overdue.items.map(({ id }) => id)).toEqual([fixture.activeOrderId]);
   });
 
-  it("uses stable null-last ordering, pagination, and excludes soft-deleted orders", async () => {
+  it("uses every stable ordering tie-breaker across page boundaries and excludes soft-deleted orders", async () => {
     const repository = createOrdersReadRepository(database);
     const all = await repository.listOrders(
       listFilters({ search: fixture.suffix }), { kind: "ALL" }, now,
     );
     const first = await repository.listOrders(
-      listFilters({ search: fixture.suffix, pageSize: 1 }), { kind: "ALL" }, now,
+      listFilters({ search: fixture.suffix, pageSize: 2 }), { kind: "ALL" }, now,
     );
     const second = await repository.listOrders(
-      listFilters({ search: fixture.suffix, page: 2, pageSize: 1 }), { kind: "ALL" }, now,
+      listFilters({ search: fixture.suffix, page: 2, pageSize: 2 }), { kind: "ALL" }, now,
+    );
+    const third = await repository.listOrders(
+      listFilters({ search: fixture.suffix, page: 3, pageSize: 2 }), { kind: "ALL" }, now,
     );
 
     expect(all.items.map(({ id }) => id)).toEqual([
       fixture.activeOrderId,
+      fixture.scheduledTieNewerId,
       fixture.historicalOrderId,
+      fixture.createdAtTieFirstId,
+      fixture.createdAtTieSecondId,
       fixture.completedOrderId,
     ]);
     expect(all.items.map(({ id }) => id)).not.toContain(fixture.deletedOrderId);
-    expect(first.items.map(({ id }) => id)).toEqual([fixture.activeOrderId]);
-    expect(second.items.map(({ id }) => id)).toEqual([fixture.historicalOrderId]);
+    expect(first.items.map(({ id }) => id)).toEqual([
+      fixture.activeOrderId,
+      fixture.scheduledTieNewerId,
+    ]);
+    expect(second.items.map(({ id }) => id)).toEqual([
+      fixture.historicalOrderId,
+      fixture.createdAtTieFirstId,
+    ]);
+    expect(third.items.map(({ id }) => id)).toEqual([
+      fixture.createdAtTieSecondId,
+      fixture.completedOrderId,
+    ]);
   });
 
   it("returns null for unauthorized detail and history while paging owned history", async () => {

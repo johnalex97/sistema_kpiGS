@@ -36,7 +36,11 @@ function summaryRecord(): OrderSummaryRecord {
     },
     tipoServicio: { id: "service-1", code: "SUPPORT", name: "Soporte" },
     tecnicos: [
-      { tecnico: { id: "tech-1", code: "TEC-001", fullName: "Ana Técnica" } },
+      {
+        role: "PRIMARY",
+        unassignedAt: null,
+        tecnico: { id: "tech-1", code: "TEC-001", fullName: "Ana Técnica" },
+      },
     ],
     _count: { tecnicos: 2 },
   } as OrderSummaryRecord;
@@ -68,16 +72,22 @@ describe("order public mappers", () => {
       cancellationReason: null,
       tecnicos: [
         {
+          role: "SUPPORT",
+          assignedAt: new Date("2026-08-01T09:20:00.000Z"),
+          unassignedAt: null,
+          tecnico: { id: "tech-3", code: "TEC-003", fullName: "Sofía Soporte" },
+        },
+        {
+          role: "PRIMARY",
+          assignedAt: new Date("2026-07-31T09:30:00.000Z"),
+          unassignedAt: new Date("2026-07-31T10:00:00.000Z"),
+          tecnico: { id: "tech-1", code: "TEC-001", fullName: "Ana Histórica" },
+        },
+        {
           role: "PRIMARY",
           assignedAt: new Date("2026-08-01T09:30:00.000Z"),
           unassignedAt: null,
-          tecnico: { id: "tech-1", code: "TEC-001", fullName: "Ana Técnica" },
-        },
-        {
-          role: "SUPPORT",
-          assignedAt: new Date("2026-07-31T08:30:00.000Z"),
-          unassignedAt: new Date("2026-07-31T10:00:00.000Z"),
-          tecnico: { id: "tech-2", code: "TEC-002", fullName: "Bruno Histórico" },
+          tecnico: { id: "tech-2", code: "TEC-002", fullName: "Bruno Principal" },
         },
       ],
       materiales: [
@@ -94,14 +104,19 @@ describe("order public mappers", () => {
 
     const result = mapPublicOrderDetail(record, now);
 
+    expect(result.primaryTechnician).toEqual({
+      id: "tech-2",
+      code: "TEC-002",
+      fullName: "Bruno Principal",
+    });
     expect(result.materials[0]).toMatchObject({
       quantity: "12.500",
       historicalUnitCost: "25.00",
     });
     expect(result.participants).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "tech-1", active: true, unassignedAt: null }),
-        expect.objectContaining({ id: "tech-2", active: false, unassignedAt: "2026-07-31T10:00:00.000Z" }),
+        expect.objectContaining({ id: "tech-2", active: true, unassignedAt: null }),
+        expect.objectContaining({ id: "tech-1", active: false, unassignedAt: "2026-07-31T10:00:00.000Z" }),
       ]),
     );
     expect(result).not.toHaveProperty("deletedAt");
@@ -110,6 +125,33 @@ describe("order public mappers", () => {
     expect(result).not.toHaveProperty("sessions");
     expect(result).not.toHaveProperty("tecnicos");
     expect(result).not.toHaveProperty("materiales");
+  });
+
+  it("does not publish a support or historical primary when no active primary exists", () => {
+    const record = {
+      ...summaryRecord(),
+      description: null,
+      diagnosis: null,
+      result: null,
+      cancellationReason: null,
+      tecnicos: [
+        {
+          role: "SUPPORT",
+          assignedAt: new Date("2026-08-01T09:00:00.000Z"),
+          unassignedAt: null,
+          tecnico: { id: "tech-support", code: "TEC-010", fullName: "Soporte Activo" },
+        },
+        {
+          role: "PRIMARY",
+          assignedAt: new Date("2026-08-01T08:00:00.000Z"),
+          unassignedAt: new Date("2026-08-01T09:00:00.000Z"),
+          tecnico: { id: "tech-old", code: "TEC-011", fullName: "Primario Histórico" },
+        },
+      ],
+      materiales: [],
+    } as OrderDetailRecord;
+
+    expect(mapPublicOrderDetail(record, now).primaryTechnician).toBeNull();
   });
 
   it("maps history actor and JSON metadata without exposing the Prisma relation", () => {
