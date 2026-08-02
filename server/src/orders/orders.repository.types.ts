@@ -143,9 +143,12 @@ export type OrderMutationResult =
   | { kind: "CREATED" | "UPDATED"; order: OrderDetailRecord }
   | { kind: OrderFailureKind };
 
-export interface OrdersMutationRepository {
+export interface OrdersAdministrativeMutationRepository {
   createOrder(input: CreateOrderInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   updateOrder(id: string, input: UpdateOrderInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
+}
+
+export interface OrdersMutationRepository extends OrdersAdministrativeMutationRepository {
   assignTechnician(id: string, input: AssignmentInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   unassignTechnician(id: string, technicianId: string, input: UnassignmentInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
 }
