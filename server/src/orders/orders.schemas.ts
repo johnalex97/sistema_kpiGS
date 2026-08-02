@@ -11,7 +11,7 @@ const orderStatusSchema = z.enum([
 ]);
 const orderPrioritySchema = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 const orderTechnicianRoleSchema = z.enum(["PRIMARY", "SUPPORT"]);
-const quantityPattern = /^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/;
+const quantityPattern = /^(?:0|[1-9]\d{0,8})(?:\.\d{1,3})?$/;
 
 function normalizeOptionalString(value: unknown): unknown {
   if (typeof value !== "string") return value;
@@ -201,4 +201,17 @@ export const adjustOrderSchema = z
     (value) =>
       Object.keys(value).some((key) => key !== "version" && key !== "reason"),
     { message: "Debe enviar al menos un campo ajustable" },
-  );
+  )
+  .superRefine((value, context) => {
+    if (
+      value.startedAt instanceof Date &&
+      value.endedAt instanceof Date &&
+      value.endedAt < value.startedAt
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["endedAt"],
+        message: "La fecha de finalización no puede ser anterior al inicio",
+      });
+    }
+  });

@@ -113,6 +113,30 @@ describe("order request schemas", () => {
     expect(removeMaterialSchema.parse({ version: 2 })).toEqual({ version: 2 });
   });
 
+  it("matches the Decimal(12,3) quantity boundary for material creation and editing", () => {
+    expect(
+      addMaterialSchema.parse({
+        version: 2,
+        materialId,
+        quantity: "999999999.999",
+      }),
+    ).toMatchObject({ quantity: "999999999.999" });
+    expect(
+      updateMaterialSchema.parse({ version: 2, quantity: "999999999.999" }),
+    ).toMatchObject({ quantity: "999999999.999" });
+
+    expect(() =>
+      addMaterialSchema.parse({
+        version: 2,
+        materialId,
+        quantity: "1000000000",
+      }),
+    ).toThrow();
+    expect(() =>
+      updateMaterialSchema.parse({ version: 2, quantity: "1000000000" }),
+    ).toThrow();
+  });
+
   it("requires an adjustment reason and at least one permitted field", () => {
     expect(() => adjustOrderSchema.parse({ version: 2, reason: "Razón suficientemente larga" })).toThrow();
     expect(
@@ -122,5 +146,20 @@ describe("order request schemas", () => {
         diagnosis: " Diagnóstico corregido ",
       }),
     ).toMatchObject({ diagnosis: "Diagnóstico corregido" });
+  });
+
+  it("rejects an inverted adjustment range when both endpoints are submitted", () => {
+    const parsed = adjustOrderSchema.safeParse({
+      version: 2,
+      reason: "Correccion suficientemente documentada",
+      startedAt: "2026-08-01T15:00:00.000Z",
+      endedAt: "2026-08-01T14:59:59.000Z",
+    });
+
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues).toEqual([
+      expect.objectContaining({ path: ["endedAt"] }),
+    ]);
   });
 });

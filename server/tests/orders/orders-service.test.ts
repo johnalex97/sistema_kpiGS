@@ -770,4 +770,20 @@ describe("OrdersService public failures", () => {
       });
     },
   );
+
+  it("maps an invalid temporal range to the public validation contract", async () => {
+    const repository = repositoryWithSuccess();
+    vi.mocked(repository.adjustClosedOrder).mockResolvedValueOnce({
+      kind: "INVALID_TEMPORAL_RANGE",
+    });
+    const service = createOrdersService(repository, () => fixedNow);
+
+    await expect(
+      service.adjustClosedOrder(orderId, adjustInput, actor(["ORDERS_MANAGE"])),
+    ).rejects.toMatchObject({
+      name: "ApiError",
+      statusCode: 400,
+      code: "VALIDATION_ERROR",
+    });
+  });
 });

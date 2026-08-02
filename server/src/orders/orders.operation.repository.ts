@@ -13,6 +13,7 @@ import {
   transitionOrder,
 } from "./orders.state-machine.js";
 import type {
+  AdjustOrderInput,
   OrderActorContext,
   OrderCommand,
 } from "./orders.types.js";
@@ -27,6 +28,20 @@ type MaterialAction =
   | "ORDER_MATERIAL_ADDED"
   | "ORDER_MATERIAL_UPDATED"
   | "ORDER_MATERIAL_REMOVED";
+
+const adjustmentFields = [
+  "description",
+  "scheduledFor",
+  "startedAt",
+  "endedAt",
+  "diagnosis",
+  "result",
+  "cancellationReason",
+  "estimatedMinutes",
+] as const satisfies readonly Exclude<
+  keyof AdjustOrderInput,
+  "version" | "reason"
+>[];
 
 interface LockedOrderRow {
   id: string;
@@ -211,6 +226,20 @@ function orderAuditSnapshot(order: OrderDetailRecord) {
     estimatedMinutes: order.estimatedMinutes,
     totalMinutes: order.totalMinutes,
     version: order.version,
+  };
+}
+
+function adjustmentHistorySnapshot(order: OrderDetailRecord) {
+  return {
+    description: order.description,
+    scheduledFor: order.scheduledFor?.toISOString() ?? null,
+    startedAt: order.startedAt?.toISOString() ?? null,
+    endedAt: order.endedAt?.toISOString() ?? null,
+    diagnosis: order.diagnosis,
+    result: order.result,
+    cancellationReason: order.cancellationReason,
+    estimatedMinutes: order.estimatedMinutes,
+    totalMinutes: order.totalMinutes,
   };
 }
 
@@ -437,6 +466,7 @@ async function writeAdjustmentTrail(
   actor: OrderActorContext,
   now: Date,
   reason: string,
+  changedFields: string[],
 ): Promise<void> {
   await transaction.historialOrden.create({
     data: {
@@ -448,7 +478,12 @@ async function writeAdjustmentTrail(
       userId: actor.userId,
       occurredAt: now,
       requestId: actor.requestId,
-      metadata: { version: order.version },
+      metadata: {
+        version: order.version,
+        changedFields,
+        before: adjustmentHistorySnapshot(before),
+        after: adjustmentHistorySnapshot(order),
+      },
     },
   });
   await transaction.auditoria.create({
@@ -671,6 +706,13 @@ export function createOrdersOperationRepository(
           input.startedAt === undefined ? locked.startedAt : input.startedAt;
         const nextEndedAt =
           input.endedAt === undefined ? locked.endedAt : input.endedAt;
+        if (
+          nextStartedAt !== null &&
+          nextEndedAt !== null &&
+          nextEndedAt < nextStartedAt
+        ) {
+          return { kind: "INVALID_TEMPORAL_RANGE" } as const;
+        }
         const totalMinutes =
           nextStartedAt === null || nextEndedAt === null
             ? null
@@ -710,6 +752,7 @@ export function createOrdersOperationRepository(
           actor,
           now,
           input.reason,
+          adjustmentFields.filter((field) => input[field] !== undefined),
         );
         return { kind: "UPDATED", order } as const;
       });

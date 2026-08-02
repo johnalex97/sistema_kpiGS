@@ -902,6 +902,117 @@ describe("orders mutation repository administrative editing", () => {
     expect(result).toEqual({ kind: "RESOURCE_INACTIVE" });
   });
 
+  it("revalidates the stored service when changing the branch and leaves the aggregate untouched", async () => {
+    const repository = createOrdersMutationRepository(database);
+    const orderId = fixture.orderIds.PENDING;
+    const before = await database.ordenTrabajo.findUniqueOrThrow({
+      where: { id: orderId },
+      select: {
+        sucursalId: true,
+        tipoServicioId: true,
+        version: true,
+        updatedAt: true,
+      },
+    });
+
+    await database.tipoServicio.update({
+      where: { id: fixture.parents.activeServiceTypeId },
+      data: { isActive: false },
+    });
+    try {
+      await expect(
+        repository.updateOrder(
+          orderId,
+          { version: 1, branchId: fixture.parents.otherActiveBranchId },
+          fixture.parents.actor,
+          now,
+        ),
+      ).resolves.toEqual({ kind: "RESOURCE_INACTIVE" });
+
+      await expect(
+        database.ordenTrabajo.findUniqueOrThrow({
+          where: { id: orderId },
+          select: {
+            sucursalId: true,
+            tipoServicioId: true,
+            version: true,
+            updatedAt: true,
+          },
+        }),
+      ).resolves.toEqual(before);
+      await expect(
+        database.historialOrden.count({ where: { ordenId: orderId } }),
+      ).resolves.toBe(0);
+      await expect(
+        database.auditoria.count({
+          where: { entity: "OrdenTrabajo", entityId: orderId },
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      await database.tipoServicio.update({
+        where: { id: fixture.parents.activeServiceTypeId },
+        data: { isActive: true },
+      });
+    }
+  });
+
+  it("revalidates the stored branch when changing the service and leaves the aggregate untouched", async () => {
+    const repository = createOrdersMutationRepository(database);
+    const orderId = fixture.orderIds.PENDING;
+    const before = await database.ordenTrabajo.findUniqueOrThrow({
+      where: { id: orderId },
+      select: {
+        sucursalId: true,
+        tipoServicioId: true,
+        version: true,
+        updatedAt: true,
+      },
+    });
+
+    await database.sucursalCliente.update({
+      where: { id: fixture.parents.activeBranchId },
+      data: { isActive: false },
+    });
+    try {
+      await expect(
+        repository.updateOrder(
+          orderId,
+          {
+            version: 1,
+            serviceTypeId: fixture.parents.otherActiveServiceTypeId,
+          },
+          fixture.parents.actor,
+          now,
+        ),
+      ).resolves.toEqual({ kind: "RESOURCE_INACTIVE" });
+
+      await expect(
+        database.ordenTrabajo.findUniqueOrThrow({
+          where: { id: orderId },
+          select: {
+            sucursalId: true,
+            tipoServicioId: true,
+            version: true,
+            updatedAt: true,
+          },
+        }),
+      ).resolves.toEqual(before);
+      await expect(
+        database.historialOrden.count({ where: { ordenId: orderId } }),
+      ).resolves.toBe(0);
+      await expect(
+        database.auditoria.count({
+          where: { entity: "OrdenTrabajo", entityId: orderId },
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      await database.sucursalCliente.update({
+        where: { id: fixture.parents.activeBranchId },
+        data: { isActive: true },
+      });
+    }
+  });
+
   it("keeps empty administrative patches outside the repository contract", () => {
     expect(updateOrderSchema.safeParse({ version: 1 }).success).toBe(false);
   });

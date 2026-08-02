@@ -1000,7 +1000,13 @@ describe("orders operation repository closed adjustments", () => {
     await expect(
       database.historialOrden.findMany({
         where: { ordenId: orderId },
-        select: { action: true, previousStatus: true, newStatus: true, comment: true },
+        select: {
+          action: true,
+          previousStatus: true,
+          newStatus: true,
+          comment: true,
+          metadata: true,
+        },
       }),
     ).resolves.toEqual([
       {
@@ -1008,6 +1014,39 @@ describe("orders operation repository closed adjustments", () => {
         previousStatus: "COMPLETED",
         newStatus: "COMPLETED",
         comment: reason,
+        metadata: {
+          version: 6,
+          changedFields: [
+            "description",
+            "startedAt",
+            "endedAt",
+            "diagnosis",
+            "result",
+            "estimatedMinutes",
+          ],
+          before: {
+            description: null,
+            scheduledFor: null,
+            startedAt: originalStart.toISOString(),
+            endedAt: originalEnd.toISOString(),
+            diagnosis: null,
+            result: null,
+            cancellationReason: null,
+            estimatedMinutes: null,
+            totalMinutes: null,
+          },
+          after: {
+            description: "Trabajo documentado después de la visita",
+            scheduledFor: null,
+            startedAt: adjustedStart.toISOString(),
+            endedAt: adjustedEnd.toISOString(),
+            diagnosis: "Diagnóstico corregido",
+            result: "Resultado corregido",
+            cancellationReason: null,
+            estimatedMinutes: 120,
+            totalMinutes: 105,
+          },
+        },
       },
     ]);
     await expect(
@@ -1107,7 +1146,19 @@ describe("orders operation repository closed adjustments", () => {
         actor(null),
         fourthNow,
       ),
-    ).rejects.toThrow("La fecha de finalización no puede ser anterior al inicio");
+    ).resolves.toEqual({ kind: "INVALID_TEMPORAL_RANGE" });
+    await expect(
+      repository.adjustClosedOrder(
+        completedId,
+        {
+          ...baseInput,
+          version: 5,
+          startedAt: new Date("2026-08-01T14:00:00.000Z"),
+        },
+        actor(null),
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "INVALID_TEMPORAL_RANGE" });
 
     await expect(
       database.ordenTrabajo.findMany({
@@ -1134,6 +1185,14 @@ describe("orders operation repository closed adjustments", () => {
     );
     await expect(
       database.historialOrden.count({ where: { ordenId: { in: [completedId, openId] } } }),
+    ).resolves.toBe(0);
+    await expect(
+      database.auditoria.count({
+        where: {
+          entity: "OrdenTrabajo",
+          entityId: { in: [completedId, openId] },
+        },
+      }),
     ).resolves.toBe(0);
   });
 
@@ -1168,6 +1227,9 @@ describe("orders operation repository closed adjustments", () => {
           branchId: randomUUID(),
           serviceTypeId: randomUUID(),
           priority: "LOW",
+          reportedProblem: "No debe filtrarse al historial",
+          totalMinutes: 999,
+          passwordHash: "no-debe-filtrarse",
           assignments: [],
           materials: [],
         } as never,
@@ -1190,6 +1252,18 @@ describe("orders operation repository closed adjustments", () => {
         },
       }),
     ).resolves.toEqual(before);
+    const history = await database.historialOrden.findFirstOrThrow({
+      where: { ordenId: orderId, action: "ORDER_ADJUSTED" },
+      select: { metadata: true },
+    });
+    expect(Object.keys(history.metadata as object).sort()).toEqual([
+      "after",
+      "before",
+      "changedFields",
+      "version",
+    ]);
+    expect(JSON.stringify(history.metadata)).not.toContain("reportedProblem");
+    expect(JSON.stringify(history.metadata)).not.toContain("passwordHash");
   });
 
   it("rolls the closed-order update and history back when its audit fails", async () => {

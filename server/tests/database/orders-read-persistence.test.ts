@@ -193,4 +193,38 @@ describe("orders read repository", () => {
     expect(ownHistory?.items[0]).not.toHaveProperty("userId");
     expect(deniedHistory).toBeNull();
   });
+
+  it("orders identical history timestamps by descending id across page boundaries", async () => {
+    const repository = createOrdersReadRepository(database);
+    const tiedIds = [
+      "10000000-0000-4000-8000-000000000011",
+      "10000000-0000-4000-8000-000000000022",
+      "10000000-0000-4000-8000-000000000033",
+    ] as const;
+    await database.historialOrden.createMany({
+      data: tiedIds.map((id) => ({
+        id,
+        ordenId: fixture.activeOrderId,
+        action: `ORDER_TIED_${id.slice(-2)}`,
+        occurredAt: new Date("2026-08-01T11:00:00.000Z"),
+      })),
+    });
+
+    const first = await repository.listOrderHistory(
+      fixture.activeOrderId,
+      { page: 1, pageSize: 2 },
+      { kind: "ALL" },
+    );
+    const second = await repository.listOrderHistory(
+      fixture.activeOrderId,
+      { page: 2, pageSize: 2 },
+      { kind: "ALL" },
+    );
+
+    expect(first?.items.map(({ id }) => id)).toEqual([
+      tiedIds[2],
+      tiedIds[1],
+    ]);
+    expect(second?.items[0]?.id).toBe(tiedIds[0]);
+  });
 });

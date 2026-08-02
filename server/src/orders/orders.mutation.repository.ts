@@ -755,17 +755,17 @@ async function updateOrder(
     return { kind: "INVALID_ORDER_TRANSITION" } as const;
   }
 
+  const parentsChanged =
+    (input.branchId !== undefined && input.branchId !== locked.branchId) ||
+    (input.serviceTypeId !== undefined &&
+      input.serviceTypeId !== locked.serviceTypeId);
   if (
-    input.branchId !== undefined &&
-    input.branchId !== locked.branchId &&
-    !(await hasActiveBranch(transaction, input.branchId))
-  ) {
-    return { kind: "RESOURCE_INACTIVE" } as const;
-  }
-  if (
-    input.serviceTypeId !== undefined &&
-    input.serviceTypeId !== locked.serviceTypeId &&
-    !(await hasActiveServiceType(transaction, input.serviceTypeId))
+    parentsChanged &&
+    !(await hasActiveParents(
+      transaction,
+      input.branchId ?? locked.branchId,
+      input.serviceTypeId ?? locked.serviceTypeId,
+    ))
   ) {
     return { kind: "RESOURCE_INACTIVE" } as const;
   }

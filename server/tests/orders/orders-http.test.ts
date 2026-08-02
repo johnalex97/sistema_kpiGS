@@ -303,6 +303,243 @@ describe("orders HTTP security", () => {
   });
 });
 
+describe("orders HTTP validation and public history", () => {
+  it("returns validation errors for complete and stored temporal conflicts without mutation", async () => {
+    const supervisor = await authenticatedAgent(users.supervisor);
+    const admin = await authenticatedAgent(users.admin);
+    const orderIds = [randomUUID(), randomUUID()];
+    createdOrderIds.push(...orderIds);
+    const startedAt = new Date("2026-08-01T12:00:00.000Z");
+    const endedAt = new Date("2026-08-01T13:00:00.000Z");
+    await database.ordenTrabajo.createMany({
+      data: orderIds.map((id, index) => ({
+        id,
+        orderNumber: `HT-${randomUUID().slice(0, 8)}`,
+        sucursalId: branchId,
+        tipoServicioId: serviceTypeId,
+        priority: "HIGH" as const,
+        status: "COMPLETED" as const,
+        reportedProblem: `Rango temporal HTTP ${index}`,
+        startedAt,
+        endedAt,
+        totalMinutes: 60,
+        version: 5,
+      })),
+    });
+    const snapshot = async () => {
+      const [orders, historyCount, auditCount] = await Promise.all([
+        database.ordenTrabajo.findMany({
+          where: { id: { in: orderIds } },
+          orderBy: { id: "asc" },
+          select: {
+            id: true,
+            description: true,
+            startedAt: true,
+            endedAt: true,
+            totalMinutes: true,
+            version: true,
+            updatedAt: true,
+          },
+        }),
+        database.historialOrden.count({
+          where: { ordenId: { in: orderIds } },
+        }),
+        database.auditoria.count({
+          where: {
+            entity: "OrdenTrabajo",
+            entityId: { in: orderIds },
+          },
+        }),
+      ]);
+      return { orders, historyCount, auditCount };
+    };
+    const before = await snapshot();
+
+    const completeConflict = await supervisor
+      .post(`/api/v1/orders/${orderIds[0]}/adjustments`)
+      .set("Origin", allowedOrigin)
+      .send({
+        version: 5,
+        reason: "Rango completo invertido para validar",
+        startedAt: "2026-08-01T15:00:00.000Z",
+        endedAt: "2026-08-01T14:00:00.000Z",
+      })
+      .expect(400);
+    expect(completeConflict.body).toMatchObject({
+      success: false,
+      message: "Los datos enviados no son válidos",
+      data: null,
+      errors: [{ field: "endedAt", code: "VALIDATION_ERROR" }],
+      meta: { requestId: expect.any(String) },
+    });
+
+    const storedConflict = await supervisor
+      .post(`/api/v1/orders/${orderIds[1]}/adjustments`)
+      .set("Origin", allowedOrigin)
+      .send({
+        version: 5,
+        reason: "Inicio posterior al final almacenado",
+        startedAt: "2026-08-01T14:00:00.000Z",
+      })
+      .expect(400);
+    expect(storedConflict.body).toMatchObject({
+      success: false,
+      message: "Los datos enviados no son válidos",
+      data: null,
+      errors: [{ code: "VALIDATION_ERROR" }],
+      meta: { requestId: expect.any(String) },
+    });
+    expect(await snapshot()).toEqual(before);
+
+    await supervisor
+      .post(`/api/v1/orders/${orderIds[0]}/adjustments`)
+      .set("Origin", allowedOrigin)
+      .send({
+        version: 5,
+        reason: "Correccion valida para historial publico",
+        description: "Descripcion corregida desde HTTP",
+        startedAt: "2026-08-01T11:30:00.000Z",
+      })
+      .expect(200);
+    const historyResponse = await admin
+      .get(`/api/v1/orders/${orderIds[0]}/history`)
+      .expect(200);
+    const adjustment = historyResponse.body.data.items[0];
+    expect(adjustment).toMatchObject({
+      action: "ORDER_ADJUSTED",
+      comment: "Correccion valida para historial publico",
+      metadata: {
+        version: 6,
+        changedFields: ["description", "startedAt"],
+        before: {
+          description: null,
+          startedAt: startedAt.toISOString(),
+          endedAt: endedAt.toISOString(),
+          totalMinutes: 60,
+        },
+        after: {
+          description: "Descripcion corregida desde HTTP",
+          startedAt: "2026-08-01T11:30:00.000Z",
+          endedAt: endedAt.toISOString(),
+          totalMinutes: 90,
+        },
+      },
+    });
+    expect(Object.keys(adjustment.metadata.before).sort()).toEqual([
+      "cancellationReason",
+      "description",
+      "diagnosis",
+      "endedAt",
+      "estimatedMinutes",
+      "result",
+      "scheduledFor",
+      "startedAt",
+      "totalMinutes",
+    ]);
+    expect(JSON.stringify(adjustment.metadata)).not.toContain("reportedProblem");
+    expect(JSON.stringify(adjustment.metadata)).not.toContain("passwordHash");
+  });
+
+  it("enforces Decimal(12,3) boundaries on material creation and editing", async () => {
+    const admin = await authenticatedAgent(users.admin);
+    const orderId = randomUUID();
+    createdOrderIds.push(orderId);
+    await database.ordenTrabajo.create({
+      data: {
+        id: orderId,
+        orderNumber: `HQ-${randomUUID().slice(0, 8)}`,
+        sucursalId: branchId,
+        tipoServicioId: serviceTypeId,
+        priority: "HIGH",
+        status: "IN_PROGRESS",
+        reportedProblem: "Limite Decimal HTTP",
+        startedAt: new Date("2026-08-01T12:00:00.000Z"),
+        version: 4,
+      },
+    });
+
+    const maximumCreated = await admin
+      .post(`/api/v1/orders/${orderId}/materials`)
+      .set("Origin", allowedOrigin)
+      .send({ version: 4, materialId, quantity: "999999999.999" })
+      .expect(201);
+    expect(maximumCreated.body.data).toMatchObject({
+      version: 5,
+      materials: [{ quantity: "999999999.999" }],
+    });
+    const editableCreated = await admin
+      .post(`/api/v1/orders/${orderId}/materials`)
+      .set("Origin", allowedOrigin)
+      .send({ version: 5, materialId, quantity: "1.000" })
+      .expect(201);
+    const editableUsageId = editableCreated.body.data.materials.find(
+      ({ quantity }: { quantity: string }) => quantity === "1.000",
+    ).id;
+    const maximumEdited = await admin
+      .patch(`/api/v1/orders/${orderId}/materials/${editableUsageId}`)
+      .set("Origin", allowedOrigin)
+      .send({ version: 6, quantity: "999999999.999" })
+      .expect(200);
+    expect(maximumEdited.body.data).toMatchObject({ version: 7 });
+    expect(
+      maximumEdited.body.data.materials.filter(
+        ({ quantity }: { quantity: string }) =>
+          quantity === "999999999.999",
+      ),
+    ).toHaveLength(2);
+
+    const snapshot = async () => {
+      const [order, usages, historyCount, auditCount] = await Promise.all([
+        database.ordenTrabajo.findUniqueOrThrow({
+          where: { id: orderId },
+          select: { version: true, updatedAt: true },
+        }),
+        database.materialUtilizado.findMany({
+          where: { ordenId: orderId },
+          orderBy: { id: "asc" },
+          select: { id: true, quantity: true, observation: true },
+        }),
+        database.historialOrden.count({ where: { ordenId: orderId } }),
+        database.auditoria.count({
+          where: { entity: "OrdenTrabajo", entityId: orderId },
+        }),
+      ]);
+      return {
+        order,
+        usages: usages.map((usage) => ({
+          ...usage,
+          quantity: usage.quantity.toFixed(3),
+        })),
+        historyCount,
+        auditCount,
+      };
+    };
+    const beforeOverflow = await snapshot();
+
+    const createOverflow = await admin
+      .post(`/api/v1/orders/${orderId}/materials`)
+      .set("Origin", allowedOrigin)
+      .send({ version: 7, materialId, quantity: "1000000000" })
+      .expect(400);
+    expect(createOverflow.body).toMatchObject({
+      success: false,
+      message: "Los datos enviados no son válidos",
+      errors: [{ field: "quantity", code: "VALIDATION_ERROR" }],
+    });
+    const editOverflow = await admin
+      .patch(`/api/v1/orders/${orderId}/materials/${editableUsageId}`)
+      .set("Origin", allowedOrigin)
+      .send({ version: 7, quantity: "1000000000" })
+      .expect(400);
+    expect(editOverflow.body).toMatchObject({
+      success: false,
+      message: "Los datos enviados no son válidos",
+      errors: [{ field: "quantity", code: "VALIDATION_ERROR" }],
+    });
+    expect(await snapshot()).toEqual(beforeOverflow);
+  });
+});
+
 describe("orders HTTP lifecycle", () => {
   it("exposes all order commands with exact versions and safe ownership", async () => {
     const admin = await authenticatedAgent(users.admin);

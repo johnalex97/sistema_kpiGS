@@ -180,7 +180,7 @@ creación, edición, asignaciones, cancelación y ajustes cerrados.
 trabajo, pausas, reanudaciones, finalización y materiales de su propia orden.
 Las rutas de materiales aceptan alternativamente `ORDERS_MANAGE`.
 
-Cada creación recibe un número anual inmutable `OT-AAAA-NNNNN`, serializado en
+Cada creación recibe un número anual inmutable `GS-AAAA-NNNN`, serializado en
 PostgreSQL para evitar duplicados concurrentes. El flujo operativo es
 `PENDING → ASSIGNED → ON_ROUTE → IN_PROGRESS ⇄ PAUSED → COMPLETED`; el inicio
 directo `ASSIGNED → IN_PROGRESS` cubre soporte remoto y `CANCELLED` puede cerrar

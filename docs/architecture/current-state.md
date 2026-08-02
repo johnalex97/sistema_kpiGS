@@ -160,7 +160,7 @@ un principal por alcance y escriben auditoría junto con cada mutación.
 
 El módulo `orders` sigue la misma cadena con repositorios separados de lectura,
 mutaciones administrativas y operación. Expone 17 endpoints protegidos, números
-anuales `OT-AAAA-NNNNN`, control optimista por `version`, historial paginado,
+anuales `GS-AAAA-NNNN`, control optimista por `version`, historial paginado,
 asignación principal/soporte, transiciones de siete estados y materiales con
 costo histórico. ADMIN y SUPERVISOR administran y ven todas las órdenes; un
 TECHNICIAN solo consulta órdenes actuales o históricas asignadas y solo el

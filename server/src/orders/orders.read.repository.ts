@@ -158,7 +158,7 @@ async function loadOrderHistoryPage(
   const histories = await transaction.historialOrden.findMany({
     where,
     select: orderHistoryBaseSelect,
-    orderBy: [{ occurredAt: "desc" }, { id: "asc" }],
+    orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
     skip: (filters.page - 1) * filters.pageSize,
     take: filters.pageSize,
   });

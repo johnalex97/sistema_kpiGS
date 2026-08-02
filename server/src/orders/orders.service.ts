@@ -59,6 +59,12 @@ const errors: Record<OrderFailureKind, () => ApiError> = {
       "La orden fue modificada por otro usuario",
       "VERSION_CONFLICT",
     ),
+  INVALID_TEMPORAL_RANGE: () =>
+    new ApiError(
+      400,
+      "Los datos enviados no son válidos",
+      "VALIDATION_ERROR",
+    ),
   INVALID_ORDER_TRANSITION: () =>
     new ApiError(
       409,
