@@ -115,6 +115,7 @@ interface CreateOperationOrderOptions {
   primaryTechnicianId?: string | null;
   supportTechnicianId?: string;
   startedAt?: Date | null;
+  endedAt?: Date | null;
 }
 
 let fixture: OperationFixture;
@@ -149,6 +150,7 @@ async function createOperationOrder(
       status,
       reportedProblem: `Problema operativo ${suffix}`,
       ...(options.startedAt !== undefined && { startedAt: options.startedAt }),
+      ...(options.endedAt !== undefined && { endedAt: options.endedAt }),
       version,
     },
   });
@@ -949,6 +951,286 @@ describe("orders operation repository transitions", () => {
         where: { entity: "OrdenTrabajo", entityId: orderId },
       }),
     ).toBe(0);
+  });
+});
+
+describe("orders operation repository closed adjustments", () => {
+  it("adjusts a completed order once, derives gross time, and records the reason", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const originalStart = new Date("2026-08-01T12:00:00.000Z");
+    const originalEnd = new Date("2026-08-01T13:30:00.000Z");
+    const adjustedStart = new Date("2026-08-01T14:00:00.000Z");
+    const adjustedEnd = new Date("2026-08-01T15:45:00.000Z");
+    const reason = "Corrección confirmada por supervisión";
+    const orderId = await createOperationOrder({
+      status: "COMPLETED",
+      version: 5,
+      startedAt: originalStart,
+      endedAt: originalEnd,
+    });
+
+    await expect(
+      repository.adjustClosedOrder(
+        orderId,
+        {
+          version: 5,
+          reason,
+          description: "Trabajo documentado después de la visita",
+          startedAt: adjustedStart,
+          endedAt: adjustedEnd,
+          diagnosis: "Diagnóstico corregido",
+          result: "Resultado corregido",
+          estimatedMinutes: 120,
+        },
+        actor(null),
+        fourthNow,
+      ),
+    ).resolves.toMatchObject({
+      kind: "UPDATED",
+      order: {
+        status: "COMPLETED",
+        description: "Trabajo documentado después de la visita",
+        startedAt: adjustedStart,
+        endedAt: adjustedEnd,
+        totalMinutes: 105,
+        version: 6,
+      },
+    });
+
+    await expect(
+      database.historialOrden.findMany({
+        where: { ordenId: orderId },
+        select: { action: true, previousStatus: true, newStatus: true, comment: true },
+      }),
+    ).resolves.toEqual([
+      {
+        action: "ORDER_ADJUSTED",
+        previousStatus: "COMPLETED",
+        newStatus: "COMPLETED",
+        comment: reason,
+      },
+    ]);
+    await expect(
+      database.auditoria.findMany({
+        where: { entity: "OrdenTrabajo", entityId: orderId },
+        select: { action: true, reason: true, beforeData: true, afterData: true },
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        action: "ORDER_ADJUSTED",
+        reason,
+        beforeData: expect.objectContaining({
+          status: "COMPLETED",
+          startedAt: originalStart.toISOString(),
+          endedAt: originalEnd.toISOString(),
+          version: 5,
+        }),
+        afterData: expect.objectContaining({
+          status: "COMPLETED",
+          startedAt: adjustedStart.toISOString(),
+          endedAt: adjustedEnd.toISOString(),
+          totalMinutes: 105,
+          version: 6,
+        }),
+      }),
+    ]);
+  });
+
+  it("keeps null timing on a cancelled order while applying allowed corrections", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "CANCELLED",
+      version: 5,
+      primaryTechnicianId: null,
+    });
+
+    await expect(
+      repository.adjustClosedOrder(
+        orderId,
+        {
+          version: 5,
+          reason: "Corrección administrativa confirmada",
+          cancellationReason: "Cliente solicitó reprogramar la intervención",
+        },
+        actor(null),
+        fourthNow,
+      ),
+    ).resolves.toMatchObject({
+      kind: "UPDATED",
+      order: {
+        status: "CANCELLED",
+        cancellationReason: "Cliente solicitó reprogramar la intervención",
+        startedAt: null,
+        endedAt: null,
+        totalMinutes: null,
+        version: 6,
+      },
+    });
+  });
+
+  it("rejects stale, open, and inverted closed-order adjustments without mutation", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const completedId = await createOperationOrder({
+      status: "COMPLETED",
+      version: 5,
+      startedAt: firstNow,
+      endedAt: fourthNow,
+    });
+    const openId = await createOperationOrder({ status: "IN_PROGRESS", version: 5 });
+    const baseInput = { reason: "Corrección confirmada por supervisión" };
+
+    await expect(
+      repository.adjustClosedOrder(
+        completedId,
+        { ...baseInput, version: 4, description: "No debe persistir" },
+        actor(null),
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "VERSION_CONFLICT" });
+    await expect(
+      repository.adjustClosedOrder(
+        openId,
+        { ...baseInput, version: 5, description: "No debe persistir" },
+        actor(null),
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+    await expect(
+      repository.adjustClosedOrder(
+        completedId,
+        {
+          ...baseInput,
+          version: 5,
+          startedAt: fourthNow,
+          endedAt: firstNow,
+        },
+        actor(null),
+        fourthNow,
+      ),
+    ).rejects.toThrow("La fecha de finalización no puede ser anterior al inicio");
+
+    await expect(
+      database.ordenTrabajo.findMany({
+        where: { id: { in: [completedId, openId] } },
+        select: { id: true, status: true, version: true, startedAt: true, endedAt: true },
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        {
+          id: completedId,
+          status: "COMPLETED",
+          version: 5,
+          startedAt: firstNow,
+          endedAt: fourthNow,
+        },
+        {
+          id: openId,
+          status: "IN_PROGRESS",
+          version: 5,
+          startedAt: null,
+          endedAt: null,
+        },
+      ]),
+    );
+    await expect(
+      database.historialOrden.count({ where: { ordenId: { in: [completedId, openId] } } }),
+    ).resolves.toBe(0);
+  });
+
+  it("ignores fields outside the closed-adjustment allowlist", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "COMPLETED",
+      version: 5,
+      startedAt: firstNow,
+      endedAt: fourthNow,
+    });
+    const before = await database.ordenTrabajo.findUniqueOrThrow({
+      where: { id: orderId },
+      select: {
+        orderNumber: true,
+        sucursalId: true,
+        tipoServicioId: true,
+        priority: true,
+        status: true,
+      },
+    });
+
+    await expect(
+      repository.adjustClosedOrder(
+        orderId,
+        {
+          version: 5,
+          reason: "Corrección confirmada por supervisión",
+          description: "Solo este campo puede cambiar",
+          status: "CANCELLED",
+          orderNumber: "OP-MALICIOSA",
+          branchId: randomUUID(),
+          serviceTypeId: randomUUID(),
+          priority: "LOW",
+          assignments: [],
+          materials: [],
+        } as never,
+        actor(null),
+        fourthNow,
+      ),
+    ).resolves.toMatchObject({
+      kind: "UPDATED",
+      order: { status: "COMPLETED", version: 6 },
+    });
+    await expect(
+      database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: orderId },
+        select: {
+          orderNumber: true,
+          sucursalId: true,
+          tipoServicioId: true,
+          priority: true,
+          status: true,
+        },
+      }),
+    ).resolves.toEqual(before);
+  });
+
+  it("rolls the closed-order update and history back when its audit fails", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "COMPLETED",
+      version: 5,
+      startedAt: firstNow,
+      endedAt: fourthNow,
+    });
+    const before = await database.ordenTrabajo.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { description: true, version: true, totalMinutes: true, updatedAt: true },
+    });
+
+    await expect(
+      repository.adjustClosedOrder(
+        orderId,
+        {
+          version: 5,
+          reason: "Corrección confirmada por supervisión",
+          description: "No debe persistir si la auditoría falla",
+        },
+        { ...actor(null), userAgent: "x".repeat(501) },
+        fourthNow,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { description: true, version: true, totalMinutes: true, updatedAt: true },
+      }),
+    ).resolves.toEqual(before);
+    await expect(
+      database.historialOrden.count({ where: { ordenId: orderId } }),
+    ).resolves.toBe(0);
+    await expect(
+      database.auditoria.count({
+        where: { entity: "OrdenTrabajo", entityId: orderId },
+      }),
+    ).resolves.toBe(0);
   });
 });
 

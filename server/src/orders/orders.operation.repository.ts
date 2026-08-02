@@ -6,7 +6,7 @@ import type {
 import type {
   OrderDetailRecord,
   OrderMutationResult,
-  OrdersMaterialMutationRepository,
+  OrdersOperationRepository,
 } from "./orders.repository.types.js";
 import {
   calculateGrossMinutes,
@@ -33,6 +33,7 @@ interface LockedOrderRow {
   status: EstadoOrden;
   version: number;
   startedAt: Date | null;
+  endedAt: Date | null;
 }
 
 interface LockedTechnicianRow {
@@ -204,6 +205,9 @@ function orderAuditSnapshot(order: OrderDetailRecord) {
     scheduledFor: order.scheduledFor?.toISOString() ?? null,
     startedAt: order.startedAt?.toISOString() ?? null,
     endedAt: order.endedAt?.toISOString() ?? null,
+    diagnosis: order.diagnosis,
+    result: order.result,
+    cancellationReason: order.cancellationReason,
     estimatedMinutes: order.estimatedMinutes,
     totalMinutes: order.totalMinutes,
     version: order.version,
@@ -219,7 +223,8 @@ async function lockOrder(
       "id",
       UPPER("status"::text) AS "status",
       "version",
-      "started_at" AS "startedAt"
+      "started_at" AS "startedAt",
+      "ended_at" AS "endedAt"
     FROM "orden_trabajo"
     WHERE "id" = ${id}::uuid
       AND "deleted_at" IS NULL
@@ -425,9 +430,47 @@ async function writeMaterialTrail(
   });
 }
 
+async function writeAdjustmentTrail(
+  transaction: Prisma.TransactionClient,
+  before: OrderDetailRecord,
+  order: OrderDetailRecord,
+  actor: OrderActorContext,
+  now: Date,
+  reason: string,
+): Promise<void> {
+  await transaction.historialOrden.create({
+    data: {
+      ordenId: order.id,
+      previousStatus: before.status,
+      newStatus: order.status,
+      action: "ORDER_ADJUSTED",
+      comment: reason,
+      userId: actor.userId,
+      occurredAt: now,
+      requestId: actor.requestId,
+      metadata: { version: order.version },
+    },
+  });
+  await transaction.auditoria.create({
+    data: {
+      userId: actor.userId,
+      action: "ORDER_ADJUSTED",
+      entity: "OrdenTrabajo",
+      entityId: order.id,
+      beforeData: orderAuditSnapshot(before),
+      afterData: orderAuditSnapshot(order),
+      reason,
+      occurredAt: now,
+      ipAddress: actor.ipAddress,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    },
+  });
+}
+
 export function createOrdersOperationRepository(
   database: PrismaClient,
-): OrdersMaterialMutationRepository {
+): OrdersOperationRepository {
   async function runTransition(
     orderId: string,
     expectedVersion: number,
@@ -609,6 +652,64 @@ export function createOrdersOperationRepository(
           actor,
           now,
           input.cancellationReason,
+        );
+        return { kind: "UPDATED", order } as const;
+      });
+    },
+    async adjustClosedOrder(id, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        const locked = await lockOrder(transaction, id);
+        if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
+        if (locked.version !== input.version) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        if (locked.status !== "COMPLETED" && locked.status !== "CANCELLED") {
+          return { kind: "INVALID_ORDER_TRANSITION" } as const;
+        }
+
+        const nextStartedAt =
+          input.startedAt === undefined ? locked.startedAt : input.startedAt;
+        const nextEndedAt =
+          input.endedAt === undefined ? locked.endedAt : input.endedAt;
+        const totalMinutes =
+          nextStartedAt === null || nextEndedAt === null
+            ? null
+            : calculateGrossMinutes(nextStartedAt, nextEndedAt);
+        const before = await loadOrderDetail(transaction, id);
+        const changed = await transaction.ordenTrabajo.updateMany({
+          where: { id, version: input.version },
+          data: {
+            ...(input.description !== undefined && {
+              description: input.description,
+            }),
+            ...(input.scheduledFor !== undefined && {
+              scheduledFor: input.scheduledFor,
+            }),
+            ...(input.startedAt !== undefined && { startedAt: input.startedAt }),
+            ...(input.endedAt !== undefined && { endedAt: input.endedAt }),
+            ...(input.diagnosis !== undefined && { diagnosis: input.diagnosis }),
+            ...(input.result !== undefined && { result: input.result }),
+            ...(input.cancellationReason !== undefined && {
+              cancellationReason: input.cancellationReason,
+            }),
+            ...(input.estimatedMinutes !== undefined && {
+              estimatedMinutes: input.estimatedMinutes,
+            }),
+            totalMinutes,
+            updatedAt: now,
+            version: { increment: 1 },
+          },
+        });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+
+        const order = await loadOrderDetail(transaction, id);
+        await writeAdjustmentTrail(
+          transaction,
+          before,
+          order,
+          actor,
+          now,
+          input.reason,
         );
         return { kind: "UPDATED", order } as const;
       });
