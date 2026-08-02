@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { Prisma } from "../../generated/prisma/client.js";
 import { createDatabaseClient } from "../../src/config/database.js";
 import { createOrdersOperationRepository } from "../../src/orders/orders.operation.repository.js";
+import type { OrderMutationResult } from "../../src/orders/orders.repository.types.js";
 import type { OrderActorContext } from "../../src/orders/orders.types.js";
 import {
   database,
@@ -12,6 +14,81 @@ const firstNow = new Date("2026-08-01T12:00:00.000Z");
 const secondNow = new Date("2026-08-01T12:30:00.000Z");
 const thirdNow = new Date("2026-08-01T13:00:00.000Z");
 const fourthNow = new Date("2026-08-01T13:30:00.000Z");
+
+interface OperationalLockWaiters {
+  advisoryWaiters: number;
+  technicianWaiters: number;
+}
+
+async function waitForOperationalLockWindow(
+  transaction: Prisma.TransactionClient,
+  blockerPid: number,
+): Promise<OperationalLockWaiters> {
+  const deadline = Date.now() + 2_000;
+  let observed: OperationalLockWaiters = {
+    advisoryWaiters: 0,
+    technicianWaiters: 0,
+  };
+  while (Date.now() < deadline) {
+    const rows = await transaction.$queryRaw<OperationalLockWaiters[]>`
+      WITH "advisoryWaiterPids" AS (
+        SELECT DISTINCT "locks"."pid"
+        FROM "pg_locks" AS "locks"
+        INNER JOIN "pg_stat_activity" AS "activity"
+          ON "activity"."pid" = "locks"."pid"
+        WHERE "activity"."datname" = current_database()
+          AND "locks"."locktype" = 'advisory'
+          AND "locks"."granted" = false
+          AND ${blockerPid} = ANY(pg_blocking_pids("locks"."pid"))
+      ),
+      "technicianWaiterPids" AS (
+        SELECT DISTINCT "locks"."pid"
+        FROM "pg_locks" AS "locks"
+        INNER JOIN "pg_stat_activity" AS "activity"
+          ON "activity"."pid" = "locks"."pid"
+        WHERE "activity"."datname" = current_database()
+          AND "locks"."locktype" IN ('transactionid', 'tuple')
+          AND "locks"."granted" = false
+          AND EXISTS (
+            SELECT 1
+            FROM "advisoryWaiterPids" AS "advisory"
+            WHERE "advisory"."pid" = ANY(pg_blocking_pids("locks"."pid"))
+          )
+      )
+      SELECT
+        (SELECT COUNT(*) FROM "advisoryWaiterPids")::int AS "advisoryWaiters",
+        (SELECT COUNT(*) FROM "technicianWaiterPids")::int AS "technicianWaiters"
+    `;
+    observed = rows[0] ?? observed;
+    if (observed.advisoryWaiters >= 1 && observed.technicianWaiters >= 1) {
+      return observed;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const activities = await transaction.$queryRaw<
+    Array<{
+      pid: number;
+      state: string | null;
+      waitEventType: string | null;
+      waitEvent: string | null;
+      query: string;
+    }>
+  >`
+    SELECT
+      "pid",
+      "state",
+      "wait_event_type" AS "waitEventType",
+      "wait_event" AS "waitEvent",
+      "query"
+    FROM "pg_stat_activity"
+    WHERE "datname" = current_database()
+      AND "pid" <> pg_backend_pid()
+    ORDER BY "pid"
+  `;
+  throw new Error(
+    `Expected one advisory waiter and one technician-row waiter; observed ${JSON.stringify({ observed, activities })}`,
+  );
+}
 
 interface OperationFixture {
   clientId: string;
@@ -450,24 +527,55 @@ describe("orders operation repository technician overlap", () => {
 
   it("allows only one of two concurrent starts for the same primary", async () => {
     const otherDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const blockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
     const firstId = await createOperationOrder();
     const secondId = await createOperationOrder();
     const primaryActor = actor(fixture.technicianIds.primary);
+    let pendingStarts: Promise<OrderMutationResult[]> | undefined;
     try {
-      const results = await Promise.all([
-        createOrdersOperationRepository(database).startOrder(
-          firstId,
-          { version: 2 },
-          primaryActor,
-          firstNow,
-        ),
-        createOrdersOperationRepository(otherDatabase).startOrder(
-          secondId,
-          { version: 2 },
-          primaryActor,
-          firstNow,
-        ),
+      await Promise.all([
+        database.$queryRaw`SELECT 1`,
+        otherDatabase.$queryRaw`SELECT 1`,
+        blockerDatabase.$queryRaw`SELECT 1`,
       ]);
+      const waiters = await blockerDatabase.$transaction(
+        async (transaction) => {
+          await transaction.$executeRaw`
+            SELECT pg_advisory_xact_lock(
+              hashtextextended(${fixture.technicianIds.primary}, 0)
+            )
+          `;
+          const blockerRows = await transaction.$queryRaw<Array<{ pid: number }>>`
+            SELECT pg_backend_pid() AS "pid"
+          `;
+          const blockerPid = blockerRows[0]?.pid;
+          if (blockerPid === undefined) {
+            throw new Error("Advisory blocker backend was not available");
+          }
+          pendingStarts = Promise.all([
+            createOrdersOperationRepository(database).startOrder(
+              firstId,
+              { version: 2 },
+              primaryActor,
+              firstNow,
+            ),
+            createOrdersOperationRepository(otherDatabase).startOrder(
+              secondId,
+              { version: 2 },
+              primaryActor,
+              firstNow,
+            ),
+          ]);
+          return waitForOperationalLockWindow(transaction, blockerPid);
+        },
+        { timeout: 10_000 },
+      );
+      expect(waiters).toMatchObject({
+        advisoryWaiters: 1,
+        technicianWaiters: 1,
+      });
+      if (!pendingStarts) throw new Error("Concurrent starts were not scheduled");
+      const results = await pendingStarts;
 
       expect(results.map(({ kind }) => kind).sort()).toEqual([
         "TECHNICIAN_BUSY",
@@ -481,8 +589,14 @@ describe("orders operation repository technician overlap", () => {
           },
         }),
       ).toBe(1);
+    } catch (error) {
+      if (pendingStarts) await Promise.allSettled([pendingStarts]);
+      throw error;
     } finally {
-      await otherDatabase.$disconnect();
+      await Promise.all([
+        otherDatabase.$disconnect(),
+        blockerDatabase.$disconnect(),
+      ]);
     }
   });
 });
