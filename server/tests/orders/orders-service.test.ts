@@ -268,6 +268,21 @@ describe("OrdersService read authorization", () => {
     expect(repository.listOrders).not.toHaveBeenCalled();
   });
 
+  it("denies own history without a linked technician before repository access", async () => {
+    const repository = repositoryWithSuccess();
+    const service = createOrdersService(repository, () => fixedNow);
+
+    await expectForbidden(
+      service.listOrderHistory(
+        orderId,
+        historyFilters,
+        actor(["ORDERS_VIEW_OWN"]),
+      ),
+    );
+
+    expect(repository.listOrderHistory).not.toHaveBeenCalled();
+  });
+
   it("denies reads when neither read permission is present", async () => {
     const repository = repositoryWithSuccess();
     const service = createOrdersService(repository, () => fixedNow);
@@ -304,73 +319,377 @@ type AuthorizedOperation = (
   operationActor: OrderActorContext,
 ) => Promise<PublicOrderDetail>;
 
-const managementOperations: Array<[string, AuthorizedOperation]> = [
-  ["create", (service, operationActor) => service.createOrder(createInput, operationActor)],
-  ["update", (service, operationActor) => service.updateOrder(orderId, updateInput, operationActor)],
-  ["assign", (service, operationActor) => service.assignTechnician(orderId, assignmentInput, operationActor)],
-  ["unassign", (service, operationActor) => service.unassignTechnician(orderId, technicianId, unassignmentInput, operationActor)],
-  ["cancel", (service, operationActor) => service.cancelOrder(orderId, cancelInput, operationActor)],
-  ["adjust", (service, operationActor) => service.adjustClosedOrder(orderId, adjustInput, operationActor)],
+const mutationMethodNames = [
+  "createOrder",
+  "updateOrder",
+  "assignTechnician",
+  "unassignTechnician",
+  "moveOnRoute",
+  "startOrder",
+  "pauseOrder",
+  "resumeOrder",
+  "completeOrder",
+  "cancelOrder",
+  "adjustClosedOrder",
+  "addOrderMaterial",
+  "updateOrderMaterial",
+  "removeOrderMaterial",
+] as const satisfies readonly (keyof OrdersRepository)[];
+
+type MutationMethodName = (typeof mutationMethodNames)[number];
+
+interface MutationScenario {
+  name: string;
+  method: MutationMethodName;
+  invoke: AuthorizedOperation;
+  assertCall(
+    repository: OrdersRepository,
+    operationActor: OrderActorContext,
+  ): void;
+}
+
+function expectNoMutationCalls(repository: OrdersRepository): void {
+  for (const method of mutationMethodNames) {
+    expect(repository[method]).not.toHaveBeenCalled();
+  }
+}
+
+function expectOnlyMutationCalled(
+  repository: OrdersRepository,
+  expectedMethod: MutationMethodName,
+): void {
+  for (const method of mutationMethodNames) {
+    if (method === expectedMethod) {
+      expect(repository[method]).toHaveBeenCalledTimes(1);
+    } else {
+      expect(repository[method]).not.toHaveBeenCalled();
+    }
+  }
+}
+
+const managementOperations: MutationScenario[] = [
+  {
+    name: "create",
+    method: "createOrder",
+    invoke: (service, operationActor) =>
+      service.createOrder(createInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.createOrder).toHaveBeenCalledWith(
+        createInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "update",
+    method: "updateOrder",
+    invoke: (service, operationActor) =>
+      service.updateOrder(orderId, updateInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.updateOrder).toHaveBeenCalledWith(
+        orderId,
+        updateInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "assign",
+    method: "assignTechnician",
+    invoke: (service, operationActor) =>
+      service.assignTechnician(orderId, assignmentInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.assignTechnician).toHaveBeenCalledWith(
+        orderId,
+        assignmentInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "unassign",
+    method: "unassignTechnician",
+    invoke: (service, operationActor) =>
+      service.unassignTechnician(
+        orderId,
+        technicianId,
+        unassignmentInput,
+        operationActor,
+      ),
+    assertCall: (repository, operationActor) => {
+      expect(repository.unassignTechnician).toHaveBeenCalledWith(
+        orderId,
+        technicianId,
+        unassignmentInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "cancel",
+    method: "cancelOrder",
+    invoke: (service, operationActor) =>
+      service.cancelOrder(orderId, cancelInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.cancelOrder).toHaveBeenCalledWith(
+        orderId,
+        cancelInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "adjust",
+    method: "adjustClosedOrder",
+    invoke: (service, operationActor) =>
+      service.adjustClosedOrder(orderId, adjustInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.adjustClosedOrder).toHaveBeenCalledWith(
+        orderId,
+        adjustInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
 ];
 
-const operationalCommands: Array<[string, AuthorizedOperation]> = [
-  ["move on route", (service, operationActor) => service.moveOnRoute(orderId, versionInput, operationActor)],
-  ["start", (service, operationActor) => service.startOrder(orderId, versionInput, operationActor)],
-  ["pause", (service, operationActor) => service.pauseOrder(orderId, pauseInput, operationActor)],
-  ["resume", (service, operationActor) => service.resumeOrder(orderId, versionInput, operationActor)],
-  ["complete", (service, operationActor) => service.completeOrder(orderId, completeInput, operationActor)],
+const operationalCommands: MutationScenario[] = [
+  {
+    name: "move on route",
+    method: "moveOnRoute",
+    invoke: (service, operationActor) =>
+      service.moveOnRoute(orderId, versionInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.moveOnRoute).toHaveBeenCalledWith(
+        orderId,
+        versionInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "start",
+    method: "startOrder",
+    invoke: (service, operationActor) =>
+      service.startOrder(orderId, versionInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.startOrder).toHaveBeenCalledWith(
+        orderId,
+        versionInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "pause",
+    method: "pauseOrder",
+    invoke: (service, operationActor) =>
+      service.pauseOrder(orderId, pauseInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.pauseOrder).toHaveBeenCalledWith(
+        orderId,
+        pauseInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "resume",
+    method: "resumeOrder",
+    invoke: (service, operationActor) =>
+      service.resumeOrder(orderId, versionInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.resumeOrder).toHaveBeenCalledWith(
+        orderId,
+        versionInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "complete",
+    method: "completeOrder",
+    invoke: (service, operationActor) =>
+      service.completeOrder(orderId, completeInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.completeOrder).toHaveBeenCalledWith(
+        orderId,
+        completeInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
 ];
 
-const materialOperations: Array<[string, AuthorizedOperation]> = [
-  ["add", (service, operationActor) => service.addOrderMaterial(orderId, materialInput, operationActor)],
-  ["update", (service, operationActor) => service.updateOrderMaterial(orderId, usageId, updateMaterialInput, operationActor)],
-  ["remove", (service, operationActor) => service.removeOrderMaterial(orderId, usageId, removeMaterialInput, operationActor)],
+const materialOperations: MutationScenario[] = [
+  {
+    name: "add",
+    method: "addOrderMaterial",
+    invoke: (service, operationActor) =>
+      service.addOrderMaterial(orderId, materialInput, operationActor),
+    assertCall: (repository, operationActor) => {
+      expect(repository.addOrderMaterial).toHaveBeenCalledWith(
+        orderId,
+        materialInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "update",
+    method: "updateOrderMaterial",
+    invoke: (service, operationActor) =>
+      service.updateOrderMaterial(
+        orderId,
+        usageId,
+        updateMaterialInput,
+        operationActor,
+      ),
+    assertCall: (repository, operationActor) => {
+      expect(repository.updateOrderMaterial).toHaveBeenCalledWith(
+        orderId,
+        usageId,
+        updateMaterialInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
+  {
+    name: "remove",
+    method: "removeOrderMaterial",
+    invoke: (service, operationActor) =>
+      service.removeOrderMaterial(
+        orderId,
+        usageId,
+        removeMaterialInput,
+        operationActor,
+      ),
+    assertCall: (repository, operationActor) => {
+      expect(repository.removeOrderMaterial).toHaveBeenCalledWith(
+        orderId,
+        usageId,
+        removeMaterialInput,
+        operationActor,
+        fixedNow,
+      );
+    },
+  },
 ];
 
 describe("OrdersService mutation authorization", () => {
   it.each(managementOperations)(
-    "requires ORDERS_MANAGE to %s",
-    async (_name, invoke) => {
+    "requires ORDERS_MANAGE to $name",
+    async (scenario) => {
+      const deniedRepository = repositoryWithSuccess();
+      const deniedService = createOrdersService(
+        deniedRepository,
+        () => fixedNow,
+      );
+
+      await expectForbidden(
+        scenario.invoke(
+          deniedService,
+          actor(["ORDERS_OPERATE_OWN"], technicianId),
+        ),
+      );
+      expectNoMutationCalls(deniedRepository);
+
       const repository = repositoryWithSuccess();
       const service = createOrdersService(repository, () => fixedNow);
+      const manager = actor(["ORDERS_MANAGE"]);
+      const result = await scenario.invoke(service, manager);
 
-      await expectForbidden(invoke(service, actor(["ORDERS_OPERATE_OWN"], technicianId)));
-      const result = await invoke(service, actor(["ORDERS_MANAGE"]));
-
+      scenario.assertCall(repository, manager);
+      expectOnlyMutationCalled(repository, scenario.method);
       expect(result).not.toHaveProperty("sucursal");
       expect(result).not.toHaveProperty("tecnicos");
     },
   );
 
   it.each(operationalCommands)(
-    "requires ORDERS_OPERATE_OWN and a linked technician to %s",
-    async (_name, invoke) => {
+    "requires ORDERS_OPERATE_OWN and a linked technician to $name",
+    async (scenario) => {
+      const deniedActors = [
+        actor(["ORDERS_MANAGE"]),
+        actor(["ORDERS_OPERATE_OWN"]),
+      ];
+      for (const deniedActor of deniedActors) {
+        const deniedRepository = repositoryWithSuccess();
+        const deniedService = createOrdersService(
+          deniedRepository,
+          () => fixedNow,
+        );
+
+        await expectForbidden(scenario.invoke(deniedService, deniedActor));
+        expectNoMutationCalls(deniedRepository);
+      }
+
       const repository = repositoryWithSuccess();
       const service = createOrdersService(repository, () => fixedNow);
+      const technicianActor = actor(["ORDERS_OPERATE_OWN"], technicianId);
 
-      await expectForbidden(invoke(service, actor(["ORDERS_MANAGE"])));
-      await expectForbidden(invoke(service, actor(["ORDERS_OPERATE_OWN"])));
-      const result = await invoke(
-        service,
-        actor(["ORDERS_OPERATE_OWN"], technicianId),
-      );
+      const result = await scenario.invoke(service, technicianActor);
 
+      scenario.assertCall(repository, technicianActor);
+      expectOnlyMutationCalled(repository, scenario.method);
       expect(result.id).toBe(orderId);
     },
   );
 
   it.each(materialOperations)(
-    "allows ORDERS_MANAGE or linked ORDERS_OPERATE_OWN to %s a material",
-    async (_name, invoke) => {
-      const repository = repositoryWithSuccess();
-      const service = createOrdersService(repository, () => fixedNow);
+    "allows ORDERS_MANAGE or linked ORDERS_OPERATE_OWN to $name a material",
+    async (scenario) => {
+      const deniedActors = [
+        actor([]),
+        actor(["ORDERS_OPERATE_OWN"]),
+      ];
+      for (const deniedActor of deniedActors) {
+        const deniedRepository = repositoryWithSuccess();
+        const deniedService = createOrdersService(
+          deniedRepository,
+          () => fixedNow,
+        );
 
-      await expectForbidden(invoke(service, actor([])));
-      await expectForbidden(invoke(service, actor(["ORDERS_OPERATE_OWN"])));
-      await expect(invoke(service, actor(["ORDERS_MANAGE"]))).resolves.toMatchObject({ id: orderId });
+        await expectForbidden(scenario.invoke(deniedService, deniedActor));
+        expectNoMutationCalls(deniedRepository);
+      }
+
+      const managerRepository = repositoryWithSuccess();
+      const managerService = createOrdersService(
+        managerRepository,
+        () => fixedNow,
+      );
+      const manager = actor(["ORDERS_MANAGE"]);
       await expect(
-        invoke(service, actor(["ORDERS_OPERATE_OWN"], technicianId)),
+        scenario.invoke(managerService, manager),
       ).resolves.toMatchObject({ id: orderId });
+      scenario.assertCall(managerRepository, manager);
+      expectOnlyMutationCalled(managerRepository, scenario.method);
+
+      const technicianRepository = repositoryWithSuccess();
+      const technicianService = createOrdersService(
+        technicianRepository,
+        () => fixedNow,
+      );
+      const technicianActor = actor(["ORDERS_OPERATE_OWN"], technicianId);
+      await expect(
+        scenario.invoke(technicianService, technicianActor),
+      ).resolves.toMatchObject({ id: orderId });
+      scenario.assertCall(technicianRepository, technicianActor);
+      expectOnlyMutationCalled(technicianRepository, scenario.method);
     },
   );
 
@@ -385,18 +704,29 @@ describe("OrdersService mutation authorization", () => {
         kind: "TECHNICIAN_NOT_ASSIGNED",
       });
       const service = createOrdersService(repository, () => fixedNow);
+      const technicianActor = actor(
+        ["ORDERS_OPERATE_OWN"],
+        linkedTechnicianId,
+      );
 
       await expect(
         service.moveOnRoute(
           orderId,
           versionInput,
-          actor(["ORDERS_OPERATE_OWN"], linkedTechnicianId),
+          technicianActor,
         ),
       ).rejects.toMatchObject({
         statusCode: 409,
         code: "TECHNICIAN_NOT_ASSIGNED",
         message: "El técnico no puede operar esta orden",
       });
+      expect(repository.moveOnRoute).toHaveBeenCalledWith(
+        orderId,
+        versionInput,
+        technicianActor,
+        fixedNow,
+      );
+      expectOnlyMutationCalled(repository, "moveOnRoute");
     },
   );
 });
@@ -440,19 +770,4 @@ describe("OrdersService public failures", () => {
       });
     },
   );
-
-  it("passes the same actor and timestamp to every successful mutation", async () => {
-    const repository = repositoryWithSuccess();
-    const service = createOrdersService(repository, () => fixedNow);
-    const manager = actor(["ORDERS_MANAGE"]);
-
-    await service.assignTechnician(orderId, assignmentInput, manager);
-
-    expect(repository.assignTechnician).toHaveBeenCalledWith(
-      orderId,
-      assignmentInput,
-      manager,
-      fixedNow,
-    );
-  });
 });
