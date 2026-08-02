@@ -24,6 +24,10 @@ WHERE schemaname = current_schema()
     'uq_contacto_principal_cliente',
     'uq_contacto_principal_sucursal',
     'uq_orden_tecnico_principal_activo',
+    'idx_order_open_schedule',
+    'idx_order_technician_visibility',
+    'idx_order_active_primary',
+    'idx_order_history_page',
     'uq_actividad_tecnico_responsable',
     'uq_pausa_actividad_abierta'
   )
@@ -42,6 +46,132 @@ JOIN pg_namespace AS namespace_data
 WHERE namespace_data.nspname = current_schema()
   AND constraint_data.conname LIKE 'ck_%'
 ORDER BY constraint_data.conname;
+
+DO $verification$
+DECLARE
+  missing_count integer;
+  actual_count integer;
+BEGIN
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('ORDERS_VIEW_ALL'),
+    ('ORDERS_OPERATE_OWN')
+  ) AS expected(code)
+  LEFT JOIN "permiso" AS permission_data
+    ON permission_data."code" = expected.code
+  WHERE permission_data."id" IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan permisos nuevos de órdenes';
+  END IF;
+
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('ADMIN', 'ORDERS_VIEW_ALL'),
+    ('ADMIN', 'ORDERS_OPERATE_OWN'),
+    ('SUPERVISOR', 'ORDERS_VIEW_ALL'),
+    ('TECHNICIAN', 'ORDERS_OPERATE_OWN')
+  ) AS expected(role_code, permission_code)
+  LEFT JOIN "rol" AS role_data
+    ON role_data."code" = expected.role_code
+  LEFT JOIN "permiso" AS permission_data
+    ON permission_data."code" = expected.permission_code
+  LEFT JOIN "rol_permiso" AS role_permission
+    ON role_permission."rol_id" = role_data."id"
+   AND role_permission."permiso_id" = permission_data."id"
+  WHERE role_permission."rol_id" IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan asignaciones de permisos de órdenes';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM pg_indexes
+  WHERE schemaname = current_schema()
+    AND indexname IN (
+      'idx_order_open_schedule',
+      'idx_order_technician_visibility',
+      'idx_order_active_primary',
+      'idx_order_history_page'
+    );
+  IF actual_count <> 4 THEN
+    RAISE EXCEPTION 'Se esperaban 4 índices de consulta de órdenes y existen %', actual_count;
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM pg_enum AS enum_data
+  JOIN pg_type AS type_data ON type_data.oid = enum_data.enumtypid
+  JOIN pg_namespace AS namespace_data ON namespace_data.oid = type_data.typnamespace
+  WHERE namespace_data.nspname = current_schema()
+    AND type_data.typname = 'estado_orden'
+    AND enum_data.enumlabel IN (
+      'pending',
+      'assigned',
+      'on_route',
+      'in_progress',
+      'paused',
+      'completed',
+      'cancelled'
+    );
+  IF actual_count <> 7 THEN
+    RAISE EXCEPTION 'Se esperaban los 7 estados de orden y existen %', actual_count;
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM pg_enum AS enum_data
+  JOIN pg_type AS type_data ON type_data.oid = enum_data.enumtypid
+  JOIN pg_namespace AS namespace_data ON namespace_data.oid = type_data.typnamespace
+  WHERE namespace_data.nspname = current_schema()
+    AND type_data.typname = 'estado_orden';
+  IF actual_count <> 7 THEN
+    RAISE EXCEPTION 'El catálogo estado_orden debe tener exactamente 7 valores y tiene %', actual_count;
+  END IF;
+
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('pg_class', 'uq_orden_tecnico_principal_activo'),
+    ('pg_constraint', 'ck_material_destino_exclusivo')
+  ) AS expected(catalog_name, object_name)
+  WHERE (
+    expected.catalog_name = 'pg_class'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND indexname = expected.object_name
+    )
+  ) OR (
+    expected.catalog_name = 'pg_constraint'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint AS constraint_data
+      JOIN pg_namespace AS namespace_data
+        ON namespace_data.oid = constraint_data.connamespace
+      WHERE namespace_data.nspname = current_schema()
+        AND constraint_data.conname = expected.object_name
+    )
+  );
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan restricciones existentes requeridas por órdenes';
+  END IF;
+END
+$verification$;
+
+SELECT permission_data."code",
+       role_data."code" AS role_code
+FROM "permiso" AS permission_data
+JOIN "rol_permiso" AS role_permission
+  ON role_permission."permiso_id" = permission_data."id"
+JOIN "rol" AS role_data
+  ON role_data."id" = role_permission."rol_id"
+WHERE permission_data."code" IN ('ORDERS_VIEW_ALL', 'ORDERS_OPERATE_OWN')
+ORDER BY permission_data."code", role_data."code";
+
+SELECT enum_data.enumlabel AS order_status
+FROM pg_enum AS enum_data
+JOIN pg_type AS type_data ON type_data.oid = enum_data.enumtypid
+JOIN pg_namespace AS namespace_data ON namespace_data.oid = type_data.typnamespace
+WHERE namespace_data.nspname = current_schema()
+  AND type_data.typname = 'estado_orden'
+ORDER BY enum_data.enumsortorder;
 
 SELECT
   (SELECT count(*) FROM "rol") AS roles,

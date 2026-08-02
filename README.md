@@ -7,8 +7,8 @@ cumplimiento, eficiencia y calidad.
 ## Estado actual
 
 El repositorio contiene un frontend modular, una API Express independiente,
-persistencia PostgreSQL administrada mediante Prisma y autenticación backend
-con sesiones revocables. El frontend todavía usa datos de demostración porque
+persistencia PostgreSQL administrada mediante Prisma, autenticación backend
+con sesiones revocables y APIs protegidas de técnicos, clientes y órdenes. El frontend todavía usa datos de demostración porque
 la pantalla de acceso y la conexión entre ambas
 aplicaciones corresponden a etapas posteriores. Las actividades creadas desde
 el formulario se conservan únicamente durante la sesión del navegador.
@@ -78,7 +78,9 @@ versionadas. La tercera migración,
 códigos de técnico y la unicidad de correo laboral activo. La cuarta,
 `20260731120000_clients_api_constraints`, agrega versiones para sucursales y
 contactos, la secuencia de clientes y las restricciones de RTN y contactos
-principales.
+principales. La quinta, `20260801170000_orders_api_constraints`, agrega cuatro
+índices para agenda abierta, visibilidad por técnico, trabajo principal activo
+y paginación estable del historial de órdenes.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
 apuntarse al esquema `public`.
@@ -129,6 +131,23 @@ POST /api/v1/clients/:clientId/contacts
 PATCH /api/v1/clients/:clientId/contacts/:contactId
 DELETE /api/v1/clients/:clientId/contacts/:contactId
 POST /api/v1/clients/:clientId/contacts/:contactId/reactivate
+GET /api/v1/orders
+GET /api/v1/orders/:orderId
+GET /api/v1/orders/:orderId/history
+POST /api/v1/orders
+PATCH /api/v1/orders/:orderId
+POST /api/v1/orders/:orderId/assignments
+DELETE /api/v1/orders/:orderId/assignments/:technicianId
+POST /api/v1/orders/:orderId/on-route
+POST /api/v1/orders/:orderId/start
+POST /api/v1/orders/:orderId/pause
+POST /api/v1/orders/:orderId/resume
+POST /api/v1/orders/:orderId/complete
+POST /api/v1/orders/:orderId/cancel
+POST /api/v1/orders/:orderId/adjustments
+POST /api/v1/orders/:orderId/materials
+PATCH /api/v1/orders/:orderId/materials/:usageId
+DELETE /api/v1/orders/:orderId/materials/:usageId
 ```
 
 Los endpoints mutables de autenticación requieren un encabezado `Origin`
@@ -152,6 +171,33 @@ trabajo activo, y desactivar un contacto principal no promueve otro. Solo
 puede existir un principal general activo y uno activo por cada sucursal.
 Todas las ediciones y transiciones usan `version` para evitar sobrescrituras.
 El frontend React todavía no consume esta API de clientes.
+
+La API de órdenes usa cuatro permisos. `ORDERS_VIEW_ALL` permite a ADMIN y
+SUPERVISOR consultar todas las órdenes; `ORDERS_VIEW_OWN` limita a TECHNICIAN a
+órdenes donde tiene una asignación actual o histórica. `ORDERS_MANAGE` protege
+creación, edición, asignaciones, cancelación y ajustes cerrados.
+`ORDERS_OPERATE_OWN` permite al técnico principal activo iniciar traslados,
+trabajo, pausas, reanudaciones, finalización y materiales de su propia orden.
+Las rutas de materiales aceptan alternativamente `ORDERS_MANAGE`.
+
+Cada creación recibe un número anual inmutable `OT-AAAA-NNNNN`, serializado en
+PostgreSQL para evitar duplicados concurrentes. El flujo operativo es
+`PENDING → ASSIGNED → ON_ROUTE → IN_PROGRESS ⇄ PAUSED → COMPLETED`; el inicio
+directo `ASSIGNED → IN_PROGRESS` cubre soporte remoto y `CANCELLED` puede cerrar
+cualquier estado abierto. Toda mutación envía la `version` devuelta por la
+respuesta anterior; una versión obsoleta devuelve `VERSION_CONFLICT` sin aplicar
+cambios. Las mutaciones requieren además `Origin` permitido, sesión autenticada
+y contraseña definitiva, en ese orden.
+
+Las pruebas enfocadas de órdenes se ejecutan desde `server/`:
+
+```powershell
+npm test -- tests/orders
+npm run test:db -- tests/database/orders-read-persistence.test.ts tests/database/orders-mutation-persistence.test.ts tests/database/orders-operation-persistence.test.ts tests/orders/orders-http.test.ts
+```
+
+El frontend React sigue usando `src/mocks/data.ts`; esta entrega no conecta sus
+pantallas con la API de órdenes.
 
 Respuesta:
 
@@ -180,8 +226,8 @@ Comandos del backend:
 | `npm run dev` | Ejecuta la API con recarga |
 | `npm run typecheck` | Valida TypeScript sin emitir |
 | `npm run lint` | Ejecuta ESLint |
-| `npm run test` | Ejecuta 95 pruebas unitarias y de contrato |
-| `npm run test:db` | Ejecuta 62 pruebas HTTP y PostgreSQL contra el esquema `test` |
+| `npm run test` | Ejecuta 155 pruebas unitarias y de contrato |
+| `npm run test:db` | Ejecuta 167 pruebas HTTP y PostgreSQL contra el esquema `test` |
 | `npm run build` | Genera `server/dist/` |
 | `npm run start` | Ejecuta el build |
 | `npm run db:format` | Formatea `schema.prisma` |
@@ -258,7 +304,7 @@ explícitamente en `src/mocks/data.ts`.
 
 PostgreSQL posee además un seed independiente con:
 
-- 3 roles y 13 permisos.
+- 3 roles y 15 permisos.
 - 3 técnicos, uno vinculado a usuario y dos sin cuenta.
 - 2 clientes y sus sucursales/contactos.
 - 3 órdenes.
@@ -291,8 +337,8 @@ seguros, cierre controlado de Prisma, contraseñas `scrypt`, bloqueo temporal,
 sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 El frontend todavía no muestra login ni consume la base o la API de negocio.
-La autorización por propiedad de órdenes y actividades se incorporará al crear
-esos endpoints. No utilices el sistema para información sensible o datos
+La autorización por propiedad ya se aplica en órdenes; la de actividades se
+incorporará al crear esos endpoints. No utilices el sistema para información sensible o datos
 personales reales hasta completar las fases funcionales y el despliegue HTTPS.
 
 Los secretos, archivos `.env`, cliente Prisma generado, logs y builds están
