@@ -909,7 +909,10 @@ describe("orders mutation repository administrative editing", () => {
 
 interface AssignmentFixture {
   parents: CreationFixture;
-  orderIds: Record<"PENDING" | "ON_ROUTE" | "COMPLETED", string>;
+  orderIds: Record<
+    "PENDING" | "ON_ROUTE" | "IN_PROGRESS" | "PAUSED" | "COMPLETED",
+    string
+  >;
   technicianIds: Record<
     "primary" | "replacement" | "support" | "inactive" | "deleted",
     string
@@ -931,6 +934,8 @@ async function createAssignmentFixture(): Promise<AssignmentFixture> {
   const orderIds = {
     PENDING: randomUUID(),
     ON_ROUTE: randomUUID(),
+    IN_PROGRESS: randomUUID(),
+    PAUSED: randomUUID(),
     COMPLETED: randomUUID(),
   };
   const technicianIds = {
@@ -956,6 +961,22 @@ async function createAssignmentFixture(): Promise<AssignmentFixture> {
         tipoServicioId: parents.activeServiceTypeId,
         status: "ON_ROUTE",
         reportedProblem: "AsignaciÃ³n en ruta",
+      },
+      {
+        id: orderIds.IN_PROGRESS,
+        orderNumber: `ASN-I-${suffix}`,
+        sucursalId: parents.activeBranchId,
+        tipoServicioId: parents.activeServiceTypeId,
+        status: "IN_PROGRESS",
+        reportedProblem: "AsignaciÃ³n en proceso",
+      },
+      {
+        id: orderIds.PAUSED,
+        orderNumber: `ASN-U-${suffix}`,
+        sucursalId: parents.activeBranchId,
+        tipoServicioId: parents.activeServiceTypeId,
+        status: "PAUSED",
+        reportedProblem: "AsignaciÃ³n pausada",
       },
       {
         id: orderIds.COMPLETED,
@@ -1044,6 +1065,14 @@ describe("orders mutation repository technician assignments", () => {
     await database.ordenTrabajo.update({
       where: { id: fixture.orderIds.ON_ROUTE },
       data: { status: "ON_ROUTE" },
+    });
+    await database.ordenTrabajo.update({
+      where: { id: fixture.orderIds.IN_PROGRESS },
+      data: { status: "IN_PROGRESS" },
+    });
+    await database.ordenTrabajo.update({
+      where: { id: fixture.orderIds.PAUSED },
+      data: { status: "PAUSED" },
     });
     await database.ordenTrabajo.update({
       where: { id: fixture.orderIds.COMPLETED },
@@ -1243,6 +1272,109 @@ describe("orders mutation repository technician assignments", () => {
     });
   });
 
+  it("demotes an assigned primary to support with a truthful status and trail", async () => {
+    const repository = createOrdersMutationRepository(database);
+    await repository.assignTechnician(
+      fixture.orderIds.PENDING,
+      assignmentInput(fixture, "primary", "PRIMARY", 1),
+      fixture.parents.actor,
+      now,
+    );
+
+    await expect(
+      repository.assignTechnician(
+        fixture.orderIds.PENDING,
+        assignmentInput(fixture, "primary", "SUPPORT", 2),
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toMatchObject({
+      kind: "UPDATED",
+      order: { status: "PENDING", version: 3 },
+    });
+    expect(
+      await database.ordenTecnico.findUniqueOrThrow({
+        where: {
+          ordenId_tecnicoId: {
+            ordenId: fixture.orderIds.PENDING,
+            tecnicoId: fixture.technicianIds.primary,
+          },
+        },
+        select: { role: true, unassignedAt: true },
+      }),
+    ).toEqual({ role: "SUPPORT", unassignedAt: null });
+    expect(
+      await database.historialOrden.findFirstOrThrow({
+        where: {
+          ordenId: fixture.orderIds.PENDING,
+          action: "ORDER_PRIMARY_DEMOTED",
+        },
+        select: { previousStatus: true, newStatus: true, metadata: true },
+      }),
+    ).toEqual({
+      previousStatus: "ASSIGNED",
+      newStatus: "PENDING",
+      metadata: {
+        technicianId: fixture.technicianIds.primary,
+        previousRole: "PRIMARY",
+        role: "SUPPORT",
+        version: 3,
+      },
+    });
+    await expect(
+      database.auditoria.findFirstOrThrow({
+        where: {
+          entity: "OrdenTrabajo",
+          entityId: fixture.orderIds.PENDING,
+          action: "ORDER_PRIMARY_DEMOTED",
+        },
+        select: { action: true },
+      }),
+    ).resolves.toEqual({ action: "ORDER_PRIMARY_DEMOTED" });
+  });
+
+  it.each(["ON_ROUTE", "IN_PROGRESS", "PAUSED"] as const)(
+    "rejects demoting an active primary while %s",
+    async (status) => {
+      const repository = createOrdersMutationRepository(database);
+      const orderId = fixture.orderIds[status];
+      await database.ordenTecnico.create({
+        data: {
+          ordenId: orderId,
+          tecnicoId: fixture.technicianIds.primary,
+          role: "PRIMARY",
+          assignedAt: now,
+        },
+      });
+
+      await expect(
+        repository.assignTechnician(
+          orderId,
+          assignmentInput(fixture, "primary", "SUPPORT", 1),
+          fixture.parents.actor,
+          now,
+        ),
+      ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+      expect(
+        await database.ordenTrabajo.findUniqueOrThrow({
+          where: { id: orderId },
+          select: { status: true, version: true },
+        }),
+      ).toEqual({ status, version: 1 });
+      expect(
+        await database.ordenTecnico.findUniqueOrThrow({
+          where: {
+            ordenId_tecnicoId: {
+              ordenId: orderId,
+              tecnicoId: fixture.technicianIds.primary,
+            },
+          },
+          select: { role: true, unassignedAt: true },
+        }),
+      ).toEqual({ role: "PRIMARY", unassignedAt: null });
+    },
+  );
+
   it("allows only support changes after on-route and rejects every change after closure", async () => {
     const repository = createOrdersMutationRepository(database);
     await expect(
@@ -1330,16 +1462,15 @@ describe("orders mutation repository technician assignments", () => {
     }
 
     const orderId = fixture.orderIds.ON_ROUTE;
-    const actorWithMissingUser = {
+    const actorWithOversizedUserAgent = {
       ...fixture.parents.actor,
-      userId: randomUUID(),
-      requestId: randomUUID(),
+      userAgent: "x".repeat(501),
     };
     await expect(
       firstRepository.assignTechnician(
         orderId,
         assignmentInput(fixture, "support", "SUPPORT", 1),
-        actorWithMissingUser,
+        actorWithOversizedUserAgent,
         now,
       ),
     ).rejects.toThrow();
@@ -1351,6 +1482,14 @@ describe("orders mutation repository technician assignments", () => {
     ).toEqual({ status: "ON_ROUTE", version: 1 });
     expect(
       await database.ordenTecnico.count({ where: { ordenId: orderId } }),
+    ).toBe(0);
+    expect(
+      await database.historialOrden.count({ where: { ordenId: orderId } }),
+    ).toBe(0);
+    expect(
+      await database.auditoria.count({
+        where: { entity: "OrdenTrabajo", entityId: orderId },
+      }),
     ).toBe(0);
   });
 });

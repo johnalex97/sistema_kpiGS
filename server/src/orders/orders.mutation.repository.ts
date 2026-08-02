@@ -449,7 +449,11 @@ async function writeAssignmentTrail(
   order: OrderDetailRecord,
   actor: OrderActorContext,
   now: Date,
-  action: "ORDER_ASSIGNED" | "ORDER_PRIMARY_REPLACED" | "ORDER_UNASSIGNED",
+  action:
+    | "ORDER_ASSIGNED"
+    | "ORDER_PRIMARY_REPLACED"
+    | "ORDER_PRIMARY_DEMOTED"
+    | "ORDER_UNASSIGNED",
   metadata: Prisma.InputJsonValue,
   reason?: string,
 ): Promise<void> {
@@ -529,6 +533,10 @@ function closedOrder(status: EstadoOrden): boolean {
   return status === "COMPLETED" || status === "CANCELLED";
 }
 
+function primaryRemovalAllowed(status: EstadoOrden): boolean {
+  return status === "PENDING" || status === "ASSIGNED";
+}
+
 async function updateOrderForAssignment(
   transaction: Prisma.TransactionClient,
   id: string,
@@ -553,8 +561,20 @@ async function assignTechnician(
   const locked = await lockOrder(transaction, id);
   if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
   if (locked.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+  const existingAssignment = await transaction.ordenTecnico.findUnique({
+    where: { ordenId_tecnicoId: { ordenId: id, tecnicoId: input.technicianId } },
+    select: { role: true, unassignedAt: true },
+  });
+  const demotingPrimary =
+    existingAssignment?.role === "PRIMARY" &&
+    existingAssignment.unassignedAt === null &&
+    input.role === "SUPPORT";
   if (closedOrder(locked.status)) return { kind: "ORDER_CLOSED" } as const;
-  if (!assignmentAllowed(locked.status, input.role)) {
+  if (
+    demotingPrimary
+      ? !primaryRemovalAllowed(locked.status)
+      : !assignmentAllowed(locked.status, input.role)
+  ) {
     return { kind: "INVALID_ORDER_TRANSITION" } as const;
   }
   if (!(await lockActiveTechnician(transaction, input.technicianId))) {
@@ -603,7 +623,9 @@ async function assignTechnician(
     },
   });
   const nextStatus =
-    input.role === "PRIMARY" && locked.status === "PENDING"
+    demotingPrimary && locked.status === "ASSIGNED"
+      ? "PENDING"
+      : input.role === "PRIMARY" && locked.status === "PENDING"
       ? "ASSIGNED"
       : locked.status;
   if (!(await updateOrderForAssignment(transaction, id, input.version, nextStatus, now))) {
@@ -611,7 +633,11 @@ async function assignTechnician(
   }
 
   const order = await loadOrderDetail(transaction, id);
-  const action = retiredPrimaryIds.length > 0 ? "ORDER_PRIMARY_REPLACED" : "ORDER_ASSIGNED";
+  const action = demotingPrimary
+    ? "ORDER_PRIMARY_DEMOTED"
+    : retiredPrimaryIds.length > 0
+      ? "ORDER_PRIMARY_REPLACED"
+      : "ORDER_ASSIGNED";
   await writeAssignmentTrail(
     transaction,
     before,
@@ -619,15 +645,22 @@ async function assignTechnician(
     actor,
     now,
     action,
-    {
-      technicianId: input.technicianId,
-      role: input.role,
-      retiredTechnicians: retiredPrimaryIds.map((technicianId) => ({
-        technicianId,
-        role: "PRIMARY",
-      })),
-      version: order.version,
-    },
+    demotingPrimary
+      ? {
+          technicianId: input.technicianId,
+          previousRole: "PRIMARY",
+          role: "SUPPORT",
+          version: order.version,
+        }
+      : {
+          technicianId: input.technicianId,
+          role: input.role,
+          retiredTechnicians: retiredPrimaryIds.map((technicianId) => ({
+            technicianId,
+            role: "PRIMARY",
+          })),
+          version: order.version,
+        },
   );
   return { kind: "UPDATED", order } as const;
 }
