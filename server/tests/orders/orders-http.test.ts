@@ -308,6 +308,7 @@ describe("orders HTTP lifecycle", () => {
     const admin = await authenticatedAgent(users.admin);
     const primary = await authenticatedAgent(users.primary);
     const support = await authenticatedAgent(users.support);
+    const other = await authenticatedAgent(users.other);
     const supervisor = await authenticatedAgent(users.supervisor);
 
     const createdResponse = await admin
@@ -446,16 +447,110 @@ describe("orders HTTP lifecycle", () => {
       },
     });
 
-    for (const candidateUsageId of [usageId, randomUUID()]) {
-      const concealed = await support
-        .patch(`/api/v1/orders/${created.id}/materials/${candidateUsageId}`)
-        .set("Origin", allowedOrigin)
-        .send({ version: 10, quantity: "3.000" })
-        .expect(409);
-      expect(concealed.body.errors[0].code).toBe(
-        "TECHNICIAN_NOT_ASSIGNED",
-      );
+    const foreignCreated = await admin
+      .post("/api/v1/orders")
+      .set("Origin", allowedOrigin)
+      .send(orderInput("Material anidado ajeno"))
+      .expect(201);
+    const foreignOrderId = foreignCreated.body.data.id;
+    createdOrderIds.push(foreignOrderId);
+    await admin
+      .post(`/api/v1/orders/${foreignOrderId}/assignments`)
+      .set("Origin", allowedOrigin)
+      .send({
+        version: 1,
+        technicianId: technicianIds.other,
+        role: "PRIMARY",
+      })
+      .expect(200);
+    await other
+      .post(`/api/v1/orders/${foreignOrderId}/start`)
+      .set("Origin", allowedOrigin)
+      .send({ version: 2 })
+      .expect(200);
+    const foreignMaterial = await admin
+      .post(`/api/v1/orders/${foreignOrderId}/materials`)
+      .set("Origin", allowedOrigin)
+      .send({
+        version: 3,
+        materialId,
+        quantity: "1.250",
+        observation: "Uso real de otra orden",
+      })
+      .expect(201);
+    const foreignUsageId = foreignMaterial.body.data.materials[0].id;
+    const missingUsageId = randomUUID();
+    const nestedSnapshot = async () => {
+      const [orders, usages, historyCount, auditCount] = await Promise.all([
+        database.ordenTrabajo.findMany({
+          where: { id: { in: [created.id, foreignOrderId] } },
+          orderBy: { id: "asc" },
+          select: { id: true, status: true, version: true },
+        }),
+        database.materialUtilizado.findMany({
+          where: { id: { in: [usageId, foreignUsageId] } },
+          orderBy: { id: "asc" },
+          select: {
+            id: true,
+            ordenId: true,
+            quantity: true,
+            observation: true,
+          },
+        }),
+        database.historialOrden.count({
+          where: { ordenId: { in: [created.id, foreignOrderId] } },
+        }),
+        database.auditoria.count({
+          where: {
+            entity: "OrdenTrabajo",
+            entityId: { in: [created.id, foreignOrderId] },
+          },
+        }),
+      ]);
+      return {
+        orders,
+        usages: usages.map((usage) => ({
+          ...usage,
+          quantity: usage.quantity.toFixed(3),
+        })),
+        historyCount,
+        auditCount,
+      };
+    };
+    const nestedBefore = await nestedSnapshot();
+
+    for (const method of ["patch", "delete"] as const) {
+      const errors = [];
+      for (const candidateUsageId of [foreignUsageId, missingUsageId]) {
+        const command = primary[method](
+          `/api/v1/orders/${created.id}/materials/${candidateUsageId}`,
+        ).set("Origin", allowedOrigin);
+        const concealed = await (method === "patch"
+          ? command.send({ version: 10, quantity: "3.000" })
+          : command.send({ version: 10 })
+        ).expect(404);
+        expect(concealed.body).toMatchObject({
+          success: false,
+          message: "El material utilizado no existe",
+          data: null,
+          errors: [
+            {
+              code: "MATERIAL_USAGE_NOT_FOUND",
+              message: "El material utilizado no existe",
+            },
+          ],
+          meta: { requestId: expect.any(String) },
+        });
+        errors.push({
+          success: concealed.body.success,
+          message: concealed.body.message,
+          data: concealed.body.data,
+          errors: concealed.body.errors,
+        });
+      }
+      expect(errors[0]).toEqual(errors[1]);
     }
+    expect(await nestedSnapshot()).toEqual(nestedBefore);
 
     const materialUpdated = await primary
       .patch(`/api/v1/orders/${created.id}/materials/${usageId}`)
