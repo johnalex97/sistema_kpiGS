@@ -452,7 +452,6 @@ async function writeAssignmentTrail(
   action:
     | "ORDER_ASSIGNED"
     | "ORDER_PRIMARY_REPLACED"
-    | "ORDER_PRIMARY_DEMOTED"
     | "ORDER_UNASSIGNED",
   metadata: Prisma.InputJsonValue,
   reason?: string,
@@ -634,7 +633,7 @@ async function assignTechnician(
 
   const order = await loadOrderDetail(transaction, id);
   const action = demotingPrimary
-    ? "ORDER_PRIMARY_DEMOTED"
+    ? "ORDER_UNASSIGNED"
     : retiredPrimaryIds.length > 0
       ? "ORDER_PRIMARY_REPLACED"
       : "ORDER_ASSIGNED";
@@ -649,7 +648,9 @@ async function assignTechnician(
       ? {
           technicianId: input.technicianId,
           previousRole: "PRIMARY",
-          role: "SUPPORT",
+          newRole: "SUPPORT",
+          previousStatus: before.status,
+          newStatus: order.status,
           version: order.version,
         }
       : {

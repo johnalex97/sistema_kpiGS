@@ -1307,7 +1307,7 @@ describe("orders mutation repository technician assignments", () => {
       await database.historialOrden.findFirstOrThrow({
         where: {
           ordenId: fixture.orderIds.PENDING,
-          action: "ORDER_PRIMARY_DEMOTED",
+          action: "ORDER_UNASSIGNED",
         },
         select: { previousStatus: true, newStatus: true, metadata: true },
       }),
@@ -1317,7 +1317,9 @@ describe("orders mutation repository technician assignments", () => {
       metadata: {
         technicianId: fixture.technicianIds.primary,
         previousRole: "PRIMARY",
-        role: "SUPPORT",
+        newRole: "SUPPORT",
+        previousStatus: "ASSIGNED",
+        newStatus: "PENDING",
         version: 3,
       },
     });
@@ -1326,11 +1328,11 @@ describe("orders mutation repository technician assignments", () => {
         where: {
           entity: "OrdenTrabajo",
           entityId: fixture.orderIds.PENDING,
-          action: "ORDER_PRIMARY_DEMOTED",
+          action: "ORDER_UNASSIGNED",
         },
         select: { action: true },
       }),
-    ).resolves.toEqual({ action: "ORDER_PRIMARY_DEMOTED" });
+    ).resolves.toEqual({ action: "ORDER_UNASSIGNED" });
   });
 
   it.each(["ON_ROUTE", "IN_PROGRESS", "PAUSED"] as const)(
