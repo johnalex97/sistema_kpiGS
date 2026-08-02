@@ -752,6 +752,103 @@ describe("orders operation repository transitions", () => {
     });
   });
 
+  it("rolls completion status, timing, history, and audit back when its audit fails", async () => {
+    const orderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+    });
+    const invalidAuditActor = {
+      ...actor(fixture.technicianIds.primary),
+      userAgent: "x".repeat(501),
+    };
+
+    await expect(
+      createOrdersOperationRepository(database).completeOrder(
+        orderId,
+        {
+          version: 4,
+          diagnosis: "Conector principal dañado",
+          result: "Conector reemplazado y enlace estable",
+        },
+        invalidAuditActor,
+        fourthNow,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: orderId },
+        select: {
+          status: true,
+          version: true,
+          endedAt: true,
+          totalMinutes: true,
+          diagnosis: true,
+          result: true,
+        },
+      }),
+    ).resolves.toEqual({
+      status: "IN_PROGRESS",
+      version: 4,
+      endedAt: null,
+      totalMinutes: null,
+      diagnosis: null,
+      result: null,
+    });
+    await expect(
+      database.historialOrden.count({ where: { ordenId: orderId } }),
+    ).resolves.toBe(0);
+    await expect(
+      database.auditoria.count({
+        where: { entity: "OrdenTrabajo", entityId: orderId },
+      }),
+    ).resolves.toBe(0);
+  });
+
+  it("rolls cancellation status, timing, history, and audit back when its audit fails", async () => {
+    const orderId = await createOperationOrder({ status: "ASSIGNED", version: 2 });
+    const invalidAuditActor = {
+      ...actor(null),
+      permissions: ["orders:manage"],
+      userAgent: "x".repeat(501),
+    };
+
+    await expect(
+      createOrdersOperationRepository(database).cancelOrder(
+        orderId,
+        { version: 2, cancellationReason: "Solicitud administrativa confirmada" },
+        invalidAuditActor,
+        fourthNow,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: orderId },
+        select: {
+          status: true,
+          version: true,
+          endedAt: true,
+          totalMinutes: true,
+          cancellationReason: true,
+        },
+      }),
+    ).resolves.toEqual({
+      status: "ASSIGNED",
+      version: 2,
+      endedAt: null,
+      totalMinutes: null,
+      cancellationReason: null,
+    });
+    await expect(
+      database.historialOrden.count({ where: { ordenId: orderId } }),
+    ).resolves.toBe(0);
+    await expect(
+      database.auditoria.count({
+        where: { entity: "OrdenTrabajo", entityId: orderId },
+      }),
+    ).resolves.toBe(0);
+  });
+
   it("rolls status, version, history, and audit back together", async () => {
     const orderId = await createOperationOrder();
     const invalidAuditActor = {
