@@ -104,7 +104,7 @@ interface OperationFixture {
 }
 
 interface CreateOperationOrderOptions {
-  status?: "PENDING" | "ASSIGNED" | "ON_ROUTE" | "IN_PROGRESS" | "PAUSED";
+  status?: "PENDING" | "ASSIGNED" | "ON_ROUTE" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "CANCELLED";
   version?: number;
   primaryTechnicianId?: string | null;
   supportTechnicianId?: string;
@@ -445,6 +445,311 @@ describe("orders operation repository transitions", () => {
         ),
       ).resolves.toEqual({ kind: "TECHNICIAN_NOT_ASSIGNED" });
     }
+  });
+
+  it("completes an in-progress order as its active primary with gross server time", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+    });
+
+    await expect(
+      repository.completeOrder(
+        orderId,
+        {
+          version: 4,
+          diagnosis: "Conector principal dañado",
+          result: "Conector reemplazado y enlace estable",
+        },
+        actor(fixture.technicianIds.primary),
+        fourthNow,
+      ),
+    ).resolves.toMatchObject({
+      kind: "UPDATED",
+      order: {
+        status: "COMPLETED",
+        diagnosis: "Conector principal dañado",
+        result: "Conector reemplazado y enlace estable",
+        endedAt: fourthNow,
+        totalMinutes: 90,
+        version: 5,
+      },
+    });
+
+    await expect(
+      database.historialOrden.findMany({
+        where: { ordenId: orderId },
+        select: {
+          action: true,
+          previousStatus: true,
+          newStatus: true,
+          metadata: true,
+        },
+      }),
+    ).resolves.toEqual([
+      {
+        action: "ORDER_COMPLETED",
+        previousStatus: "IN_PROGRESS",
+        newStatus: "COMPLETED",
+        metadata: { version: 5 },
+      },
+    ]);
+    await expect(
+      database.auditoria.findMany({
+        where: { entity: "OrdenTrabajo", entityId: orderId },
+        select: { action: true, beforeData: true, afterData: true },
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        action: "ORDER_COMPLETED",
+        beforeData: expect.objectContaining({ status: "IN_PROGRESS" }),
+        afterData: expect.objectContaining({
+          status: "COMPLETED",
+          endedAt: fourthNow.toISOString(),
+          totalMinutes: 90,
+          version: 5,
+        }),
+      }),
+    ]);
+    await expect(
+      repository.completeOrder(
+        orderId,
+        {
+          version: 5,
+          diagnosis: "No debe sobrescribir el diagnóstico final",
+          result: "No debe sobrescribir el resultado final",
+        },
+        actor(fixture.technicianIds.primary),
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+  });
+
+  it("rejects completion without the required owned in-progress work", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const activeId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+      supportTechnicianId: fixture.technicianIds.support,
+    });
+
+    for (const unauthorizedActor of [
+      actor(fixture.technicianIds.support),
+      actor(fixture.technicianIds.unrelated),
+      actor(null),
+    ]) {
+      await expect(
+        repository.completeOrder(
+          activeId,
+          {
+            version: 4,
+            diagnosis: "Diagnóstico confirmado",
+            result: "Trabajo finalizado correctamente",
+          },
+          unauthorizedActor,
+          fourthNow,
+        ),
+      ).resolves.toEqual({ kind: "TECHNICIAN_NOT_ASSIGNED" });
+    }
+
+    const pendingId = await createOperationOrder({ status: "PENDING", version: 4 });
+    await expect(
+      repository.completeOrder(
+        pendingId,
+        {
+          version: 4,
+          diagnosis: "Diagnóstico confirmado",
+          result: "Trabajo finalizado correctamente",
+        },
+        actor(fixture.technicianIds.primary),
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+
+    const noPrimaryId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      primaryTechnicianId: null,
+      startedAt: firstNow,
+    });
+    await expect(
+      repository.completeOrder(
+        noPrimaryId,
+        {
+          version: 4,
+          diagnosis: "Diagnóstico confirmado",
+          result: "Trabajo finalizado correctamente",
+        },
+        actor(fixture.technicianIds.primary),
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "PRIMARY_TECHNICIAN_REQUIRED" });
+
+    const missingStartId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: null,
+    });
+    await expect(
+      repository.completeOrder(
+        missingStartId,
+        {
+          version: 4,
+          diagnosis: "Diagnóstico confirmado",
+          result: "Trabajo finalizado correctamente",
+        },
+        actor(fixture.technicianIds.primary),
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+
+    await expect(
+      repository.completeOrder(
+        activeId,
+        {
+          version: 3,
+          diagnosis: "Diagnóstico confirmado",
+          result: "Trabajo finalizado correctamente",
+        },
+        actor(fixture.technicianIds.primary),
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "VERSION_CONFLICT" });
+  });
+
+  it("cancels each open state administratively and preserves the applicable time fields", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const administrativeActors = [
+      { ...actor(null), permissions: ["orders:manage"] },
+      { ...actor(null), permissions: ["orders:supervise"] },
+    ];
+    const openOrders = await Promise.all([
+      createOperationOrder({ status: "PENDING", primaryTechnicianId: null }),
+      createOperationOrder({ status: "ASSIGNED" }),
+      createOperationOrder({ status: "ON_ROUTE" }),
+      createOperationOrder({
+        status: "IN_PROGRESS",
+        startedAt: firstNow,
+      }),
+      createOperationOrder({ status: "PAUSED", startedAt: firstNow }),
+    ]);
+
+    for (const [index, orderId] of openOrders.entries()) {
+      await expect(
+        repository.cancelOrder(
+          orderId,
+          { version: 2, cancellationReason: "Solicitud administrativa confirmada" },
+          administrativeActors[index % administrativeActors.length]!,
+          fourthNow,
+        ),
+      ).resolves.toMatchObject({
+        kind: "UPDATED",
+        order: {
+          status: "CANCELLED",
+          cancellationReason: "Solicitud administrativa confirmada",
+          version: 3,
+        },
+      });
+    }
+
+    await expect(
+      database.ordenTrabajo.findMany({
+        where: { id: { in: openOrders } },
+        select: { id: true, startedAt: true, endedAt: true, totalMinutes: true },
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: openOrders[0],
+          startedAt: null,
+          endedAt: null,
+          totalMinutes: null,
+        }),
+        expect.objectContaining({
+          id: openOrders[1],
+          startedAt: null,
+          endedAt: null,
+          totalMinutes: null,
+        }),
+        expect.objectContaining({
+          id: openOrders[2],
+          startedAt: null,
+          endedAt: null,
+          totalMinutes: null,
+        }),
+        expect.objectContaining({
+          id: openOrders[3],
+          startedAt: firstNow,
+          endedAt: fourthNow,
+          totalMinutes: 90,
+        }),
+        expect.objectContaining({
+          id: openOrders[4],
+          startedAt: firstNow,
+          endedAt: fourthNow,
+          totalMinutes: 90,
+        }),
+      ]),
+    );
+    await expect(
+      database.historialOrden.count({
+        where: { ordenId: { in: openOrders }, action: "ORDER_CANCELLED" },
+      }),
+    ).resolves.toBe(5);
+    await expect(
+      database.auditoria.count({
+        where: {
+          entity: "OrdenTrabajo",
+          entityId: { in: openOrders },
+          action: "ORDER_CANCELLED",
+        },
+      }),
+    ).resolves.toBe(5);
+  });
+
+  it("rejects terminal, stale, and invalid cancellation commands without mutating", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const administrativeActor = { ...actor(null), permissions: ["orders:manage"] };
+    const completedId = await createOperationOrder({
+      status: "COMPLETED",
+      version: 3,
+      startedAt: firstNow,
+    });
+    const cancelledId = await createOperationOrder({ status: "CANCELLED", version: 3 });
+    const assignedId = await createOperationOrder({ status: "ASSIGNED", version: 2 });
+
+    for (const orderId of [completedId, cancelledId]) {
+      await expect(
+        repository.cancelOrder(
+          orderId,
+          { version: 3, cancellationReason: "Solicitud administrativa confirmada" },
+          administrativeActor,
+          fourthNow,
+        ),
+      ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+    }
+    await expect(
+      repository.cancelOrder(
+        assignedId,
+        { version: 1, cancellationReason: "Solicitud administrativa confirmada" },
+        administrativeActor,
+        fourthNow,
+      ),
+    ).resolves.toEqual({ kind: "VERSION_CONFLICT" });
+    await expect(
+      database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: assignedId },
+        select: { status: true, version: true, endedAt: true, totalMinutes: true },
+      }),
+    ).resolves.toEqual({
+      status: "ASSIGNED",
+      version: 2,
+      endedAt: null,
+      totalMinutes: null,
+    });
   });
 
   it("rolls status, version, history, and audit back together", async () => {

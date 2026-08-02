@@ -6,9 +6,12 @@ import type {
 import type {
   OrderDetailRecord,
   OrderMutationResult,
-  OrdersOperationalTransitionRepository,
+  OrdersOperationalCompletionRepository,
 } from "./orders.repository.types.js";
-import { transitionOrder } from "./orders.state-machine.js";
+import {
+  calculateGrossMinutes,
+  transitionOrder,
+} from "./orders.state-machine.js";
 import type {
   OrderActorContext,
   OrderCommand,
@@ -18,6 +21,8 @@ type OperationalCommand = Extract<
   OrderCommand,
   "ON_ROUTE" | "START" | "PAUSE" | "RESUME"
 >;
+
+type TrailedCommand = OperationalCommand | "COMPLETE" | "CANCEL";
 
 interface LockedOrderRow {
   id: string;
@@ -228,12 +233,14 @@ async function hasOperationalOverlap(
   return assignment !== null;
 }
 
-function actionForCommand(command: OperationalCommand): string {
+function actionForCommand(command: TrailedCommand): string {
   return {
     ON_ROUTE: "ORDER_ON_ROUTE",
     START: "ORDER_STARTED",
     PAUSE: "ORDER_PAUSED",
     RESUME: "ORDER_RESUMED",
+    COMPLETE: "ORDER_COMPLETED",
+    CANCEL: "ORDER_CANCELLED",
   }[command];
 }
 
@@ -241,7 +248,7 @@ async function writeTransitionTrail(
   transaction: Prisma.TransactionClient,
   before: OrderDetailRecord,
   order: OrderDetailRecord,
-  command: OperationalCommand,
+  command: TrailedCommand,
   actor: OrderActorContext,
   now: Date,
   comment?: string,
@@ -279,7 +286,7 @@ async function writeTransitionTrail(
 
 export function createOrdersOperationRepository(
   database: PrismaClient,
-): OrdersOperationalTransitionRepository {
+): OrdersOperationalCompletionRepository {
   async function runTransition(
     orderId: string,
     expectedVersion: number,
@@ -371,6 +378,99 @@ export function createOrdersOperationRepository(
     },
     resumeOrder(id, input, actor, now) {
       return runTransition(id, input.version, "RESUME", actor, now);
+    },
+    async completeOrder(id, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        const locked = await lockOrder(transaction, id);
+        if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
+        if (locked.version !== input.version) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        const nextStatus = transitionOrder(locked.status, "COMPLETE");
+        if (!nextStatus || locked.startedAt === null) {
+          return { kind: "INVALID_ORDER_TRANSITION" } as const;
+        }
+
+        const primary = await transaction.ordenTecnico.findFirst({
+          where: { ordenId: id, role: "PRIMARY", unassignedAt: null },
+          select: { tecnicoId: true },
+        });
+        if (!primary) return { kind: "PRIMARY_TECHNICIAN_REQUIRED" } as const;
+        if (actor.technicianId !== primary.tecnicoId) {
+          return { kind: "TECHNICIAN_NOT_ASSIGNED" } as const;
+        }
+        if (!(await lockTechnician(transaction, primary.tecnicoId))) {
+          return { kind: "TECHNICIAN_NOT_ASSIGNED" } as const;
+        }
+
+        const before = await loadOrderDetail(transaction, id);
+        const changed = await transaction.ordenTrabajo.updateMany({
+          where: { id, version: input.version },
+          data: {
+            status: nextStatus,
+            endedAt: now,
+            diagnosis: input.diagnosis,
+            result: input.result,
+            totalMinutes: calculateGrossMinutes(locked.startedAt, now),
+            updatedAt: now,
+            version: { increment: 1 },
+          },
+        });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+
+        const order = await loadOrderDetail(transaction, id);
+        await writeTransitionTrail(
+          transaction,
+          before,
+          order,
+          "COMPLETE",
+          actor,
+          now,
+        );
+        return { kind: "UPDATED", order } as const;
+      });
+    },
+    async cancelOrder(id, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        const locked = await lockOrder(transaction, id);
+        if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
+        if (locked.version !== input.version) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        const nextStatus = transitionOrder(locked.status, "CANCEL");
+        if (!nextStatus) return { kind: "INVALID_ORDER_TRANSITION" } as const;
+
+        const before = await loadOrderDetail(transaction, id);
+        const endedAt = locked.startedAt === null ? null : now;
+        const totalMinutes =
+          locked.startedAt === null
+            ? null
+            : calculateGrossMinutes(locked.startedAt, now);
+        const changed = await transaction.ordenTrabajo.updateMany({
+          where: { id, version: input.version },
+          data: {
+            status: nextStatus,
+            endedAt,
+            totalMinutes,
+            cancellationReason: input.cancellationReason,
+            updatedAt: now,
+            version: { increment: 1 },
+          },
+        });
+        if (changed.count !== 1) return { kind: "VERSION_CONFLICT" } as const;
+
+        const order = await loadOrderDetail(transaction, id);
+        await writeTransitionTrail(
+          transaction,
+          before,
+          order,
+          "CANCEL",
+          actor,
+          now,
+          input.cancellationReason,
+        );
+        return { kind: "UPDATED", order } as const;
+      });
     },
   };
 }
