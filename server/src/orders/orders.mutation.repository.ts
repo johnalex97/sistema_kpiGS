@@ -4,12 +4,14 @@ import type {
   PrismaClient,
 } from "../../generated/prisma/client.js";
 import type {
-  OrdersAdministrativeMutationRepository,
   OrderDetailRecord,
+  OrdersMutationRepository,
 } from "./orders.repository.types.js";
 import type {
+  AssignmentInput,
   CreateOrderInput,
   OrderActorContext,
+  UnassignmentInput,
   UpdateOrderInput,
 } from "./orders.types.js";
 
@@ -41,6 +43,10 @@ interface LockedOrderRow {
   version: number;
   branchId: string;
   serviceTypeId: string;
+}
+
+interface LockedTechnicianRow {
+  id: string;
 }
 
 const orderDetailBaseSelect = {
@@ -437,6 +443,251 @@ async function writeUpdateTrail(
   });
 }
 
+async function writeAssignmentTrail(
+  transaction: Prisma.TransactionClient,
+  before: OrderDetailRecord,
+  order: OrderDetailRecord,
+  actor: OrderActorContext,
+  now: Date,
+  action: "ORDER_ASSIGNED" | "ORDER_PRIMARY_REPLACED" | "ORDER_UNASSIGNED",
+  metadata: Prisma.InputJsonValue,
+  reason?: string,
+): Promise<void> {
+  await transaction.historialOrden.create({
+    data: {
+      ordenId: order.id,
+      previousStatus: before.status,
+      newStatus: order.status,
+      action,
+      ...(reason !== undefined && { comment: reason }),
+      userId: actor.userId,
+      occurredAt: now,
+      requestId: actor.requestId,
+      metadata,
+    },
+  });
+  await transaction.auditoria.create({
+    data: {
+      userId: actor.userId,
+      action,
+      entity: "OrdenTrabajo",
+      entityId: order.id,
+      beforeData: orderAuditSnapshot(before),
+      afterData: orderAuditSnapshot(order),
+      ...(reason !== undefined && { reason }),
+      occurredAt: now,
+      ipAddress: actor.ipAddress,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    },
+  });
+}
+
+async function lockOrder(
+  transaction: Prisma.TransactionClient,
+  id: string,
+): Promise<LockedOrderRow | null> {
+  const rows = await transaction.$queryRaw<LockedOrderRow[]>`
+    SELECT
+      "id",
+      UPPER("status"::text) AS "status",
+      "version",
+      "sucursal_id" AS "branchId",
+      "tipo_servicio_id" AS "serviceTypeId"
+    FROM "orden_trabajo"
+    WHERE "id" = ${id}::uuid
+      AND "deleted_at" IS NULL
+    FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+async function lockActiveTechnician(
+  transaction: Prisma.TransactionClient,
+  technicianId: string,
+): Promise<LockedTechnicianRow | null> {
+  const rows = await transaction.$queryRaw<LockedTechnicianRow[]>`
+    SELECT "id"
+    FROM "tecnico"
+    WHERE "id" = ${technicianId}::uuid
+      AND "status" <> 'inactive'::"estado_tecnico"
+      AND "deleted_at" IS NULL
+    FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+function assignmentAllowed(
+  status: EstadoOrden,
+  role: AssignmentInput["role"],
+): boolean {
+  if (role === "PRIMARY") return status === "PENDING" || status === "ASSIGNED";
+  return !["COMPLETED", "CANCELLED"].includes(status);
+}
+
+function closedOrder(status: EstadoOrden): boolean {
+  return status === "COMPLETED" || status === "CANCELLED";
+}
+
+async function updateOrderForAssignment(
+  transaction: Prisma.TransactionClient,
+  id: string,
+  version: number,
+  status: EstadoOrden,
+  now: Date,
+): Promise<boolean> {
+  const changed = await transaction.ordenTrabajo.updateMany({
+    where: { id, version },
+    data: { status, updatedAt: now, version: { increment: 1 } },
+  });
+  return changed.count === 1;
+}
+
+async function assignTechnician(
+  transaction: Prisma.TransactionClient,
+  id: string,
+  input: AssignmentInput,
+  actor: OrderActorContext,
+  now: Date,
+) {
+  const locked = await lockOrder(transaction, id);
+  if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
+  if (locked.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+  if (closedOrder(locked.status)) return { kind: "ORDER_CLOSED" } as const;
+  if (!assignmentAllowed(locked.status, input.role)) {
+    return { kind: "INVALID_ORDER_TRANSITION" } as const;
+  }
+  if (!(await lockActiveTechnician(transaction, input.technicianId))) {
+    return { kind: "RESOURCE_INACTIVE" } as const;
+  }
+
+  const before = await loadOrderDetail(transaction, id);
+  let retiredPrimaryIds: string[] = [];
+  if (input.role === "PRIMARY" && locked.status === "ASSIGNED") {
+    const activePrimaries = await transaction.ordenTecnico.findMany({
+      where: {
+        ordenId: id,
+        tecnicoId: { not: input.technicianId },
+        role: "PRIMARY",
+        unassignedAt: null,
+      },
+      select: { tecnicoId: true },
+    });
+    retiredPrimaryIds = activePrimaries.map(({ tecnicoId }) => tecnicoId);
+    if (retiredPrimaryIds.length > 0) {
+      await transaction.ordenTecnico.updateMany({
+        where: {
+          ordenId: id,
+          tecnicoId: { in: retiredPrimaryIds },
+          role: "PRIMARY",
+          unassignedAt: null,
+        },
+        data: { unassignedAt: now },
+      });
+    }
+  }
+  await transaction.ordenTecnico.upsert({
+    where: { ordenId_tecnicoId: { ordenId: id, tecnicoId: input.technicianId } },
+    create: {
+      ordenId: id,
+      tecnicoId: input.technicianId,
+      role: input.role,
+      assignedAt: now,
+      assignedById: actor.userId,
+    },
+    update: {
+      role: input.role,
+      assignedAt: now,
+      assignedById: actor.userId,
+      unassignedAt: null,
+    },
+  });
+  const nextStatus =
+    input.role === "PRIMARY" && locked.status === "PENDING"
+      ? "ASSIGNED"
+      : locked.status;
+  if (!(await updateOrderForAssignment(transaction, id, input.version, nextStatus, now))) {
+    return { kind: "VERSION_CONFLICT" } as const;
+  }
+
+  const order = await loadOrderDetail(transaction, id);
+  const action = retiredPrimaryIds.length > 0 ? "ORDER_PRIMARY_REPLACED" : "ORDER_ASSIGNED";
+  await writeAssignmentTrail(
+    transaction,
+    before,
+    order,
+    actor,
+    now,
+    action,
+    {
+      technicianId: input.technicianId,
+      role: input.role,
+      retiredTechnicians: retiredPrimaryIds.map((technicianId) => ({
+        technicianId,
+        role: "PRIMARY",
+      })),
+      version: order.version,
+    },
+  );
+  return { kind: "UPDATED", order } as const;
+}
+
+async function unassignTechnician(
+  transaction: Prisma.TransactionClient,
+  id: string,
+  technicianId: string,
+  input: UnassignmentInput,
+  actor: OrderActorContext,
+  now: Date,
+) {
+  const locked = await lockOrder(transaction, id);
+  if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
+  if (locked.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
+  if (closedOrder(locked.status)) return { kind: "ORDER_CLOSED" } as const;
+
+  const assignment = await transaction.ordenTecnico.findUnique({
+    where: { ordenId_tecnicoId: { ordenId: id, tecnicoId: technicianId } },
+    select: { role: true, unassignedAt: true },
+  });
+  if (!assignment) return { kind: "ASSIGNMENT_NOT_FOUND" } as const;
+  if (assignment.unassignedAt !== null) {
+    return { kind: "TECHNICIAN_NOT_ASSIGNED" } as const;
+  }
+  if (
+    assignment.role === "PRIMARY" &&
+    locked.status !== "PENDING" &&
+    locked.status !== "ASSIGNED"
+  ) {
+    return { kind: "INVALID_ORDER_TRANSITION" } as const;
+  }
+
+  const before = await loadOrderDetail(transaction, id);
+  await transaction.ordenTecnico.update({
+    where: { ordenId_tecnicoId: { ordenId: id, tecnicoId: technicianId } },
+    data: { unassignedAt: now },
+  });
+  const nextStatus =
+    assignment.role === "PRIMARY" && locked.status === "ASSIGNED"
+      ? "PENDING"
+      : locked.status;
+  if (!(await updateOrderForAssignment(transaction, id, input.version, nextStatus, now))) {
+    return { kind: "VERSION_CONFLICT" } as const;
+  }
+
+  const order = await loadOrderDetail(transaction, id);
+  await writeAssignmentTrail(
+    transaction,
+    before,
+    order,
+    actor,
+    now,
+    "ORDER_UNASSIGNED",
+    { technicianId, role: assignment.role, version: order.version },
+    input.reason,
+  );
+  return { kind: "UPDATED", order } as const;
+}
+
 async function updateOrder(
   transaction: Prisma.TransactionClient,
   id: string,
@@ -511,7 +762,7 @@ async function updateOrder(
 
 export function createOrdersMutationRepository(
   database: PrismaClient,
-): OrdersAdministrativeMutationRepository {
+): OrdersMutationRepository {
   return {
     async createOrder(input, actor, now) {
       return runSerializableTransaction(
@@ -525,6 +776,21 @@ export function createOrdersMutationRepository(
       return runSerializableTransaction(
         database,
         (transaction) => updateOrder(transaction, id, input, actor, now),
+      );
+    },
+
+    async assignTechnician(id, input, actor, now) {
+      return runSerializableTransaction(
+        database,
+        (transaction) => assignTechnician(transaction, id, input, actor, now),
+      );
+    },
+
+    async unassignTechnician(id, technicianId, input, actor, now) {
+      return runSerializableTransaction(
+        database,
+        (transaction) =>
+          unassignTechnician(transaction, id, technicianId, input, actor, now),
       );
     },
   };

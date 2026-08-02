@@ -12,8 +12,10 @@ import { createDatabaseClient } from "../../src/config/database.js";
 import { createOrdersMutationRepository } from "../../src/orders/orders.mutation.repository.js";
 import { updateOrderSchema } from "../../src/orders/orders.schemas.js";
 import type {
+  AssignmentInput,
   CreateOrderInput,
   OrderActorContext,
+  UnassignmentInput,
   UpdateOrderInput,
 } from "../../src/orders/orders.types.js";
 import {
@@ -902,5 +904,453 @@ describe("orders mutation repository administrative editing", () => {
 
   it("keeps empty administrative patches outside the repository contract", () => {
     expect(updateOrderSchema.safeParse({ version: 1 }).success).toBe(false);
+  });
+});
+
+interface AssignmentFixture {
+  parents: CreationFixture;
+  orderIds: Record<"PENDING" | "ON_ROUTE" | "COMPLETED", string>;
+  technicianIds: Record<
+    "primary" | "replacement" | "support" | "inactive" | "deleted",
+    string
+  >;
+}
+
+function assignmentInput(
+  fixture: AssignmentFixture,
+  technician: keyof AssignmentFixture["technicianIds"],
+  role: AssignmentInput["role"],
+  version: number,
+): AssignmentInput {
+  return { technicianId: fixture.technicianIds[technician], role, version };
+}
+
+async function createAssignmentFixture(): Promise<AssignmentFixture> {
+  const parents = await createCreationFixture();
+  const suffix = randomUUID().slice(0, 8);
+  const orderIds = {
+    PENDING: randomUUID(),
+    ON_ROUTE: randomUUID(),
+    COMPLETED: randomUUID(),
+  };
+  const technicianIds = {
+    primary: randomUUID(),
+    replacement: randomUUID(),
+    support: randomUUID(),
+    inactive: randomUUID(),
+    deleted: randomUUID(),
+  };
+  await database.ordenTrabajo.createMany({
+    data: [
+      {
+        id: orderIds.PENDING,
+        orderNumber: `ASN-P-${suffix}`,
+        sucursalId: parents.activeBranchId,
+        tipoServicioId: parents.activeServiceTypeId,
+        reportedProblem: "AsignaciÃ³n pendiente",
+      },
+      {
+        id: orderIds.ON_ROUTE,
+        orderNumber: `ASN-R-${suffix}`,
+        sucursalId: parents.activeBranchId,
+        tipoServicioId: parents.activeServiceTypeId,
+        status: "ON_ROUTE",
+        reportedProblem: "AsignaciÃ³n en ruta",
+      },
+      {
+        id: orderIds.COMPLETED,
+        orderNumber: `ASN-C-${suffix}`,
+        sucursalId: parents.activeBranchId,
+        tipoServicioId: parents.activeServiceTypeId,
+        status: "COMPLETED",
+        reportedProblem: "AsignaciÃ³n cerrada",
+      },
+    ],
+  });
+  await database.tecnico.createMany({
+    data: [
+      {
+        id: technicianIds.primary,
+        code: `ASN-P-${suffix}`,
+        fullName: `TÃ©cnico principal ${suffix}`,
+      },
+      {
+        id: technicianIds.replacement,
+        code: `ASN-R-${suffix}`,
+        fullName: `TÃ©cnico reemplazo ${suffix}`,
+      },
+      {
+        id: technicianIds.support,
+        code: `ASN-S-${suffix}`,
+        fullName: `TÃ©cnico apoyo ${suffix}`,
+      },
+      {
+        id: technicianIds.inactive,
+        code: `ASN-I-${suffix}`,
+        fullName: `TÃ©cnico inactivo ${suffix}`,
+        status: "INACTIVE",
+      },
+      {
+        id: technicianIds.deleted,
+        code: `ASN-D-${suffix}`,
+        fullName: `TÃ©cnico eliminado ${suffix}`,
+        deletedAt: now,
+      },
+    ],
+  });
+  return { parents, orderIds, technicianIds };
+}
+
+async function removeAssignmentFixture(fixture: AssignmentFixture): Promise<void> {
+  const orderIds = Object.values(fixture.orderIds);
+  await database.historialOrden.deleteMany({ where: { ordenId: { in: orderIds } } });
+  await database.auditoria.deleteMany({
+    where: { entity: "OrdenTrabajo", entityId: { in: orderIds } },
+  });
+  await database.ordenTecnico.deleteMany({ where: { ordenId: { in: orderIds } } });
+  await database.ordenTrabajo.deleteMany({ where: { id: { in: orderIds } } });
+  await database.tecnico.deleteMany({
+    where: { id: { in: Object.values(fixture.technicianIds) } },
+  });
+  await database.tipoServicio.deleteMany({
+    where: { id: { in: fixture.parents.serviceTypeIds } },
+  });
+  await database.sucursalCliente.deleteMany({
+    where: { id: { in: fixture.parents.branchIds } },
+  });
+  await database.cliente.deleteMany({
+    where: { id: { in: fixture.parents.clientIds } },
+  });
+}
+
+describe("orders mutation repository technician assignments", () => {
+  let fixture: AssignmentFixture;
+
+  beforeAll(async () => {
+    fixture = await createAssignmentFixture();
+  });
+
+  afterEach(async () => {
+    const orderIds = Object.values(fixture.orderIds);
+    await database.historialOrden.deleteMany({ where: { ordenId: { in: orderIds } } });
+    await database.auditoria.deleteMany({
+      where: { entity: "OrdenTrabajo", entityId: { in: orderIds } },
+    });
+    await database.ordenTecnico.deleteMany({ where: { ordenId: { in: orderIds } } });
+    await database.ordenTrabajo.updateMany({
+      where: { id: { in: orderIds } },
+      data: { status: "PENDING", version: 1 },
+    });
+    await database.ordenTrabajo.update({
+      where: { id: fixture.orderIds.ON_ROUTE },
+      data: { status: "ON_ROUTE" },
+    });
+    await database.ordenTrabajo.update({
+      where: { id: fixture.orderIds.COMPLETED },
+      data: { status: "COMPLETED" },
+    });
+  });
+
+  afterAll(async () => {
+    await removeAssignmentFixture(fixture);
+  });
+
+  it("assigns primary then support with one version increment per assignment", async () => {
+    const repository = createOrdersMutationRepository(database);
+    const primary = await repository.assignTechnician(
+      fixture.orderIds.PENDING,
+      assignmentInput(fixture, "primary", "PRIMARY", 1),
+      fixture.parents.actor,
+      now,
+    );
+    expect(primary).toMatchObject({
+      kind: "UPDATED",
+      order: { status: "ASSIGNED", version: 2 },
+    });
+
+    const support = await repository.assignTechnician(
+      fixture.orderIds.PENDING,
+      assignmentInput(fixture, "support", "SUPPORT", 2),
+      fixture.parents.actor,
+      now,
+    );
+    expect(support).toMatchObject({
+      kind: "UPDATED",
+      order: { status: "ASSIGNED", version: 3 },
+    });
+  });
+
+  it("keeps pending when support is assigned before a primary", async () => {
+    const repository = createOrdersMutationRepository(database);
+
+    await expect(
+      repository.assignTechnician(
+        fixture.orderIds.PENDING,
+        assignmentInput(fixture, "support", "SUPPORT", 1),
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toMatchObject({
+      kind: "UPDATED",
+      order: { status: "PENDING", version: 2 },
+    });
+  });
+
+  it.each(["inactive", "deleted"] as const)(
+    "rejects an %s technician",
+    async (technician) => {
+      const repository = createOrdersMutationRepository(database);
+      await expect(
+        repository.assignTechnician(
+          fixture.orderIds.PENDING,
+          assignmentInput(fixture, technician, "PRIMARY", 1),
+          fixture.parents.actor,
+          now,
+        ),
+      ).resolves.toEqual({ kind: "RESOURCE_INACTIVE" });
+    },
+  );
+
+  it("retires the active primary before replacing it", async () => {
+    const repository = createOrdersMutationRepository(database);
+    await repository.assignTechnician(
+      fixture.orderIds.PENDING,
+      assignmentInput(fixture, "primary", "PRIMARY", 1),
+      fixture.parents.actor,
+      now,
+    );
+
+    const replacement = await repository.assignTechnician(
+      fixture.orderIds.PENDING,
+      assignmentInput(fixture, "replacement", "PRIMARY", 2),
+      fixture.parents.actor,
+      now,
+    );
+    expect(replacement).toMatchObject({ kind: "UPDATED", order: { version: 3 } });
+    expect(
+      await database.ordenTecnico.findMany({
+        where: { ordenId: fixture.orderIds.PENDING },
+        orderBy: { tecnicoId: "asc" },
+        select: { tecnicoId: true, role: true, unassignedAt: true },
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          tecnicoId: fixture.technicianIds.primary,
+          role: "PRIMARY",
+          unassignedAt: now,
+        },
+        {
+          tecnicoId: fixture.technicianIds.replacement,
+          role: "PRIMARY",
+          unassignedAt: null,
+        },
+      ]),
+    );
+    expect(
+      await database.historialOrden.findMany({
+        where: { ordenId: fixture.orderIds.PENDING },
+        orderBy: { occurredAt: "asc" },
+        select: { action: true, metadata: true },
+      }),
+    ).toContainEqual({
+      action: "ORDER_PRIMARY_REPLACED",
+      metadata: {
+        technicianId: fixture.technicianIds.replacement,
+        role: "PRIMARY",
+        retiredTechnicians: [
+          { technicianId: fixture.technicianIds.primary, role: "PRIMARY" },
+        ],
+        version: 3,
+      },
+    });
+  });
+
+  it("returns assigned to pending when its primary is removed without changing it for support removal", async () => {
+    const repository = createOrdersMutationRepository(database);
+    await repository.assignTechnician(
+      fixture.orderIds.PENDING,
+      assignmentInput(fixture, "primary", "PRIMARY", 1),
+      fixture.parents.actor,
+      now,
+    );
+    await repository.assignTechnician(
+      fixture.orderIds.PENDING,
+      assignmentInput(fixture, "support", "SUPPORT", 2),
+      fixture.parents.actor,
+      now,
+    );
+    const reason: UnassignmentInput = { version: 3, reason: "El apoyo ya no es necesario" };
+    await expect(
+      repository.unassignTechnician(
+        fixture.orderIds.PENDING,
+        fixture.technicianIds.support,
+        reason,
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toMatchObject({ kind: "UPDATED", order: { status: "ASSIGNED", version: 4 } });
+    await expect(
+      repository.unassignTechnician(
+        fixture.orderIds.PENDING,
+        fixture.technicianIds.primary,
+        { version: 4, reason: "El tÃ©cnico principal fue reasignado" },
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toMatchObject({ kind: "UPDATED", order: { status: "PENDING", version: 5 } });
+  });
+
+  it("reactivates a historical row with refreshed role and assignment metadata", async () => {
+    const repository = createOrdersMutationRepository(database);
+    await repository.assignTechnician(
+      fixture.orderIds.PENDING,
+      assignmentInput(fixture, "support", "SUPPORT", 1),
+      fixture.parents.actor,
+      now,
+    );
+    await repository.unassignTechnician(
+      fixture.orderIds.PENDING,
+      fixture.technicianIds.support,
+      { version: 2, reason: "Se retirÃ³ el apoyo temporalmente" },
+      fixture.parents.actor,
+      new Date("2026-08-01T13:00:00.000Z"),
+    );
+    const reassignedAt = new Date("2026-08-01T14:00:00.000Z");
+    await expect(
+      repository.assignTechnician(
+        fixture.orderIds.PENDING,
+        assignmentInput(fixture, "support", "PRIMARY", 3),
+        fixture.parents.actor,
+        reassignedAt,
+      ),
+    ).resolves.toMatchObject({ kind: "UPDATED", order: { status: "ASSIGNED", version: 4 } });
+    expect(
+      await database.ordenTecnico.findUniqueOrThrow({
+        where: {
+          ordenId_tecnicoId: {
+            ordenId: fixture.orderIds.PENDING,
+            tecnicoId: fixture.technicianIds.support,
+          },
+        },
+        select: { role: true, assignedAt: true, assignedById: true, unassignedAt: true },
+      }),
+    ).toEqual({
+      role: "PRIMARY",
+      assignedAt: reassignedAt,
+      assignedById: fixture.parents.actor.userId,
+      unassignedAt: null,
+    });
+  });
+
+  it("allows only support changes after on-route and rejects every change after closure", async () => {
+    const repository = createOrdersMutationRepository(database);
+    await expect(
+      repository.assignTechnician(
+        fixture.orderIds.ON_ROUTE,
+        assignmentInput(fixture, "primary", "PRIMARY", 1),
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+    await expect(
+      repository.assignTechnician(
+        fixture.orderIds.ON_ROUTE,
+        assignmentInput(fixture, "support", "SUPPORT", 1),
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toMatchObject({ kind: "UPDATED", order: { status: "ON_ROUTE", version: 2 } });
+    await expect(
+      repository.unassignTechnician(
+        fixture.orderIds.ON_ROUTE,
+        fixture.technicianIds.support,
+        { version: 2, reason: "El apoyo concluyÃ³ su labor" },
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toMatchObject({ kind: "UPDATED", order: { status: "ON_ROUTE", version: 3 } });
+    await expect(
+      repository.assignTechnician(
+        fixture.orderIds.COMPLETED,
+        assignmentInput(fixture, "support", "SUPPORT", 1),
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toEqual({ kind: "ORDER_CLOSED" });
+    await database.ordenTecnico.create({
+      data: {
+        ordenId: fixture.orderIds.COMPLETED,
+        tecnicoId: fixture.technicianIds.support,
+        role: "SUPPORT",
+        assignedAt: now,
+      },
+    });
+    await expect(
+      repository.unassignTechnician(
+        fixture.orderIds.COMPLETED,
+        fixture.technicianIds.support,
+        { version: 1, reason: "No se puede retirar una orden cerrada" },
+        fixture.parents.actor,
+        now,
+      ),
+    ).resolves.toEqual({ kind: "ORDER_CLOSED" });
+  });
+
+  it("allows one concurrent primary assignment and rolls back every assignment field when audit fails", async () => {
+    const otherDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const firstRepository = createOrdersMutationRepository(database);
+    const secondRepository = createOrdersMutationRepository(otherDatabase);
+    try {
+      const results = await Promise.all([
+        firstRepository.assignTechnician(
+          fixture.orderIds.PENDING,
+          assignmentInput(fixture, "primary", "PRIMARY", 1),
+          fixture.parents.actor,
+          now,
+        ),
+        secondRepository.assignTechnician(
+          fixture.orderIds.PENDING,
+          assignmentInput(fixture, "replacement", "PRIMARY", 1),
+          fixture.parents.actor,
+          now,
+        ),
+      ]);
+      expect(results.map((result) => result.kind).sort()).toEqual([
+        "UPDATED",
+        "VERSION_CONFLICT",
+      ]);
+      expect(
+        await database.ordenTecnico.count({
+          where: { ordenId: fixture.orderIds.PENDING, role: "PRIMARY", unassignedAt: null },
+        }),
+      ).toBe(1);
+    } finally {
+      await otherDatabase.$disconnect();
+    }
+
+    const orderId = fixture.orderIds.ON_ROUTE;
+    const actorWithMissingUser = {
+      ...fixture.parents.actor,
+      userId: randomUUID(),
+      requestId: randomUUID(),
+    };
+    await expect(
+      firstRepository.assignTechnician(
+        orderId,
+        assignmentInput(fixture, "support", "SUPPORT", 1),
+        actorWithMissingUser,
+        now,
+      ),
+    ).rejects.toThrow();
+    expect(
+      await database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { status: true, version: true },
+      }),
+    ).toEqual({ status: "ON_ROUTE", version: 1 });
+    expect(
+      await database.ordenTecnico.count({ where: { ordenId: orderId } }),
+    ).toBe(0);
   });
 });
