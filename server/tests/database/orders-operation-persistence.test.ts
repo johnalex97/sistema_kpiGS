@@ -101,6 +101,12 @@ interface OperationFixture {
     support: string;
     unrelated: string;
   };
+  materialIds: {
+    active: string;
+    inactive: string;
+    withoutCost: string;
+    deleted: string;
+  };
 }
 
 interface CreateOperationOrderOptions {
@@ -118,7 +124,7 @@ function actor(technicianId: string | null): OrderActorContext {
   return {
     userId: fixture.userId,
     technicianId,
-    permissions: ["orders:operate"],
+    permissions: ["ORDERS_OPERATE_OWN"],
     requestId: randomUUID(),
     ipAddress: "127.0.0.1",
     userAgent: "Orders operation persistence test",
@@ -189,6 +195,12 @@ beforeAll(async () => {
       support: randomUUID(),
       unrelated: randomUUID(),
     },
+    materialIds: {
+      active: randomUUID(),
+      inactive: randomUUID(),
+      withoutCost: randomUUID(),
+      deleted: randomUUID(),
+    },
   };
   await database.cliente.create({
     data: {
@@ -220,9 +232,45 @@ beforeAll(async () => {
       fullName: `Técnico ${name} ${suffix}`,
     })),
   });
+  await database.material.createMany({
+    data: [
+      {
+        id: fixture.materialIds.active,
+        code: `OP-MAT-ACTIVE-${suffix}`,
+        name: `Material activo ${suffix}`,
+        unit: "metro",
+        referenceCost: "25.00",
+      },
+      {
+        id: fixture.materialIds.inactive,
+        code: `OP-MAT-INACTIVE-${suffix}`,
+        name: `Material inactivo ${suffix}`,
+        unit: "unidad",
+        referenceCost: "10.00",
+        isActive: false,
+      },
+      {
+        id: fixture.materialIds.withoutCost,
+        code: `OP-MAT-NOCOST-${suffix}`,
+        name: `Material sin costo ${suffix}`,
+        unit: "unidad",
+      },
+      {
+        id: fixture.materialIds.deleted,
+        code: `OP-MAT-DELETED-${suffix}`,
+        name: `Material eliminado ${suffix}`,
+        unit: "unidad",
+        referenceCost: "10.00",
+        deletedAt: firstNow,
+      },
+    ],
+  });
 });
 
 afterEach(async () => {
+  await database.materialUtilizado.deleteMany({
+    where: { ordenId: { in: createdOrderIds } },
+  });
   await database.historialOrden.deleteMany({
     where: { ordenId: { in: createdOrderIds } },
   });
@@ -235,10 +283,17 @@ afterEach(async () => {
   await database.ordenTrabajo.deleteMany({
     where: { id: { in: createdOrderIds } },
   });
+  await database.material.update({
+    where: { id: fixture.materialIds.active },
+    data: { referenceCost: "25.00", isActive: true, deletedAt: null },
+  });
   createdOrderIds.length = 0;
 });
 
 afterAll(async () => {
+  await database.material.deleteMany({
+    where: { id: { in: Object.values(fixture.materialIds) } },
+  });
   await database.tecnico.deleteMany({
     where: { id: { in: Object.values(fixture.technicianIds) } },
   });
@@ -894,6 +949,371 @@ describe("orders operation repository transitions", () => {
         where: { entity: "OrdenTrabajo", entityId: orderId },
       }),
     ).toBe(0);
+  });
+});
+
+describe("orders operation repository materials", () => {
+  it("adds materials in active work states for managers and the active primary", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const eligibleActors = [
+      {
+        label: "ADMIN",
+        value: { ...actor(null), permissions: ["ORDERS_MANAGE"] },
+      },
+      {
+        label: "SUPERVISOR",
+        value: { ...actor(null), permissions: ["ORDERS_MANAGE"] },
+      },
+      {
+        label: "PRIMARY",
+        value: actor(fixture.technicianIds.primary),
+      },
+    ];
+
+    for (const status of ["IN_PROGRESS", "PAUSED"] as const) {
+      for (const eligibleActor of eligibleActors) {
+        const orderId = await createOperationOrder({
+          status,
+          version: 4,
+          startedAt: firstNow,
+        });
+        const result = await repository.addOrderMaterial(
+          orderId,
+          {
+            version: 4,
+            materialId: fixture.materialIds.active,
+            quantity: "12.500",
+            observation: `${eligibleActor.label} ${status}`,
+          },
+          eligibleActor.value,
+          secondNow,
+        );
+
+        expect(result.kind).toBe("UPDATED");
+        if (result.kind !== "UPDATED") continue;
+        expect(result.order).toMatchObject({ status, version: 5 });
+        expect(result.order.materiales).toHaveLength(1);
+        expect(result.order.materiales[0]?.quantity.toFixed(3)).toBe("12.500");
+        expect(
+          result.order.materiales[0]?.historicalUnitCost.toFixed(2),
+        ).toBe("25.00");
+        await expect(
+          database.historialOrden.count({
+            where: { ordenId: orderId, action: "ORDER_MATERIAL_ADDED" },
+          }),
+        ).resolves.toBe(1);
+        await expect(
+          database.auditoria.count({
+            where: {
+              entity: "OrdenTrabajo",
+              entityId: orderId,
+              action: "ORDER_MATERIAL_ADDED",
+            },
+          }),
+        ).resolves.toBe(1);
+      }
+    }
+  });
+
+  it("updates and removes a nested usage without changing its historical cost", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+    });
+    const primaryActor = actor(fixture.technicianIds.primary);
+    const added = await repository.addOrderMaterial(
+      orderId,
+      {
+        version: 4,
+        materialId: fixture.materialIds.active,
+        quantity: "1.250",
+        observation: "Cable del enlace",
+      },
+      primaryActor,
+      firstNow,
+    );
+    expect(added.kind).toBe("UPDATED");
+    if (added.kind !== "UPDATED") return;
+    const usageId = added.order.materiales[0]!.id;
+
+    await database.material.update({
+      where: { id: fixture.materialIds.active },
+      data: { referenceCost: "40.00" },
+    });
+    const updated = await repository.updateOrderMaterial(
+      orderId,
+      usageId,
+      { version: 5, quantity: "3.750", observation: null },
+      primaryActor,
+      secondNow,
+    );
+    expect(updated.kind).toBe("UPDATED");
+    if (updated.kind !== "UPDATED") return;
+    expect(updated.order.version).toBe(6);
+    expect(updated.order.materiales[0]?.quantity.toFixed(3)).toBe("3.750");
+    expect(updated.order.materiales[0]?.historicalUnitCost.toFixed(2)).toBe(
+      "25.00",
+    );
+    expect(updated.order.materiales[0]?.observation).toBeNull();
+
+    const removed = await repository.removeOrderMaterial(
+      orderId,
+      usageId,
+      { version: 6 },
+      primaryActor,
+      thirdNow,
+    );
+    expect(removed).toMatchObject({
+      kind: "UPDATED",
+      order: { version: 7, materiales: [] },
+    });
+    await expect(
+      database.historialOrden.findMany({
+        where: { ordenId: orderId },
+        select: { action: true, metadata: true },
+        orderBy: { occurredAt: "asc" },
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ action: "ORDER_MATERIAL_ADDED" }),
+      expect.objectContaining({ action: "ORDER_MATERIAL_UPDATED" }),
+      expect.objectContaining({
+        action: "ORDER_MATERIAL_REMOVED",
+        metadata: expect.objectContaining({
+          materialUsage: expect.objectContaining({
+            id: usageId,
+            quantity: "3.750",
+            historicalUnitCost: "25.00",
+          }),
+        }),
+      }),
+    ]);
+    await expect(
+      database.auditoria.findFirstOrThrow({
+        where: {
+          entityId: orderId,
+          action: "ORDER_MATERIAL_REMOVED",
+        },
+        select: { beforeData: true, afterData: true },
+      }),
+    ).resolves.toEqual({
+      beforeData: expect.objectContaining({
+        materialUsage: expect.objectContaining({ id: usageId }),
+      }),
+      afterData: expect.objectContaining({ materialUsage: null }),
+    });
+  });
+
+  it("rejects support, unrelated, and permissionless technicians transactionally", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      supportTechnicianId: fixture.technicianIds.support,
+      startedAt: firstNow,
+    });
+    const unauthorizedActors = [
+      actor(fixture.technicianIds.support),
+      actor(fixture.technicianIds.unrelated),
+      { ...actor(fixture.technicianIds.primary), permissions: [] },
+    ];
+
+    for (const unauthorizedActor of unauthorizedActors) {
+      await expect(
+        repository.addOrderMaterial(
+          orderId,
+          {
+            version: 4,
+            materialId: fixture.materialIds.active,
+            quantity: "1.000",
+          },
+          unauthorizedActor,
+          secondNow,
+        ),
+      ).resolves.toEqual({ kind: "TECHNICIAN_NOT_ASSIGNED" });
+    }
+    await expect(
+      database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { version: true },
+      }),
+    ).resolves.toEqual({ version: 4 });
+    await expect(
+      database.materialUtilizado.count({ where: { ordenId: orderId } }),
+    ).resolves.toBe(0);
+  });
+
+  it("allows material changes only while in progress or paused", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const manager = { ...actor(null), permissions: ["ORDERS_MANAGE"] };
+    for (const status of ["PENDING", "ASSIGNED", "ON_ROUTE"] as const) {
+      const orderId = await createOperationOrder({ status, version: 4 });
+      await expect(
+        repository.addOrderMaterial(
+          orderId,
+          {
+            version: 4,
+            materialId: fixture.materialIds.active,
+            quantity: "1.000",
+          },
+          manager,
+          secondNow,
+        ),
+      ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+    }
+    for (const status of ["COMPLETED", "CANCELLED"] as const) {
+      const orderId = await createOperationOrder({ status, version: 4 });
+      await expect(
+        repository.addOrderMaterial(
+          orderId,
+          {
+            version: 4,
+            materialId: fixture.materialIds.active,
+            quantity: "1.000",
+          },
+          manager,
+          secondNow,
+        ),
+      ).resolves.toEqual({ kind: "ORDER_CLOSED" });
+    }
+  });
+
+  it("rejects unavailable material resources without changing the order", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "PAUSED",
+      version: 4,
+      startedAt: firstNow,
+    });
+    const manager = { ...actor(null), permissions: ["ORDERS_MANAGE"] };
+    const cases = [
+      [randomUUID(), "MATERIAL_NOT_FOUND"],
+      [fixture.materialIds.inactive, "RESOURCE_INACTIVE"],
+      [fixture.materialIds.deleted, "RESOURCE_INACTIVE"],
+      [fixture.materialIds.withoutCost, "MATERIAL_COST_UNAVAILABLE"],
+    ] as const;
+
+    for (const [materialId, kind] of cases) {
+      await expect(
+        repository.addOrderMaterial(
+          orderId,
+          { version: 4, materialId, quantity: "1.000" },
+          manager,
+          secondNow,
+        ),
+      ).resolves.toEqual({ kind });
+    }
+    await expect(
+      database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { version: true },
+      }),
+    ).resolves.toEqual({ version: 4 });
+  });
+
+  it("returns a safe nested not-found and rejects stale material commands", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const firstOrderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+    });
+    const secondOrderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+    });
+    const foreignUsage = await database.materialUtilizado.create({
+      data: {
+        ordenId: secondOrderId,
+        materialId: fixture.materialIds.active,
+        quantity: "2.000",
+        historicalUnitCost: "25.00",
+      },
+      select: { id: true },
+    });
+    const manager = { ...actor(null), permissions: ["ORDERS_MANAGE"] };
+
+    await expect(
+      repository.updateOrderMaterial(
+        firstOrderId,
+        foreignUsage.id,
+        { version: 4, quantity: "5.000" },
+        manager,
+        secondNow,
+      ),
+    ).resolves.toEqual({ kind: "MATERIAL_USAGE_NOT_FOUND" });
+    await expect(
+      repository.removeOrderMaterial(
+        firstOrderId,
+        foreignUsage.id,
+        { version: 4 },
+        manager,
+        secondNow,
+      ),
+    ).resolves.toEqual({ kind: "MATERIAL_USAGE_NOT_FOUND" });
+    await expect(
+      repository.addOrderMaterial(
+        firstOrderId,
+        {
+          version: 3,
+          materialId: fixture.materialIds.active,
+          quantity: "1.000",
+        },
+        manager,
+        secondNow,
+      ),
+    ).resolves.toEqual({ kind: "VERSION_CONFLICT" });
+    const preservedForeignUsage =
+      await database.materialUtilizado.findUniqueOrThrow({
+        where: { id: foreignUsage.id },
+        select: { quantity: true },
+      });
+    expect(preservedForeignUsage.quantity.toFixed(3)).toBe("2.000");
+  });
+
+  it("rolls usage, order version, history, and audit back together", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+    });
+    const invalidAuditActor = {
+      ...actor(fixture.technicianIds.primary),
+      userAgent: "x".repeat(501),
+    };
+
+    await expect(
+      repository.addOrderMaterial(
+        orderId,
+        {
+          version: 4,
+          materialId: fixture.materialIds.active,
+          quantity: "1.000",
+        },
+        invalidAuditActor,
+        secondNow,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      database.ordenTrabajo.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { version: true },
+      }),
+    ).resolves.toEqual({ version: 4 });
+    await expect(
+      database.materialUtilizado.count({ where: { ordenId: orderId } }),
+    ).resolves.toBe(0);
+    await expect(
+      database.historialOrden.count({ where: { ordenId: orderId } }),
+    ).resolves.toBe(0);
+    await expect(
+      database.auditoria.count({
+        where: { entity: "OrdenTrabajo", entityId: orderId },
+      }),
+    ).resolves.toBe(0);
   });
 });
 

@@ -6,7 +6,7 @@ import type {
 import type {
   OrderDetailRecord,
   OrderMutationResult,
-  OrdersOperationalCompletionRepository,
+  OrdersMaterialMutationRepository,
 } from "./orders.repository.types.js";
 import {
   calculateGrossMinutes,
@@ -23,6 +23,10 @@ type OperationalCommand = Extract<
 >;
 
 type TrailedCommand = OperationalCommand | "COMPLETE" | "CANCEL";
+type MaterialAction =
+  | "ORDER_MATERIAL_ADDED"
+  | "ORDER_MATERIAL_UPDATED"
+  | "ORDER_MATERIAL_REMOVED";
 
 interface LockedOrderRow {
   id: string;
@@ -34,6 +38,31 @@ interface LockedOrderRow {
 interface LockedTechnicianRow {
   id: string;
 }
+
+interface LockedMaterialRow {
+  id: string;
+  referenceCost: Prisma.Decimal | null;
+  isActive: boolean;
+  deletedAt: Date | null;
+}
+
+interface MaterialUsageRow {
+  id: string;
+  materialId: string;
+  quantity: Prisma.Decimal;
+  historicalUnitCost: Prisma.Decimal;
+  observation: string | null;
+  createdAt: Date;
+}
+
+const materialUsageSelect = {
+  id: true,
+  materialId: true,
+  quantity: true,
+  historicalUnitCost: true,
+  observation: true,
+  createdAt: true,
+} as const satisfies Prisma.MaterialUtilizadoSelect;
 
 const orderDetailBaseSelect = {
   id: true,
@@ -212,6 +241,67 @@ async function lockTechnician(
   return rows[0] ?? null;
 }
 
+async function lockMaterial(
+  transaction: Prisma.TransactionClient,
+  materialId: string,
+): Promise<LockedMaterialRow | null> {
+  const rows = await transaction.$queryRaw<LockedMaterialRow[]>`
+    SELECT
+      "id",
+      "reference_cost" AS "referenceCost",
+      "is_active" AS "isActive",
+      "deleted_at" AS "deletedAt"
+    FROM "material"
+    WHERE "id" = ${materialId}::uuid
+    FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+async function materialActorFailure(
+  transaction: Prisma.TransactionClient,
+  orderId: string,
+  actor: OrderActorContext,
+): Promise<OrderMutationResult | null> {
+  if (actor.permissions.includes("ORDERS_MANAGE")) return null;
+  if (
+    !actor.permissions.includes("ORDERS_OPERATE_OWN") ||
+    actor.technicianId === null
+  ) {
+    return { kind: "TECHNICIAN_NOT_ASSIGNED" };
+  }
+  const primary = await transaction.ordenTecnico.findFirst({
+    where: { ordenId: orderId, role: "PRIMARY", unassignedAt: null },
+    select: { tecnicoId: true },
+  });
+  if (!primary) return { kind: "PRIMARY_TECHNICIAN_REQUIRED" };
+  if (primary.tecnicoId !== actor.technicianId) {
+    return { kind: "TECHNICIAN_NOT_ASSIGNED" };
+  }
+  return null;
+}
+
+function materialStateFailure(status: EstadoOrden): OrderMutationResult | null {
+  if (status === "COMPLETED" || status === "CANCELLED") {
+    return { kind: "ORDER_CLOSED" };
+  }
+  if (status !== "IN_PROGRESS" && status !== "PAUSED") {
+    return { kind: "INVALID_ORDER_TRANSITION" };
+  }
+  return null;
+}
+
+function materialUsageSnapshot(usage: MaterialUsageRow) {
+  return {
+    id: usage.id,
+    materialId: usage.materialId,
+    quantity: usage.quantity.toFixed(3),
+    historicalUnitCost: usage.historicalUnitCost.toFixed(2),
+    observation: usage.observation,
+    createdAt: usage.createdAt.toISOString(),
+  };
+}
+
 async function hasOperationalOverlap(
   transaction: Prisma.TransactionClient,
   orderId: string,
@@ -284,9 +374,60 @@ async function writeTransitionTrail(
   });
 }
 
+async function writeMaterialTrail(
+  transaction: Prisma.TransactionClient,
+  before: OrderDetailRecord,
+  order: OrderDetailRecord,
+  action: MaterialAction,
+  actor: OrderActorContext,
+  now: Date,
+  usageBefore: MaterialUsageRow | null,
+  usageAfter: MaterialUsageRow | null,
+): Promise<void> {
+  const beforeUsage =
+    usageBefore === null ? null : materialUsageSnapshot(usageBefore);
+  const afterUsage =
+    usageAfter === null ? null : materialUsageSnapshot(usageAfter);
+  await transaction.historialOrden.create({
+    data: {
+      ordenId: order.id,
+      previousStatus: before.status,
+      newStatus: order.status,
+      action,
+      userId: actor.userId,
+      occurredAt: now,
+      requestId: actor.requestId,
+      metadata: {
+        version: order.version,
+        materialUsage: afterUsage ?? beforeUsage,
+      },
+    },
+  });
+  await transaction.auditoria.create({
+    data: {
+      userId: actor.userId,
+      action,
+      entity: "OrdenTrabajo",
+      entityId: order.id,
+      beforeData: {
+        order: orderAuditSnapshot(before),
+        materialUsage: beforeUsage,
+      },
+      afterData: {
+        order: orderAuditSnapshot(order),
+        materialUsage: afterUsage,
+      },
+      occurredAt: now,
+      ipAddress: actor.ipAddress,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    },
+  });
+}
+
 export function createOrdersOperationRepository(
   database: PrismaClient,
-): OrdersOperationalCompletionRepository {
+): OrdersMaterialMutationRepository {
   async function runTransition(
     orderId: string,
     expectedVersion: number,
@@ -468,6 +609,159 @@ export function createOrdersOperationRepository(
           actor,
           now,
           input.cancellationReason,
+        );
+        return { kind: "UPDATED", order } as const;
+      });
+    },
+    async addOrderMaterial(id, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        const locked = await lockOrder(transaction, id);
+        if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
+        if (locked.version !== input.version) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        const stateFailure = materialStateFailure(locked.status);
+        if (stateFailure) return stateFailure;
+        const actorFailure = await materialActorFailure(transaction, id, actor);
+        if (actorFailure) return actorFailure;
+
+        const material = await lockMaterial(transaction, input.materialId);
+        if (!material) return { kind: "MATERIAL_NOT_FOUND" } as const;
+        if (!material.isActive || material.deletedAt !== null) {
+          return { kind: "RESOURCE_INACTIVE" } as const;
+        }
+        if (material.referenceCost === null) {
+          return { kind: "MATERIAL_COST_UNAVAILABLE" } as const;
+        }
+
+        const before = await loadOrderDetail(transaction, id);
+        const usage = await transaction.materialUtilizado.create({
+          data: {
+            ordenId: id,
+            actividadId: null,
+            materialId: input.materialId,
+            quantity: new Prisma.Decimal(input.quantity),
+            historicalUnitCost: material.referenceCost,
+            observation: input.observation ?? null,
+          },
+          select: materialUsageSelect,
+        });
+        const changed = await transaction.ordenTrabajo.updateMany({
+          where: { id, version: input.version },
+          data: { updatedAt: now, version: { increment: 1 } },
+        });
+        if (changed.count !== 1) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        const order = await loadOrderDetail(transaction, id);
+        await writeMaterialTrail(
+          transaction,
+          before,
+          order,
+          "ORDER_MATERIAL_ADDED",
+          actor,
+          now,
+          null,
+          usage,
+        );
+        return { kind: "UPDATED", order } as const;
+      });
+    },
+    async updateOrderMaterial(id, usageId, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        const locked = await lockOrder(transaction, id);
+        if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
+        if (locked.version !== input.version) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        const stateFailure = materialStateFailure(locked.status);
+        if (stateFailure) return stateFailure;
+        const actorFailure = await materialActorFailure(transaction, id, actor);
+        if (actorFailure) return actorFailure;
+
+        const usageBefore = await transaction.materialUtilizado.findFirst({
+          where: { id: usageId, ordenId: id },
+          select: materialUsageSelect,
+        });
+        if (!usageBefore) {
+          return { kind: "MATERIAL_USAGE_NOT_FOUND" } as const;
+        }
+
+        const before = await loadOrderDetail(transaction, id);
+        const usageAfter = await transaction.materialUtilizado.update({
+          where: { id: usageBefore.id },
+          data: {
+            ...(input.quantity !== undefined && {
+              quantity: new Prisma.Decimal(input.quantity),
+            }),
+            ...(input.observation !== undefined && {
+              observation: input.observation,
+            }),
+          },
+          select: materialUsageSelect,
+        });
+        const changed = await transaction.ordenTrabajo.updateMany({
+          where: { id, version: input.version },
+          data: { updatedAt: now, version: { increment: 1 } },
+        });
+        if (changed.count !== 1) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        const order = await loadOrderDetail(transaction, id);
+        await writeMaterialTrail(
+          transaction,
+          before,
+          order,
+          "ORDER_MATERIAL_UPDATED",
+          actor,
+          now,
+          usageBefore,
+          usageAfter,
+        );
+        return { kind: "UPDATED", order } as const;
+      });
+    },
+    async removeOrderMaterial(id, usageId, input, actor, now) {
+      return database.$transaction(async (transaction) => {
+        const locked = await lockOrder(transaction, id);
+        if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
+        if (locked.version !== input.version) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        const stateFailure = materialStateFailure(locked.status);
+        if (stateFailure) return stateFailure;
+        const actorFailure = await materialActorFailure(transaction, id, actor);
+        if (actorFailure) return actorFailure;
+
+        const usageBefore = await transaction.materialUtilizado.findFirst({
+          where: { id: usageId, ordenId: id },
+          select: materialUsageSelect,
+        });
+        if (!usageBefore) {
+          return { kind: "MATERIAL_USAGE_NOT_FOUND" } as const;
+        }
+
+        const before = await loadOrderDetail(transaction, id);
+        await transaction.materialUtilizado.delete({
+          where: { id: usageBefore.id },
+        });
+        const changed = await transaction.ordenTrabajo.updateMany({
+          where: { id, version: input.version },
+          data: { updatedAt: now, version: { increment: 1 } },
+        });
+        if (changed.count !== 1) {
+          return { kind: "VERSION_CONFLICT" } as const;
+        }
+        const order = await loadOrderDetail(transaction, id);
+        await writeMaterialTrail(
+          transaction,
+          before,
+          order,
+          "ORDER_MATERIAL_REMOVED",
+          actor,
+          now,
+          usageBefore,
+          null,
         );
         return { kind: "UPDATED", order } as const;
       });

@@ -165,10 +165,13 @@ export interface OrdersOperationalCompletionRepository extends OrdersOperational
   cancelOrder(id: string, input: CancelOrderInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
 }
 
-export interface OrdersOperationRepository extends OrdersOperationalCompletionRepository {
+export interface OrdersMaterialMutationRepository extends OrdersOperationalCompletionRepository {
   addOrderMaterial(id: string, input: MaterialInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   updateOrderMaterial(id: string, usageId: string, input: UpdateMaterialInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   removeOrderMaterial(id: string, usageId: string, input: RemoveMaterialInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
+}
+
+export interface OrdersOperationRepository extends OrdersMaterialMutationRepository {
   adjustClosedOrder(id: string, input: AdjustOrderInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
 }
 
