@@ -758,6 +758,10 @@ describe("orders operation repository transitions", () => {
       version: 4,
       startedAt: firstNow,
     });
+    const before = await database.ordenTrabajo.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { updatedAt: true },
+    });
     const invalidAuditActor = {
       ...actor(fixture.technicianIds.primary),
       userAgent: "x".repeat(501),
@@ -785,6 +789,7 @@ describe("orders operation repository transitions", () => {
           totalMinutes: true,
           diagnosis: true,
           result: true,
+          updatedAt: true,
         },
       }),
     ).resolves.toEqual({
@@ -794,6 +799,7 @@ describe("orders operation repository transitions", () => {
       totalMinutes: null,
       diagnosis: null,
       result: null,
+      updatedAt: before.updatedAt,
     });
     await expect(
       database.historialOrden.count({ where: { ordenId: orderId } }),
@@ -806,7 +812,15 @@ describe("orders operation repository transitions", () => {
   });
 
   it("rolls cancellation status, timing, history, and audit back when its audit fails", async () => {
-    const orderId = await createOperationOrder({ status: "ASSIGNED", version: 2 });
+    const orderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+    });
+    const before = await database.ordenTrabajo.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { updatedAt: true },
+    });
     const invalidAuditActor = {
       ...actor(null),
       permissions: ["orders:manage"],
@@ -816,7 +830,7 @@ describe("orders operation repository transitions", () => {
     await expect(
       createOrdersOperationRepository(database).cancelOrder(
         orderId,
-        { version: 2, cancellationReason: "Solicitud administrativa confirmada" },
+        { version: 4, cancellationReason: "Solicitud administrativa confirmada" },
         invalidAuditActor,
         fourthNow,
       ),
@@ -830,14 +844,16 @@ describe("orders operation repository transitions", () => {
           endedAt: true,
           totalMinutes: true,
           cancellationReason: true,
+          updatedAt: true,
         },
       }),
     ).resolves.toEqual({
-      status: "ASSIGNED",
-      version: 2,
+      status: "IN_PROGRESS",
+      version: 4,
       endedAt: null,
       totalMinutes: null,
       cancellationReason: null,
+      updatedAt: before.updatedAt,
     });
     await expect(
       database.historialOrden.count({ where: { ordenId: orderId } }),
