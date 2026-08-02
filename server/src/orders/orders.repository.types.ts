@@ -153,11 +153,14 @@ export interface OrdersMutationRepository extends OrdersAdministrativeMutationRe
   unassignTechnician(id: string, technicianId: string, input: UnassignmentInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
 }
 
-export interface OrdersOperationRepository {
+export interface OrdersOperationalTransitionRepository {
   moveOnRoute(id: string, input: VersionInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   startOrder(id: string, input: VersionInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   pauseOrder(id: string, input: PauseOrderInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   resumeOrder(id: string, input: VersionInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
+}
+
+export interface OrdersOperationRepository extends OrdersOperationalTransitionRepository {
   completeOrder(id: string, input: CompleteOrderInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   cancelOrder(id: string, input: CancelOrderInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
   addOrderMaterial(id: string, input: MaterialInput, actor: OrderActorContext, now: Date): Promise<OrderMutationResult>;
