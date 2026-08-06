@@ -1,4 +1,8 @@
 import type { Prisma } from "../../generated/prisma/client.js";
+import type {
+  ActivityAccessScope,
+  ActivityListFilters,
+} from "./activities.types.js";
 
 export const activityTypeSelect = {
   id: true,
@@ -69,6 +73,18 @@ export type ActivityDetailRecord = Prisma.ActividadGetPayload<{
 export interface PageRecord<T> {
   items: T[];
   totalItems: number;
+}
+
+export interface ActivitiesReadRepository {
+  listActivityTypes(): Promise<ActivityTypeRecord[]>;
+  listActivities(
+    filters: ActivityListFilters,
+    scope: ActivityAccessScope,
+  ): Promise<PageRecord<ActivitySummaryRecord>>;
+  findActivityById(
+    id: string,
+    scope: ActivityAccessScope,
+  ): Promise<ActivityDetailRecord | null>;
 }
 
 export type ActivityFailureKind =
