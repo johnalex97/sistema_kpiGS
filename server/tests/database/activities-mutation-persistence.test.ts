@@ -30,18 +30,30 @@ async function waitForActivityUpdateWaiters(expected: number): Promise<void> {
   throw new Error(`Expected ${expected} activity-update lock waiters`);
 }
 
-async function waitForTechnicianLockWaiters(expected: number): Promise<void> {
+interface AdvisoryLockRecord {
+  pid: number;
+  granted: boolean;
+}
+
+async function waitForTechnicianLockWaiters(
+  technicianId: string,
+  expected: number,
+): Promise<AdvisoryLockRecord[]> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
-    const rows = await database.$queryRaw<Array<{ waiting: bigint }>>`
-      SELECT COUNT(*) AS "waiting"
+    const rows = await database.$queryRaw<AdvisoryLockRecord[]>`
+      SELECT pid, granted
       FROM pg_locks
-      WHERE granted = false AND locktype = 'advisory'
+      WHERE locktype = 'advisory'
+        AND classid::bigint = CASE WHEN hashtext(${technicianId}) < 0 THEN 4294967295 ELSE 0 END
+        AND objid::bigint = (hashtext(${technicianId})::bigint & 4294967295)
+        AND objsubid = 1
+      ORDER BY pid
     `;
-    if (Number(rows[0]?.waiting ?? 0) >= expected) return;
+    if (rows.filter(({ granted }) => !granted).length >= expected) return rows;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error(`Expected ${expected} technician-lock waiters`);
+  throw new Error(`Expected ${expected} exact technician-lock waiters`);
 }
 
 interface Fixture {
@@ -142,8 +154,10 @@ async function createFixture(): Promise<Fixture> {
   const ids = {
     clientId: randomUUID(), branchId: randomUUID(), inactiveBranchId: randomUUID(), deletedBranchId: randomUUID(),
     serviceTypeId: randomUUID(), activityTypeId: randomUUID(), alternateActivityTypeId: randomUUID(), inactiveTypeId: randomUUID(), deletedTypeId: randomUUID(),
-    orderId: randomUUID(), cancelledOrderId: randomUUID(), leaderId: randomUUID(),
-    technicianId: randomUUID(), inactiveTechnicianId: randomUUID(), foreignTechnicianId: randomUUID(),
+    orderId: randomUUID(), cancelledOrderId: randomUUID(),
+    leaderId: "00000000-0000-4000-8000-000000000001",
+    technicianId: "00000000-0000-4000-8000-000000000002",
+    inactiveTechnicianId: randomUUID(), foreignTechnicianId: randomUUID(),
   };
   const user = await database.usuario.findUniqueOrThrow({ where: { email: "admin.demo@geeksolution.example.test" }, select: { id: true } });
   await database.cliente.create({ data: { id: ids.clientId, code: `AM-${suffix}`, tradeName: `Cliente ${suffix}` } });
@@ -244,6 +258,51 @@ describe("activities pending mutation repository", () => {
       action: "ACTIVITY_MANUAL_RECORDED",
       reason: "Registro posterior por caida de conectividad",
     });
+  });
+
+  it("rolls back every manual activity row when its audit write fails", async () => {
+    const rollbackInput = manualInput(fixture, {
+      description: "Carga manual que debe revertirse",
+      startedAt: new Date("2026-08-05T06:00:00.000Z"),
+      endedAt: new Date("2026-08-05T07:00:00.000Z"),
+    });
+    const rollbackActor = { ...fixture.actor, requestId: randomUUID() };
+    const transaction = database.$transaction.bind(database);
+    const failingDatabase = {
+      ...database,
+      $transaction: (callback: (tx: typeof database) => Promise<unknown>) => transaction(async (tx) => {
+        vi.spyOn(tx.auditoria, "create").mockRejectedValueOnce(new Error("manual audit failed"));
+        return callback(tx as typeof database);
+      }),
+    };
+    try {
+      await expect(createActivitiesMutationRepository(failingDatabase as unknown as typeof database)
+        .createManualActivity(rollbackInput, rollbackActor, now)).rejects.toThrow("manual audit failed");
+    } finally {
+      const leaked = await database.actividad.findMany({
+        where: { sucursalId: fixture.branchId, description: rollbackInput.description },
+        select: { id: true },
+      });
+      activityIds.push(...leaked.map(({ id }) => id));
+    }
+    const createdIds = await database.actividad.findMany({
+      where: { sucursalId: fixture.branchId, description: rollbackInput.description },
+      select: { id: true },
+    });
+    expect(createdIds).toEqual([]);
+    expect(await database.actividadTecnico.count({
+      where: { actividad: { sucursalId: fixture.branchId, description: rollbackInput.description } },
+    })).toBe(0);
+    expect(await database.pausaActividad.count({
+      where: { actividad: { sucursalId: fixture.branchId, description: rollbackInput.description } },
+    })).toBe(0);
+    expect(await database.auditoria.count({
+      where: {
+        entity: "Actividad",
+        action: "ACTIVITY_MANUAL_RECORDED",
+        requestId: rollbackActor.requestId,
+      },
+    })).toBe(0);
   });
 
   it("normalizes a technician manual entry to their own one-member team", async () => {
@@ -386,7 +445,25 @@ describe("activities pending mutation repository", () => {
       });
       first = createActivitiesMutationRepository(database).createManualActivity(input, fixture.actor, now);
       second = createActivitiesMutationRepository(secondDatabase).createManualActivity(input, fixture.actor, now);
-      await waitForTechnicianLockWaiters(2);
+      const lowerLocks = await waitForTechnicianLockWaiters(fixture.leaderId, 2);
+      const writerPids = lowerLocks
+        .filter(({ granted }) => !granted)
+        .map(({ pid }) => pid);
+      expect(writerPids).toHaveLength(2);
+      expect(new Set(writerPids).size).toBe(2);
+      expect(lowerLocks.filter(({ granted }) => !granted)).toEqual(
+        writerPids.map((pid) => ({ pid, granted: false })),
+      );
+      const higherLocks = await Promise.all(writerPids.map((pid) => database.$queryRaw<AdvisoryLockRecord[]>`
+        SELECT pid, granted
+        FROM pg_locks
+        WHERE pid = ${pid}
+          AND locktype = 'advisory'
+          AND classid::bigint = CASE WHEN hashtext(${fixture.technicianId}) < 0 THEN 4294967295 ELSE 0 END
+          AND objid::bigint = (hashtext(${fixture.technicianId})::bigint & 4294967295)
+          AND objsubid = 1
+      `));
+      expect(higherLocks.flat()).toEqual([]);
       releaseLock();
       await lockTransaction;
       const results = await Promise.all([first, second]);
@@ -416,6 +493,53 @@ describe("activities pending mutation repository", () => {
       activityIds.push(...persistedIds.map(({ id }) => id).filter((id) => !activityIds.includes(id)));
       await lockerDatabase.$disconnect();
       await secondDatabase.$disconnect();
+    }
+  });
+
+  it("normalizes a duplicate self-team to one advisory-lock acquisition", async () => {
+    const lockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const writerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    let releaseLock: () => void = () => undefined;
+    let markLockAcquired: () => void = () => undefined;
+    const lockAcquired = new Promise<void>((resolve) => { markLockAcquired = resolve; });
+    const holdLock = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const lockTransaction = lockerDatabase.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fixture.leaderId}))`;
+      markLockAcquired();
+      await holdLock;
+    });
+    let write: Promise<ActivityMutationResult> | undefined;
+    try {
+      await lockAcquired;
+      write = createActivitiesMutationRepository(writerDatabase).createManualActivity(
+        manualInput(fixture, {
+          startedAt: new Date("2026-08-05T04:00:00.000Z"),
+          endedAt: new Date("2026-08-05T05:00:00.000Z"),
+          team: [
+            { technicianId: fixture.leaderId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+            { technicianId: fixture.leaderId, role: "PARTICIPANT", participationPercentage: "50.00" },
+          ],
+        }),
+        { ...fixture.actor, technicianId: fixture.leaderId, permissions: ["ACTIVITIES_CREATE_OWN"] },
+        now,
+      );
+      const locks = await waitForTechnicianLockWaiters(fixture.leaderId, 1);
+      const writerLocks = locks.filter(({ granted }) => !granted);
+      expect(writerLocks).toHaveLength(1);
+      expect(new Set(writerLocks.map(({ pid }) => pid)).size).toBe(1);
+      releaseLock();
+      await lockTransaction;
+      const result = await write;
+      expect(result).toMatchObject({
+        kind: "CREATED",
+        activity: { tecnicos: [{ tecnico: { id: fixture.leaderId }, role: "RESPONSIBLE" }] },
+      });
+      if (result.kind === "CREATED") activityIds.push(result.activity.id);
+    } finally {
+      releaseLock();
+      await Promise.allSettled([lockTransaction, ...(write === undefined ? [] : [write])]);
+      await lockerDatabase.$disconnect();
+      await writerDatabase.$disconnect();
     }
   });
 
