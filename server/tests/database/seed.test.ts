@@ -77,6 +77,57 @@ describe("database seed", () => {
     );
   });
 
+  it("grants activity permissions exactly once after an idempotent second seed", async () => {
+    await seedDatabase(database);
+    await seedDatabase(database);
+    const roles = await database.rol.findMany({
+      where: { code: { in: ["SUPERVISOR", "TECHNICIAN"] } },
+      include: { permissions: { include: { permiso: true } } },
+    });
+    const rolePermissions = Object.fromEntries(
+      roles.map((role) => [
+        role.code,
+        role.permissions.map(({ permiso }) => permiso.code),
+      ]),
+    );
+    const supervisorPermissions = rolePermissions.SUPERVISOR ?? [];
+    const technicianPermissions = rolePermissions.TECHNICIAN ?? [];
+    const activityPermissionCodes = [
+      "ACTIVITIES_VIEW_ALL",
+      "ACTIVITIES_MANAGE",
+      "ACTIVITIES_CREATE_OWN",
+      "ACTIVITIES_OPERATE_OWN",
+    ];
+
+    expect(technicianPermissions).toEqual(
+      expect.arrayContaining([
+        "ACTIVITIES_CREATE_OWN",
+        "ACTIVITIES_OPERATE_OWN",
+      ]),
+    );
+    expect(supervisorPermissions).toEqual(
+      expect.arrayContaining([
+        "ACTIVITIES_VIEW_ALL",
+        "ACTIVITIES_MANAGE",
+      ]),
+    );
+
+    const allPermissionCodes = (
+      await database.permiso.findMany({ select: { code: true } })
+    ).map(({ code }) => code);
+    expect(allPermissionCodes).not.toContain("ACTIVITIES_MANAGE_OWN");
+
+    for (const code of activityPermissionCodes) {
+      expect(await database.permiso.count({ where: { code } })).toBe(1);
+    }
+
+    expect(
+      await database.rolPermiso.count({
+        where: { permiso: { code: { in: activityPermissionCodes } } },
+      }),
+    ).toBe(8);
+  });
+
   it("keeps demo users unable to authenticate", async () => {
     await seedDatabase(database);
     const demoUsers = await database.usuario.findMany({

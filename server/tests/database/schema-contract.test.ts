@@ -78,4 +78,29 @@ describe("Prisma schema contract", () => {
       ]),
     );
   });
+
+  it("creates the required activity query indexes", async () => {
+    const indexes = await database.$queryRaw<Array<{ indexname: string }>>`
+      SELECT indexname
+      FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND indexname IN (
+          'idx_activity_page',
+          'idx_activity_status_page',
+          'idx_activity_order_page',
+          'idx_activity_technician_visibility'
+        )
+    `;
+
+    const indexNames = indexes.map(({ indexname }) => indexname);
+
+    expect(indexNames).toEqual(
+      expect.arrayContaining([
+        "idx_activity_page",
+        "idx_activity_status_page",
+        "idx_activity_order_page",
+        "idx_activity_technician_visibility",
+      ]),
+    );
+  });
 });

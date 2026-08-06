@@ -28,6 +28,10 @@ WHERE schemaname = current_schema()
     'idx_order_technician_visibility',
     'idx_order_active_primary',
     'idx_order_history_page',
+    'idx_activity_page',
+    'idx_activity_status_page',
+    'idx_activity_order_page',
+    'idx_activity_technician_visibility',
     'uq_actividad_tecnico_responsable',
     'uq_pausa_actividad_abierta'
   )
@@ -55,13 +59,17 @@ BEGIN
   SELECT count(*) INTO missing_count
   FROM (VALUES
     ('ORDERS_VIEW_ALL'),
-    ('ORDERS_OPERATE_OWN')
+    ('ORDERS_OPERATE_OWN'),
+    ('ACTIVITIES_VIEW_ALL'),
+    ('ACTIVITIES_MANAGE'),
+    ('ACTIVITIES_CREATE_OWN'),
+    ('ACTIVITIES_OPERATE_OWN')
   ) AS expected(code)
   LEFT JOIN "permiso" AS permission_data
     ON permission_data."code" = expected.code
   WHERE permission_data."id" IS NULL;
   IF missing_count <> 0 THEN
-    RAISE EXCEPTION 'Faltan permisos nuevos de órdenes';
+    RAISE EXCEPTION 'Faltan permisos nuevos de órdenes o actividades';
   END IF;
 
   SELECT count(*) INTO missing_count
@@ -69,7 +77,15 @@ BEGIN
     ('ADMIN', 'ORDERS_VIEW_ALL'),
     ('ADMIN', 'ORDERS_OPERATE_OWN'),
     ('SUPERVISOR', 'ORDERS_VIEW_ALL'),
-    ('TECHNICIAN', 'ORDERS_OPERATE_OWN')
+    ('TECHNICIAN', 'ORDERS_OPERATE_OWN'),
+    ('ADMIN', 'ACTIVITIES_VIEW_ALL'),
+    ('ADMIN', 'ACTIVITIES_MANAGE'),
+    ('ADMIN', 'ACTIVITIES_CREATE_OWN'),
+    ('ADMIN', 'ACTIVITIES_OPERATE_OWN'),
+    ('SUPERVISOR', 'ACTIVITIES_VIEW_ALL'),
+    ('SUPERVISOR', 'ACTIVITIES_MANAGE'),
+    ('TECHNICIAN', 'ACTIVITIES_CREATE_OWN'),
+    ('TECHNICIAN', 'ACTIVITIES_OPERATE_OWN')
   ) AS expected(role_code, permission_code)
   LEFT JOIN "rol" AS role_data
     ON role_data."code" = expected.role_code
@@ -80,7 +96,7 @@ BEGIN
    AND role_permission."permiso_id" = permission_data."id"
   WHERE role_permission."rol_id" IS NULL;
   IF missing_count <> 0 THEN
-    RAISE EXCEPTION 'Faltan asignaciones de permisos de órdenes';
+    RAISE EXCEPTION 'Faltan asignaciones de permisos de órdenes o actividades';
   END IF;
 
   SELECT count(*) INTO actual_count
@@ -90,10 +106,14 @@ BEGIN
       'idx_order_open_schedule',
       'idx_order_technician_visibility',
       'idx_order_active_primary',
-      'idx_order_history_page'
+      'idx_order_history_page',
+      'idx_activity_page',
+      'idx_activity_status_page',
+      'idx_activity_order_page',
+      'idx_activity_technician_visibility'
     );
-  IF actual_count <> 4 THEN
-    RAISE EXCEPTION 'Se esperaban 4 índices de consulta de órdenes y existen %', actual_count;
+  IF actual_count <> 8 THEN
+    RAISE EXCEPTION 'Se esperaban 8 índices de consulta de órdenes y actividades y existen %', actual_count;
   END IF;
 
   SELECT count(*) INTO actual_count
@@ -162,7 +182,14 @@ JOIN "rol_permiso" AS role_permission
   ON role_permission."permiso_id" = permission_data."id"
 JOIN "rol" AS role_data
   ON role_data."id" = role_permission."rol_id"
-WHERE permission_data."code" IN ('ORDERS_VIEW_ALL', 'ORDERS_OPERATE_OWN')
+WHERE permission_data."code" IN (
+  'ORDERS_VIEW_ALL',
+  'ORDERS_OPERATE_OWN',
+  'ACTIVITIES_VIEW_ALL',
+  'ACTIVITIES_MANAGE',
+  'ACTIVITIES_CREATE_OWN',
+  'ACTIVITIES_OPERATE_OWN'
+)
 ORDER BY permission_data."code", role_data."code";
 
 SELECT enum_data.enumlabel AS order_status

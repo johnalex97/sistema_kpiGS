@@ -85,7 +85,7 @@ function anyPermissionTestApp() {
           if (principal) request.auth = principal;
           next();
         },
-        requireAnyPermission("ORDERS_MANAGE", "ORDERS_OPERATE_OWN"),
+        requireAnyPermission("ACTIVITIES_MANAGE", "ACTIVITIES_OPERATE_OWN"),
         (_request, response) => response.status(204).end(),
       );
     },
@@ -138,7 +138,7 @@ describe("authentication and authorization middleware", () => {
       .toBeTypeOf("function");
   });
 
-  it.each(["ORDERS_MANAGE", "ORDERS_OPERATE_OWN"])(
+  it.each(["ACTIVITIES_MANAGE", "ACTIVITIES_OPERATE_OWN"])(
     "allows either listed permission",
     async (permission) => {
       principal = { ...basePrincipal, permissions: [permission] };
