@@ -3,6 +3,12 @@ import type {
   ActivityAccessScope,
   ActivityListFilters,
 } from "./activities.types.js";
+import type {
+  ActivityActorContext,
+  CreateActivityInput,
+  ReplaceActivityTeamInput,
+  UpdateActivityInput,
+} from "./activities.types.js";
 
 export const activityTypeSelect = {
   id: true,
@@ -85,6 +91,26 @@ export interface ActivitiesReadRepository {
     id: string,
     scope: ActivityAccessScope,
   ): Promise<ActivityDetailRecord | null>;
+}
+
+export interface ActivitiesPendingMutationRepository {
+  createActivity(
+    input: CreateActivityInput,
+    actor: ActivityActorContext,
+    now: Date,
+  ): Promise<ActivityMutationResult>;
+  updateActivity(
+    id: string,
+    input: UpdateActivityInput,
+    actor: ActivityActorContext,
+    now: Date,
+  ): Promise<ActivityMutationResult>;
+  replaceActivityTeam(
+    id: string,
+    input: ReplaceActivityTeamInput,
+    actor: ActivityActorContext,
+    now: Date,
+  ): Promise<ActivityMutationResult>;
 }
 
 export type ActivityFailureKind =
