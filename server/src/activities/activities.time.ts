@@ -16,6 +16,12 @@ function isInvalidRange(range: TimeRange): boolean {
 }
 
 export function rangesOverlap(left: TimeRange, right: TimeRange): boolean {
+  if (
+    left.endedAt.getTime() <= left.startedAt.getTime() ||
+    right.endedAt.getTime() <= right.startedAt.getTime()
+  ) {
+    return false;
+  }
   return (
     left.startedAt.getTime() < right.endedAt.getTime() &&
     right.startedAt.getTime() < left.endedAt.getTime()

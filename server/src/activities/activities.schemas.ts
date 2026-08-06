@@ -10,6 +10,7 @@ const activityStatusSchema = z.enum([
 const activityRoleSchema = z.enum(["RESPONSIBLE", "PARTICIPANT"]);
 const positiveVersion = z.number().int().positive();
 const exactPercentage = /^(?:100\.00|0\.(?:0[1-9]|[1-9]\d)|[1-9]\d?\.\d{2})$/;
+const uuidSchema = z.uuid().transform((value) => value.toLowerCase());
 
 const requiredText = (maximum: number) => z.string().trim().min(1).max(maximum);
 const optionalText = (maximum: number) =>
@@ -32,7 +33,7 @@ const repeated = <T extends z.ZodType>(item: T) =>
 
 const teamMemberSchema = z
   .object({
-    technicianId: z.uuid(),
+    technicianId: uuidSchema,
     role: activityRoleSchema,
     participationPercentage: z.string().trim().regex(exactPercentage),
   })
@@ -61,13 +62,13 @@ const teamSchema = z
   });
 
 const parentFields = {
-  branchId: z.uuid().optional(),
-  orderId: z.uuid().optional(),
+  branchId: uuidSchema.optional(),
+  orderId: uuidSchema.optional(),
 };
 
 const createFields = {
   ...parentFields,
-  activityTypeId: z.uuid(),
+  activityTypeId: uuidSchema,
   description: requiredText(10_000),
   observations: optionalText(10_000),
   team: teamSchema.optional(),
@@ -86,17 +87,17 @@ function requireExactlyOneParent(
   }
 }
 
-export const activityIdSchema = z.object({ activityId: z.uuid() }).strict();
+export const activityIdSchema = z.object({ activityId: uuidSchema }).strict();
 
 export const activityListQuerySchema = z
   .object({
     search: z.string().trim().min(1).max(100).optional(),
     status: repeated(activityStatusSchema).optional(),
-    activityTypeId: z.uuid().optional(),
-    clientId: z.uuid().optional(),
-    branchId: z.uuid().optional(),
-    orderId: z.uuid().optional(),
-    technicianId: z.uuid().optional(),
+    activityTypeId: uuidSchema.optional(),
+    clientId: uuidSchema.optional(),
+    branchId: uuidSchema.optional(),
+    orderId: uuidSchema.optional(),
+    technicianId: uuidSchema.optional(),
     startedFrom: isoDate.optional(),
     startedTo: isoDate.optional(),
     page: z.coerce.number().int().min(1).default(1),
@@ -143,7 +144,7 @@ export function manualActivitySchema(now: () => Date) {
 export const updateActivitySchema = z
   .object({
     version: positiveVersion,
-    activityTypeId: z.uuid().optional(),
+    activityTypeId: uuidSchema.optional(),
     description: requiredText(10_000).optional(),
     observations: nullableText(10_000),
   })
@@ -178,7 +179,7 @@ export const adjustActivitySchema = z
   .object({
     version: positiveVersion,
     reason: requiredText(500),
-    activityTypeId: z.uuid().optional(),
+    activityTypeId: uuidSchema.optional(),
     description: requiredText(10_000).optional(),
     observations: nullableText(10_000),
     result: requiredText(10_000).optional(),

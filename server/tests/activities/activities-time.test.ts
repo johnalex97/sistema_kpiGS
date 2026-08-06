@@ -11,6 +11,8 @@ describe("activity time rules", () => {
   it("uses [start, end) boundaries for adjacent intervals", () => {
     expect(rangesOverlap(range(0, 10), range(10, 20))).toBe(false);
     expect(rangesOverlap(range(0, 10), range(9, 20))).toBe(true);
+    expect(rangesOverlap(range(5, 5), range(0, 10))).toBe(false);
+    expect(rangesOverlap(range(0, 10), range(5, 5))).toBe(false);
   });
 
   it("subtracts sorted multiple pauses and floors only after raw subtraction", () => {

@@ -324,7 +324,7 @@ Expected: module-not-found failures.
 export function transitionActivity(
   current: EstadoActividad,
   command: ActivityCommand,
-): EstadoActividad;
+): EstadoActividad | null;
 
 export interface TimeRange { startedAt: Date; endedAt: Date }
 export interface ActivityMinutes {

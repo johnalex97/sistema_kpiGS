@@ -23,6 +23,31 @@ describe("activity schemas", () => {
     expect(activityIdSchema.safeParse({ activityId, extra: true }).success).toBe(false);
   });
 
+  it("normalizes public UUIDs and rejects case-variant duplicate technicians", () => {
+    const canonicalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const upperTechnicianId = canonicalId.toUpperCase();
+
+    expect(activityIdSchema.parse({ activityId: upperTechnicianId }).activityId).toBe(canonicalId);
+    expect(
+      createActivitySchema.safeParse({
+        branchId,
+        activityTypeId,
+        description: "Actividad de prueba",
+        team: [
+          { technicianId: canonicalId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+          { technicianId: upperTechnicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
+        ],
+      }).success,
+    ).toBe(false);
+    const parsed = createActivitySchema.parse({
+      branchId,
+      activityTypeId,
+      description: "Actividad de prueba",
+      team: [{ technicianId: upperTechnicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+    });
+    expect(parsed.team?.[0]?.technicianId).toBe(canonicalId);
+  });
+
   it("defaults activity pagination to page 1 and 25 items with a maximum of 100", () => {
     expect(activityListQuerySchema.parse({})).toMatchObject({ page: 1, pageSize: 25 });
     expect(activityListQuerySchema.safeParse({ pageSize: 101 }).success).toBe(false);
