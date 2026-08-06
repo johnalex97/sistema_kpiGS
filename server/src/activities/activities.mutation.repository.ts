@@ -22,7 +22,7 @@ import type {
 const transactionOptions = { isolationLevel: Prisma.TransactionIsolationLevel.Serializable } as const;
 const serializableAttempts = 3;
 
-async function runSerializableTransaction<T>(
+export async function runSerializableTransaction<T>(
   database: PrismaClient,
   operation: (transaction: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
@@ -39,7 +39,7 @@ async function runSerializableTransaction<T>(
   throw new Error("Unreachable serializable transaction state");
 }
 
-async function loadActivity(
+export async function loadActivity(
   transaction: Prisma.TransactionClient,
   id: string,
 ): Promise<ActivityDetailRecord | null> {
@@ -66,13 +66,16 @@ function auditSnapshot(activity: ActivityDetailRecord) {
   };
 }
 
-async function writeAudit(
+export async function writeActivityAudit(
   transaction: Prisma.TransactionClient,
   action:
     | "ACTIVITY_CREATED"
     | "ACTIVITY_UPDATED"
     | "ACTIVITY_TEAM_UPDATED"
-    | "ACTIVITY_MANUAL_RECORDED",
+    | "ACTIVITY_MANUAL_RECORDED"
+    | "ACTIVITY_STARTED"
+    | "ACTIVITY_PAUSED"
+    | "ACTIVITY_RESUMED",
   activity: ActivityDetailRecord,
   actor: ActivityActorContext,
   now: Date,
@@ -98,7 +101,7 @@ export function planTechnicianLockIds(technicianIds: readonly string[]): string[
   return [...new Set(technicianIds)].sort((left, right) => left.localeCompare(right));
 }
 
-async function lockTechnicians(
+export async function lockTechnicians(
   transaction: Prisma.TransactionClient,
   technicianIds: readonly string[],
 ): Promise<void> {
@@ -220,7 +223,7 @@ async function createManualActivity(
   });
   const detail = await loadActivity(transaction, activity.id);
   if (!detail) throw new Error("Created manual activity could not be hydrated");
-  await writeAudit(
+  await writeActivityAudit(
     transaction,
     "ACTIVITY_MANUAL_RECORDED",
     detail,
@@ -260,7 +263,7 @@ async function createActivity(
   });
   const detail = await loadActivity(transaction, activity.id);
   if (!detail) throw new Error("Created activity could not be hydrated");
-  await writeAudit(transaction, "ACTIVITY_CREATED", detail, actor, now);
+  await writeActivityAudit(transaction, "ACTIVITY_CREATED", detail, actor, now);
   return { kind: "CREATED", activity: detail };
 }
 
@@ -291,7 +294,7 @@ async function updateActivity(
   if (changed.count !== 1) return { kind: "VERSION_CONFLICT" };
   const detail = await loadActivity(transaction, id);
   if (!detail) throw new Error("Updated activity could not be hydrated");
-  await writeAudit(transaction, "ACTIVITY_UPDATED", detail, actor, now, before);
+  await writeActivityAudit(transaction, "ACTIVITY_UPDATED", detail, actor, now, before);
   return { kind: "UPDATED", activity: detail };
 }
 
@@ -328,7 +331,7 @@ async function replaceActivityTeam(
   });
   const detail = await loadActivity(transaction, id);
   if (!detail) throw new Error("Updated activity team could not be hydrated");
-  await writeAudit(transaction, "ACTIVITY_TEAM_UPDATED", detail, actor, now, before);
+  await writeActivityAudit(transaction, "ACTIVITY_TEAM_UPDATED", detail, actor, now, before);
   return { kind: "UPDATED", activity: detail };
 }
 

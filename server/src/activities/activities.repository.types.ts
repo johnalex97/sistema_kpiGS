@@ -7,8 +7,10 @@ import type {
   ActivityActorContext,
   CreateActivityInput,
   ManualActivityInput,
+  PauseActivityInput,
   ReplaceActivityTeamInput,
   UpdateActivityInput,
+  ActivityVersionInput,
 } from "./activities.types.js";
 
 export const activityTypeSelect = {
@@ -122,6 +124,12 @@ export interface ActivitiesManualMutationRepository {
   ): Promise<ActivityMutationResult>;
 }
 
+export interface ActivitiesTimerRepository {
+  startActivity(id: string, input: ActivityVersionInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
+  pauseActivity(id: string, input: PauseActivityInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
+  resumeActivity(id: string, input: ActivityVersionInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
+}
+
 export interface ActivitiesMutationRepository extends
   ActivitiesPendingMutationRepository,
   ActivitiesManualMutationRepository {}
@@ -136,7 +144,8 @@ export type ActivityFailureKind =
   | "TIME_OVERLAP"
   | "INVALID_PARTICIPATION_TOTAL"
   | "TECHNICIAN_NOT_ASSIGNED_TO_ORDER"
-  | "RESOURCE_INACTIVE";
+  | "RESOURCE_INACTIVE"
+  | "FORBIDDEN";
 
 export type ActivityMutationResult =
   | { kind: "CREATED" | "UPDATED"; activity: ActivityDetailRecord }
