@@ -94,11 +94,14 @@ export async function validateActivityContext(
     return { kind: "RESOURCE_INACTIVE" };
   }
 
-  const requestedTeam = actor.technicianId === null
+  const selfOnlyActor =
+    actor.technicianId !== null &&
+    !actor.permissions.includes("ACTIVITIES_MANAGE");
+  const requestedTeam = !selfOnlyActor
     ? input.team ?? (orderAssignments.find(({ role }) => role === "PRIMARY")
       ? [{ technicianId: orderAssignments.find(({ role }) => role === "PRIMARY")!.tecnicoId, role: "RESPONSIBLE" as const, participationPercentage: "100.00" }]
       : [])
-    : [{ technicianId: actor.technicianId, role: "RESPONSIBLE" as const, participationPercentage: "100.00" }];
+    : [{ technicianId: actor.technicianId!, role: "RESPONSIBLE" as const, participationPercentage: "100.00" }];
   const team = validTeam(requestedTeam);
   if (!team) return invalid();
   const technicianIds = team.map(({ technicianId }) => technicianId);

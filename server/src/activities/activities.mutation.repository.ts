@@ -15,6 +15,24 @@ import type {
 } from "./activities.types.js";
 
 const transactionOptions = { isolationLevel: Prisma.TransactionIsolationLevel.Serializable } as const;
+const serializableAttempts = 3;
+
+async function runSerializableTransaction<T>(
+  database: PrismaClient,
+  operation: (transaction: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 1; attempt <= serializableAttempts; attempt += 1) {
+    try {
+      return await database.$transaction(operation, transactionOptions);
+    } catch (error) {
+      const retryable =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034";
+      if (!retryable || attempt === serializableAttempts) throw error;
+    }
+  }
+  throw new Error("Unreachable serializable transaction state");
+}
 
 async function loadActivity(
   transaction: Prisma.TransactionClient,
@@ -169,8 +187,17 @@ export function createActivitiesMutationRepository(
   database: PrismaClient,
 ): ActivitiesPendingMutationRepository {
   return {
-    createActivity: (input, actor, now) => database.$transaction((transaction) => createActivity(transaction, input, actor, now), transactionOptions),
-    updateActivity: (id, input, actor, now) => database.$transaction((transaction) => updateActivity(transaction, id, input, actor, now), transactionOptions),
-    replaceActivityTeam: (id, input, actor, now) => database.$transaction((transaction) => replaceActivityTeam(transaction, id, input, actor, now), transactionOptions),
+    createActivity: (input, actor, now) => runSerializableTransaction(
+      database,
+      (transaction) => createActivity(transaction, input, actor, now),
+    ),
+    updateActivity: (id, input, actor, now) => runSerializableTransaction(
+      database,
+      (transaction) => updateActivity(transaction, id, input, actor, now),
+    ),
+    replaceActivityTeam: (id, input, actor, now) => runSerializableTransaction(
+      database,
+      (transaction) => replaceActivityTeam(transaction, id, input, actor, now),
+    ),
   };
 }
