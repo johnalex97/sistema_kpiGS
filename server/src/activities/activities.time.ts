@@ -64,6 +64,9 @@ export function calculateActivityMinutes(
   const productiveSegments: TimeRange[] = [];
   let cursor = startedAt;
   for (const pause of sortedPauses) {
+    if (pause.startedAt.getTime() === pause.endedAt.getTime()) {
+      continue;
+    }
     if (cursor.getTime() < pause.startedAt.getTime()) {
       productiveSegments.push({ startedAt: cursor, endedAt: pause.startedAt });
     }

@@ -34,6 +34,18 @@ describe("activity time rules", () => {
     ]);
   });
 
+  it("does not move the productive cursor backward for an empty pause", () => {
+    const result = calculateActivityMinutes(at(0), at(10), [range(1, 5), range(3, 3)]);
+
+    expect(result.productiveSegments.map((segment) => [
+      segment.startedAt.toISOString(),
+      segment.endedAt.toISOString(),
+    ])).toEqual([
+      ["2026-08-06T12:00:00.000Z", "2026-08-06T12:01:00.000Z"],
+      ["2026-08-06T12:05:00.000Z", "2026-08-06T12:10:00.000Z"],
+    ]);
+  });
+
   it("rejects inverted, outside, overlapping, and negative productive ranges", () => {
     expect(() => calculateActivityMinutes(at(10), at(0), [])).toThrow();
     expect(() => calculateActivityMinutes(at(0), at(10), [range(9, 11)])).toThrow();
