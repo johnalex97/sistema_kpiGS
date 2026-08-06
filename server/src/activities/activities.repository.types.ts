@@ -6,6 +6,7 @@ import type {
 import type {
   ActivityActorContext,
   CreateActivityInput,
+  ManualActivityInput,
   ReplaceActivityTeamInput,
   UpdateActivityInput,
 } from "./activities.types.js";
@@ -112,6 +113,18 @@ export interface ActivitiesPendingMutationRepository {
     now: Date,
   ): Promise<ActivityMutationResult>;
 }
+
+export interface ActivitiesManualMutationRepository {
+  createManualActivity(
+    input: ManualActivityInput,
+    actor: ActivityActorContext,
+    now: Date,
+  ): Promise<ActivityMutationResult>;
+}
+
+export interface ActivitiesMutationRepository extends
+  ActivitiesPendingMutationRepository,
+  ActivitiesManualMutationRepository {}
 
 export type ActivityFailureKind =
   | "ACTIVITY_NOT_FOUND"

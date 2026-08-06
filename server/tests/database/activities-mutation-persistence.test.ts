@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { createDatabaseClient } from "../../src/config/database.js";
 import { createActivitiesMutationRepository } from "../../src/activities/activities.mutation.repository.js";
 import type { ActivityMutationResult } from "../../src/activities/activities.repository.types.js";
-import type { ActivityActorContext, CreateActivityInput } from "../../src/activities/activities.types.js";
+import type { ActivityActorContext, CreateActivityInput, ManualActivityInput } from "../../src/activities/activities.types.js";
 import { database, disconnectTestDatabase } from "./database-test-context.js";
 
 const now = new Date("2026-08-06T12:00:00.000Z");
@@ -28,6 +28,20 @@ async function waitForActivityUpdateWaiters(expected: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`Expected ${expected} activity-update lock waiters`);
+}
+
+async function waitForTechnicianLockWaiters(expected: number): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const rows = await database.$queryRaw<Array<{ waiting: bigint }>>`
+      SELECT COUNT(*) AS "waiting"
+      FROM pg_locks
+      WHERE granted = false AND locktype = 'advisory'
+    `;
+    if (Number(rows[0]?.waiting ?? 0) >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Expected ${expected} technician-lock waiters`);
 }
 
 interface Fixture {
@@ -68,6 +82,61 @@ function orderInput(fixture: Fixture, overrides: Partial<CreateActivityInput> = 
   };
 }
 
+function manualInput(fixture: Fixture, overrides: Partial<ManualActivityInput> = {}): ManualActivityInput {
+  const input: ManualActivityInput = {
+    ...activityInput(fixture),
+    startedAt: new Date("2026-08-06T10:00:00.000Z"),
+    endedAt: new Date("2026-08-06T11:00:00.000Z"),
+    result: "Trabajo terminado",
+    justification: "Registro posterior por caida de conectividad",
+    ...overrides,
+  };
+  if (input.orderId !== undefined) delete input.branchId;
+  return input;
+}
+
+async function createHistoricalActivity(
+  fixture: Fixture,
+  options: {
+    startedAt: Date;
+    endedAt: Date;
+    team?: ManualActivityInput["team"];
+    status?: "COMPLETED" | "IN_PROGRESS";
+    pauses?: Array<{ startedAt: Date; endedAt: Date }>;
+  },
+): Promise<string> {
+  const activity = await database.actividad.create({
+    data: {
+      sucursalId: fixture.branchId,
+      tipoActividadId: fixture.activityTypeId,
+      status: options.status ?? "COMPLETED",
+      description: "Actividad historica",
+      result: "Completada",
+      startedAt: options.startedAt,
+      ...(options.status !== "IN_PROGRESS" && { endedAt: options.endedAt }),
+      productiveMinutes: 1,
+      tecnicos: {
+        create: (options.team ?? [{
+          technicianId: fixture.leaderId,
+          role: "RESPONSIBLE",
+          participationPercentage: "100.00",
+        }]).map((member) => ({
+          tecnicoId: member.technicianId,
+          role: member.role,
+          participationPercentage: member.participationPercentage,
+          startedAt: options.startedAt,
+          ...(options.status !== "IN_PROGRESS" && { endedAt: options.endedAt }),
+        })),
+      },
+      ...(options.pauses !== undefined && {
+        pausas: { create: options.pauses.map((pause) => ({ ...pause, reason: "Pausa historica" })) },
+      }),
+    },
+    select: { id: true },
+  });
+  return activity.id;
+}
+
 async function createFixture(): Promise<Fixture> {
   const suffix = randomUUID().slice(0, 8);
   const ids = {
@@ -101,14 +170,15 @@ async function createFixture(): Promise<Fixture> {
     { id: ids.cancelledOrderId, orderNumber: `AM-${suffix}-2`, sucursalId: ids.branchId, tipoServicioId: ids.serviceTypeId, reportedProblem: "Equipo", status: "CANCELLED" },
   ] });
   await database.ordenTecnico.createMany({ data: [
-    { ordenId: ids.orderId, tecnicoId: ids.leaderId, role: "PRIMARY" },
-    { ordenId: ids.orderId, tecnicoId: ids.technicianId, role: "SUPPORT" },
+    { ordenId: ids.orderId, tecnicoId: ids.leaderId, role: "PRIMARY", assignedAt: new Date("2026-08-01T00:00:00.000Z") },
+    { ordenId: ids.orderId, tecnicoId: ids.technicianId, role: "SUPPORT", assignedAt: new Date("2026-08-01T00:00:00.000Z") },
   ] });
   return { ...ids, actor: { userId: user.id, technicianId: null, permissions: ["ACTIVITIES_MANAGE"], requestId: randomUUID() } };
 }
 
 async function removeFixture(fixture: Fixture, activityIds: string[]): Promise<void> {
   await database.auditoria.deleteMany({ where: { entity: "Actividad", entityId: { in: activityIds } } });
+  await database.pausaActividad.deleteMany({ where: { actividadId: { in: activityIds } } });
   await database.actividadTecnico.deleteMany({ where: { actividadId: { in: activityIds } } });
   await database.actividad.deleteMany({ where: { id: { in: activityIds } } });
   await database.ordenTecnico.deleteMany({ where: { ordenId: { in: [fixture.orderId, fixture.cancelledOrderId] } } });
@@ -126,7 +196,7 @@ describe("activities pending mutation repository", () => {
   let fixture: Fixture;
   const activityIds: string[] = [];
   beforeAll(async () => { fixture = await createFixture(); });
-  afterEach(async () => { await database.auditoria.deleteMany({ where: { entity: "Actividad", entityId: { in: activityIds } } }); await database.actividadTecnico.deleteMany({ where: { actividadId: { in: activityIds } } }); await database.actividad.deleteMany({ where: { id: { in: activityIds } } }); activityIds.length = 0; vi.restoreAllMocks(); });
+  afterEach(async () => { await database.auditoria.deleteMany({ where: { entity: "Actividad", entityId: { in: activityIds } } }); await database.pausaActividad.deleteMany({ where: { actividadId: { in: activityIds } } }); await database.actividadTecnico.deleteMany({ where: { actividadId: { in: activityIds } } }); await database.actividad.deleteMany({ where: { id: { in: activityIds } } }); activityIds.length = 0; vi.restoreAllMocks(); });
   afterAll(async () => { await removeFixture(fixture, activityIds); });
 
   it("creates leader individual and group activities with exact team credits", async () => {
@@ -144,6 +214,209 @@ describe("activities pending mutation repository", () => {
     expect(group.kind).toBe("CREATED");
     if (group.kind !== "CREATED") return;
     activityIds.push(group.activity.id);
+  });
+
+  it("records a manual completed activity with productive minutes, team timestamps, and its justification audit", async () => {
+    const repository = createActivitiesMutationRepository(database);
+    const result = await repository.createManualActivity(manualInput(fixture), fixture.actor, now);
+    expect(result).toMatchObject({
+      kind: "CREATED",
+      activity: {
+        status: "COMPLETED",
+        startedAt: new Date("2026-08-06T10:00:00.000Z"),
+        endedAt: new Date("2026-08-06T11:00:00.000Z"),
+        pausedMinutes: 0,
+        productiveMinutes: 60,
+        version: 1,
+      },
+    });
+    if (result.kind !== "CREATED") return;
+    activityIds.push(result.activity.id);
+    expect(result.activity.tecnicos).toMatchObject([{
+      tecnico: { id: fixture.leaderId },
+      startedAt: new Date("2026-08-06T10:00:00.000Z"),
+      endedAt: new Date("2026-08-06T11:00:00.000Z"),
+    }]);
+    await expect(database.auditoria.findFirstOrThrow({
+      where: { entity: "Actividad", entityId: result.activity.id },
+      select: { action: true, reason: true },
+    })).resolves.toEqual({
+      action: "ACTIVITY_MANUAL_RECORDED",
+      reason: "Registro posterior por caida de conectividad",
+    });
+  });
+
+  it("normalizes a technician manual entry to their own one-member team", async () => {
+    const result = await createActivitiesMutationRepository(database).createManualActivity(
+      manualInput(fixture, {
+        team: [{ technicianId: fixture.leaderId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+      }),
+      { ...fixture.actor, technicianId: fixture.technicianId, permissions: ["ACTIVITIES_CREATE_OWN"] },
+      now,
+    );
+    expect(result).toMatchObject({
+      kind: "CREATED",
+      activity: { tecnicos: [{ tecnico: { id: fixture.technicianId }, role: "RESPONSIBLE" }] },
+    });
+    if (result.kind === "CREATED") activityIds.push(result.activity.id);
+  });
+
+  it("accepts exact one-minute and twenty-four-hour manual ranges and rejects future, inverted, and overlong ranges", async () => {
+    const repository = createActivitiesMutationRepository(database);
+    const minute = await repository.createManualActivity(manualInput(fixture, {
+      startedAt: new Date("2026-08-05T12:00:00.000Z"), endedAt: new Date("2026-08-05T12:01:00.000Z"),
+    }), fixture.actor, now);
+    const day = await repository.createManualActivity(manualInput(fixture, {
+      startedAt: new Date("2026-08-05T12:00:00.000Z"), endedAt: now,
+      team: [{ technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+    }), fixture.actor, now);
+    expect(minute).toMatchObject({ kind: "CREATED", activity: { productiveMinutes: 1 } });
+    expect(day).toMatchObject({ kind: "CREATED", activity: { productiveMinutes: 1440 } });
+    if (minute.kind === "CREATED") activityIds.push(minute.activity.id);
+    if (day.kind === "CREATED") activityIds.push(day.activity.id);
+    for (const input of [
+      manualInput(fixture, { endedAt: new Date("2026-08-06T12:00:00.001Z") }),
+      manualInput(fixture, { startedAt: new Date("2026-08-06T11:00:00.000Z"), endedAt: new Date("2026-08-06T10:00:00.000Z") }),
+      manualInput(fixture, { startedAt: new Date("2026-08-05T11:59:59.999Z"), endedAt: now }),
+    ]) {
+      await expect(repository.createManualActivity(input, fixture.actor, now)).resolves.toEqual({ kind: "INVALID_TEMPORAL_RANGE" });
+    }
+  });
+
+  it("rejects active timers and completed productive overlaps while allowing adjacency and a historical pause gap", async () => {
+    const activeId = await createHistoricalActivity(fixture, {
+      status: "IN_PROGRESS", startedAt: new Date("2026-08-06T09:00:00.000Z"), endedAt: now,
+    });
+    activityIds.push(activeId);
+    const repository = createActivitiesMutationRepository(database);
+    await expect(repository.createManualActivity(manualInput(fixture), fixture.actor, now)).resolves.toEqual({ kind: "ACTIVE_TIMER_EXISTS" });
+    await database.actividad.update({ where: { id: activeId }, data: { status: "CANCELLED" } });
+
+    const completedId = await createHistoricalActivity(fixture, {
+      startedAt: new Date("2026-08-06T08:00:00.000Z"), endedAt: new Date("2026-08-06T10:00:00.000Z"),
+    });
+    activityIds.push(completedId);
+    await expect(repository.createManualActivity(manualInput(fixture, {
+      startedAt: new Date("2026-08-06T09:00:00.000Z"), endedAt: new Date("2026-08-06T09:30:00.000Z"),
+    }), fixture.actor, now)).resolves.toEqual({ kind: "TIME_OVERLAP" });
+    const adjacent = await repository.createManualActivity(manualInput(fixture, {
+      startedAt: new Date("2026-08-06T10:00:00.000Z"), endedAt: new Date("2026-08-06T11:00:00.000Z"),
+    }), fixture.actor, now);
+    expect(adjacent.kind).toBe("CREATED");
+    if (adjacent.kind === "CREATED") activityIds.push(adjacent.activity.id);
+
+    const pausedId = await createHistoricalActivity(fixture, {
+      startedAt: new Date("2026-08-05T08:00:00.000Z"), endedAt: new Date("2026-08-05T12:00:00.000Z"),
+      team: [{ technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+      pauses: [{ startedAt: new Date("2026-08-05T10:00:00.000Z"), endedAt: new Date("2026-08-05T11:00:00.000Z") }],
+    });
+    activityIds.push(pausedId);
+    const pauseGap = await repository.createManualActivity(manualInput(fixture, {
+      startedAt: new Date("2026-08-05T10:00:00.000Z"), endedAt: new Date("2026-08-05T11:00:00.000Z"),
+      team: [{ technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+    }), fixture.actor, now);
+    expect(pauseGap.kind).toBe("CREATED");
+    if (pauseGap.kind === "CREATED") activityIds.push(pauseGap.activity.id);
+  });
+
+  it("detects a productive conflict for every member of a group and derives its order branch and active historical team", async () => {
+    const conflictId = await createHistoricalActivity(fixture, {
+      startedAt: new Date("2026-08-06T10:00:00.000Z"), endedAt: new Date("2026-08-06T11:00:00.000Z"),
+      team: [{ technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+    });
+    activityIds.push(conflictId);
+    const repository = createActivitiesMutationRepository(database);
+    await expect(repository.createManualActivity(manualInput(fixture, {
+      startedAt: new Date("2026-08-06T10:15:00.000Z"), endedAt: new Date("2026-08-06T10:45:00.000Z"),
+      team: [
+        { technicianId: fixture.leaderId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+        { technicianId: fixture.technicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
+      ],
+    }), fixture.actor, now)).resolves.toEqual({ kind: "TIME_OVERLAP" });
+    const ordered = await repository.createManualActivity(manualInput(fixture, {
+      orderId: fixture.orderId,
+      startedAt: new Date("2026-08-05T08:00:00.000Z"),
+      endedAt: new Date("2026-08-05T09:00:00.000Z"),
+      team: [
+        { technicianId: fixture.leaderId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+        { technicianId: fixture.technicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
+      ],
+    }), fixture.actor, now);
+    expect(ordered).toMatchObject({ kind: "CREATED", activity: { sucursal: { id: fixture.branchId }, orden: { id: fixture.orderId } } });
+    if (ordered.kind === "CREATED") activityIds.push(ordered.activity.id);
+    await database.ordenTecnico.update({
+      where: { ordenId_tecnicoId: { ordenId: fixture.orderId, tecnicoId: fixture.leaderId } },
+      data: { assignedAt: new Date("2026-08-05T07:00:00.000Z") },
+    });
+    await expect(repository.createManualActivity(manualInput(fixture, {
+      orderId: fixture.orderId,
+      startedAt: new Date("2026-08-05T05:00:00.000Z"),
+      endedAt: new Date("2026-08-05T06:00:00.000Z"),
+      team: [{ technicianId: fixture.leaderId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+    }), fixture.actor, now)).resolves.toEqual({ kind: "TECHNICIAN_NOT_ASSIGNED_TO_ORDER" });
+    await database.ordenTecnico.update({
+      where: { ordenId_tecnicoId: { ordenId: fixture.orderId, tecnicoId: fixture.leaderId } },
+      data: { assignedAt: new Date("2026-08-01T00:00:00.000Z") },
+    });
+  });
+
+  it("serializes overlapping manual writes behind sorted technician advisory locks", async () => {
+    const lockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const secondDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    let releaseLock: () => void = () => undefined;
+    let markLockAcquired: () => void = () => undefined;
+    const lockAcquired = new Promise<void>((resolve) => { markLockAcquired = resolve; });
+    const holdLock = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const lockTransaction = lockerDatabase.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fixture.leaderId}))`;
+      markLockAcquired();
+      await holdLock;
+    });
+    let first: Promise<ActivityMutationResult> | undefined;
+    let second: Promise<ActivityMutationResult> | undefined;
+    try {
+      await lockAcquired;
+      const input = manualInput(fixture, {
+        startedAt: new Date("2026-08-05T07:00:00.000Z"),
+        endedAt: new Date("2026-08-05T08:00:00.000Z"),
+        team: [
+          { technicianId: fixture.technicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
+          { technicianId: fixture.leaderId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+        ],
+      });
+      first = createActivitiesMutationRepository(database).createManualActivity(input, fixture.actor, now);
+      second = createActivitiesMutationRepository(secondDatabase).createManualActivity(input, fixture.actor, now);
+      await waitForTechnicianLockWaiters(2);
+      releaseLock();
+      await lockTransaction;
+      const results = await Promise.all([first, second]);
+      expect(results.map(({ kind }) => kind).sort()).toEqual(["CREATED", "TIME_OVERLAP"]);
+      const created = results.find((result) => result.kind === "CREATED");
+      if (created?.kind === "CREATED") activityIds.push(created.activity.id);
+      expect(await database.actividad.count({
+        where: {
+          sucursalId: fixture.branchId,
+          description: "Preparar equipo de red",
+          startedAt: new Date("2026-08-05T07:00:00.000Z"),
+          endedAt: new Date("2026-08-05T08:00:00.000Z"),
+        },
+      })).toBe(1);
+    } finally {
+      releaseLock();
+      await Promise.allSettled([lockTransaction, ...(first === undefined ? [] : [first]), ...(second === undefined ? [] : [second])]);
+      const persistedIds = await database.actividad.findMany({
+        where: {
+          sucursalId: fixture.branchId,
+          description: "Preparar equipo de red",
+          startedAt: new Date("2026-08-05T07:00:00.000Z"),
+          endedAt: new Date("2026-08-05T08:00:00.000Z"),
+        },
+        select: { id: true },
+      });
+      activityIds.push(...persistedIds.map(({ id }) => id).filter((id) => !activityIds.includes(id)));
+      await lockerDatabase.$disconnect();
+      await secondDatabase.$disconnect();
+    }
   });
 
   it("normalizes an ACTIVITIES_CREATE_OWN technician to an implicit 100 percent self team", async () => {
@@ -221,7 +494,7 @@ describe("activities pending mutation repository", () => {
       [{ technicianId: fixture.leaderId, role: "RESPONSIBLE" as const, participationPercentage: "50.00" }, { technicianId: fixture.technicianId, role: "RESPONSIBLE" as const, participationPercentage: "50.00" }],
       [{ technicianId: fixture.leaderId, role: "RESPONSIBLE" as const, participationPercentage: "99.99" }],
     ]) await expect(repository.createActivity(activityInput(fixture, { team }), fixture.actor, now)).resolves.toEqual({ kind: "INVALID_PARTICIPATION_TOTAL" });
-    expect(await database.actividad.count({ where: { description: "Preparar equipo de red" } })).toBe(0);
+    expect(await database.actividad.count({ where: { sucursalId: fixture.branchId, description: "Preparar equipo de red" } })).toBe(0);
   });
 
   it("edits and replaces only pending activities with one version increment and correct audit actions", async () => {
@@ -340,7 +613,7 @@ describe("activities pending mutation repository", () => {
     };
     const failedCreate = createActivitiesMutationRepository(failedCreateDatabase as unknown as typeof database);
     await expect(failedCreate.createActivity(activityInput(fixture), fixture.actor, now)).rejects.toThrow("audit failed");
-    expect(await database.actividad.count({ where: { description: "Preparar equipo de red" } })).toBe(0);
+    expect(await database.actividad.count({ where: { sucursalId: fixture.branchId, description: "Preparar equipo de red" } })).toBe(0);
 
     const stableRepository = createActivitiesMutationRepository(database);
     const created = await stableRepository.createActivity(activityInput(fixture), fixture.actor, now);

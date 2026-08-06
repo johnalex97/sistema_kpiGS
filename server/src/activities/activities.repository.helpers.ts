@@ -75,14 +75,19 @@ export async function validateActivityContext(
 
   let branchId: string;
   let orderId: string | null = null;
-  let orderAssignments: Array<{ tecnicoId: string; role: "PRIMARY" | "SUPPORT" }> = [];
+  let orderAssignments: Array<{
+    tecnicoId: string;
+    role: "PRIMARY" | "SUPPORT";
+    assignedAt: Date;
+    unassignedAt: Date | null;
+  }> = [];
   if (input.orderId !== undefined) {
     const order = await transaction.ordenTrabajo.findFirst({
       where: {
         id: input.orderId, deletedAt: null, status: { not: "CANCELLED" },
         sucursal: { isActive: true, deletedAt: null, cliente: { isActive: true, deletedAt: null } },
       },
-      select: { sucursalId: true, tecnicos: { where: { unassignedAt: null }, select: { tecnicoId: true, role: true } } },
+      select: { sucursalId: true, tecnicos: { select: { tecnicoId: true, role: true, assignedAt: true, unassignedAt: true } } },
     });
     if (!order) return { kind: "RESOURCE_INACTIVE" };
     branchId = order.sucursalId;
@@ -94,19 +99,29 @@ export async function validateActivityContext(
     return { kind: "RESOURCE_INACTIVE" };
   }
 
+  const historicalManualRange = "startedAt" in input
+    ? { startedAt: input.startedAt, endedAt: input.endedAt }
+    : undefined;
+  const validOrderAssignments = historicalManualRange === undefined
+    ? orderAssignments.filter(({ unassignedAt }) => unassignedAt === null)
+    : orderAssignments.filter(({ assignedAt, unassignedAt }) => (
+      assignedAt.getTime() <= historicalManualRange.startedAt.getTime()
+      && (unassignedAt === null || unassignedAt.getTime() >= historicalManualRange.endedAt.getTime())
+    ));
+
   const selfOnlyActor =
     actor.technicianId !== null &&
     !actor.permissions.includes("ACTIVITIES_MANAGE");
   const requestedTeam = !selfOnlyActor
-    ? input.team ?? (orderAssignments.find(({ role }) => role === "PRIMARY")
-      ? [{ technicianId: orderAssignments.find(({ role }) => role === "PRIMARY")!.tecnicoId, role: "RESPONSIBLE" as const, participationPercentage: "100.00" }]
+    ? input.team ?? (validOrderAssignments.find(({ role }) => role === "PRIMARY")
+      ? [{ technicianId: validOrderAssignments.find(({ role }) => role === "PRIMARY")!.tecnicoId, role: "RESPONSIBLE" as const, participationPercentage: "100.00" }]
       : [])
     : [{ technicianId: actor.technicianId!, role: "RESPONSIBLE" as const, participationPercentage: "100.00" }];
   const team = validTeam(requestedTeam);
   if (!team) return invalid();
   const technicianIds = team.map(({ technicianId }) => technicianId);
   if (!(await activeTechnicians(transaction, technicianIds))) return { kind: "RESOURCE_INACTIVE" };
-  if (orderId !== null && technicianIds.some((technicianId) => !orderAssignments.some((assignment) => assignment.tecnicoId === technicianId))) {
+  if (orderId !== null && technicianIds.some((technicianId) => !validOrderAssignments.some((assignment) => assignment.tecnicoId === technicianId))) {
     return { kind: "TECHNICIAN_NOT_ASSIGNED_TO_ORDER" };
   }
   return { branchId, orderId, team };

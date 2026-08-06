@@ -1,15 +1,20 @@
 import { Prisma } from "../../generated/prisma/client.js";
 import type { PrismaClient } from "../../generated/prisma/client.js";
 import { validateActivityContext } from "./activities.repository.helpers.js";
+import {
+  calculateActivityMinutes,
+  overlapsAny,
+} from "./activities.time.js";
 import { activityDetailSelect } from "./activities.repository.types.js";
 import type {
-  ActivitiesPendingMutationRepository,
+  ActivitiesMutationRepository,
   ActivityDetailRecord,
   ActivityMutationResult,
 } from "./activities.repository.types.js";
 import type {
   ActivityActorContext,
   CreateActivityInput,
+  ManualActivityInput,
   ReplaceActivityTeamInput,
   UpdateActivityInput,
 } from "./activities.types.js";
@@ -63,11 +68,16 @@ function auditSnapshot(activity: ActivityDetailRecord) {
 
 async function writeAudit(
   transaction: Prisma.TransactionClient,
-  action: "ACTIVITY_CREATED" | "ACTIVITY_UPDATED" | "ACTIVITY_TEAM_UPDATED",
+  action:
+    | "ACTIVITY_CREATED"
+    | "ACTIVITY_UPDATED"
+    | "ACTIVITY_TEAM_UPDATED"
+    | "ACTIVITY_MANUAL_RECORDED",
   activity: ActivityDetailRecord,
   actor: ActivityActorContext,
   now: Date,
   before?: ActivityDetailRecord,
+  reason?: string,
 ): Promise<void> {
   await transaction.auditoria.create({
     data: {
@@ -77,10 +87,145 @@ async function writeAudit(
       entityId: activity.id,
       ...(before !== undefined && { beforeData: auditSnapshot(before) }),
       afterData: auditSnapshot(activity),
+      ...(reason !== undefined && { reason }),
       occurredAt: now,
       requestId: actor.requestId,
     },
   });
+}
+
+async function lockTechnicians(
+  transaction: Prisma.TransactionClient,
+  technicianIds: readonly string[],
+): Promise<void> {
+  for (const technicianId of [...new Set(technicianIds)].sort((left, right) => left.localeCompare(right))) {
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${technicianId}))`;
+  }
+}
+
+async function findProductiveSegments(
+  transaction: Prisma.TransactionClient,
+  technicianId: string,
+  range: { startedAt: Date; endedAt: Date },
+  excludeActivityId?: string,
+): Promise<Array<{ startedAt: Date; endedAt: Date }>> {
+  const memberships = await transaction.actividadTecnico.findMany({
+    where: {
+      tecnicoId: technicianId,
+      actividad: {
+        deletedAt: null,
+        status: { not: "CANCELLED" },
+        startedAt: { lt: range.endedAt },
+        endedAt: { gt: range.startedAt },
+        ...(excludeActivityId !== undefined && { id: { not: excludeActivityId } }),
+      },
+    },
+    select: {
+      actividad: {
+        select: {
+          startedAt: true,
+          endedAt: true,
+          pausas: {
+            where: { endedAt: { not: null } },
+            select: { startedAt: true, endedAt: true },
+          },
+        },
+      },
+    },
+  });
+  return memberships.flatMap(({ actividad }) => {
+    if (actividad.startedAt === null || actividad.endedAt === null) return [];
+    return calculateActivityMinutes(
+      actividad.startedAt,
+      actividad.endedAt,
+      actividad.pausas.flatMap((pause) => pause.endedAt === null ? [] : [{
+        startedAt: pause.startedAt,
+        endedAt: pause.endedAt,
+      }]),
+    ).productiveSegments;
+  });
+}
+
+function validManualRange(input: ManualActivityInput, now: Date): boolean {
+  const startedAt = input.startedAt.getTime();
+  const endedAt = input.endedAt.getTime();
+  const maximumDuration = 24 * 60 * 60 * 1_000;
+  return Number.isFinite(startedAt)
+    && Number.isFinite(endedAt)
+    && startedAt < endedAt
+    && endedAt <= now.getTime()
+    && startedAt <= now.getTime()
+    && endedAt - startedAt >= 60_000
+    && endedAt - startedAt <= maximumDuration;
+}
+
+async function createManualActivity(
+  transaction: Prisma.TransactionClient,
+  input: ManualActivityInput,
+  actor: ActivityActorContext,
+  now: Date,
+): Promise<ActivityMutationResult> {
+  if (!validManualRange(input, now)) return { kind: "INVALID_TEMPORAL_RANGE" };
+  const initialContext = await validateActivityContext(transaction, input, actor);
+  if ("kind" in initialContext) return initialContext;
+  await lockTechnicians(transaction, initialContext.team.map(({ technicianId }) => technicianId));
+  const context = await validateActivityContext(transaction, input, actor);
+  if ("kind" in context) return context;
+  const range = { startedAt: input.startedAt, endedAt: input.endedAt };
+  for (const { technicianId } of context.team) {
+    const activeTimer = await transaction.actividadTecnico.findFirst({
+      where: {
+        tecnicoId: technicianId,
+        actividad: { deletedAt: null, status: "IN_PROGRESS" },
+      },
+      select: { id: true },
+    });
+    if (activeTimer) return { kind: "ACTIVE_TIMER_EXISTS" };
+    if (overlapsAny(range, await findProductiveSegments(transaction, technicianId, range))) {
+      return { kind: "TIME_OVERLAP" };
+    }
+  }
+  const minutes = calculateActivityMinutes(input.startedAt, input.endedAt, []);
+  const activity = await transaction.actividad.create({
+    data: {
+      sucursalId: context.branchId,
+      ordenId: context.orderId,
+      tipoActividadId: input.activityTypeId,
+      status: "COMPLETED",
+      description: input.description,
+      ...(input.observations !== undefined && { observations: input.observations }),
+      result: input.result,
+      startedAt: input.startedAt,
+      endedAt: input.endedAt,
+      pausedMinutes: minutes.pausedMinutes,
+      productiveMinutes: minutes.productiveMinutes,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+      tecnicos: {
+        create: context.team.map((member) => ({
+          tecnicoId: member.technicianId,
+          role: member.role,
+          participationPercentage: member.participationPercentage,
+          startedAt: input.startedAt,
+          endedAt: input.endedAt,
+        })),
+      },
+    },
+    select: { id: true },
+  });
+  const detail = await loadActivity(transaction, activity.id);
+  if (!detail) throw new Error("Created manual activity could not be hydrated");
+  await writeAudit(
+    transaction,
+    "ACTIVITY_MANUAL_RECORDED",
+    detail,
+    actor,
+    now,
+    undefined,
+    input.justification,
+  );
+  return { kind: "CREATED", activity: detail };
 }
 
 async function createActivity(
@@ -185,11 +330,15 @@ async function replaceActivityTeam(
 
 export function createActivitiesMutationRepository(
   database: PrismaClient,
-): ActivitiesPendingMutationRepository {
+): ActivitiesMutationRepository {
   return {
     createActivity: (input, actor, now) => runSerializableTransaction(
       database,
       (transaction) => createActivity(transaction, input, actor, now),
+    ),
+    createManualActivity: (input, actor, now) => runSerializableTransaction(
+      database,
+      (transaction) => createManualActivity(transaction, input, actor, now),
     ),
     updateActivity: (id, input, actor, now) => runSerializableTransaction(
       database,
