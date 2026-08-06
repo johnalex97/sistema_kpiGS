@@ -94,11 +94,15 @@ async function writeAudit(
   });
 }
 
+export function planTechnicianLockIds(technicianIds: readonly string[]): string[] {
+  return [...new Set(technicianIds)].sort((left, right) => left.localeCompare(right));
+}
+
 async function lockTechnicians(
   transaction: Prisma.TransactionClient,
   technicianIds: readonly string[],
 ): Promise<void> {
-  for (const technicianId of [...new Set(technicianIds)].sort((left, right) => left.localeCompare(right))) {
+  for (const technicianId of planTechnicianLockIds(technicianIds)) {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${technicianId}))`;
   }
 }

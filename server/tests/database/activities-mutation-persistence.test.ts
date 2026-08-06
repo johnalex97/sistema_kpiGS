@@ -56,6 +56,28 @@ async function waitForTechnicianLockWaiters(
   throw new Error(`Expected ${expected} exact technician-lock waiters`);
 }
 
+async function waitForTechnicianLockState(
+  technicianId: string,
+  writerPid: number,
+  granted: boolean,
+): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const rows = await database.$queryRaw<AdvisoryLockRecord[]>`
+      SELECT pid, granted
+      FROM pg_locks
+      WHERE pid = ${writerPid}
+        AND locktype = 'advisory'
+        AND classid::bigint = CASE WHEN hashtext(${technicianId}) < 0 THEN 4294967295 ELSE 0 END
+        AND objid::bigint = (hashtext(${technicianId})::bigint & 4294967295)
+        AND objsubid = 1
+    `;
+    if (rows.some((lock) => lock.granted === granted)) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Expected writer ${writerPid} to ${granted ? "hold" : "wait for"} the exact technician lock`);
+}
+
 interface Fixture {
   clientId: string;
   branchId: string;
@@ -496,49 +518,75 @@ describe("activities pending mutation repository", () => {
     }
   });
 
-  it("normalizes a duplicate self-team to one advisory-lock acquisition", async () => {
-    const lockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+  it("keeps the lower lock while waiting to acquire the higher team technician lock", async () => {
+    const lowerBlockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const higherBlockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
     const writerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
-    let releaseLock: () => void = () => undefined;
-    let markLockAcquired: () => void = () => undefined;
-    const lockAcquired = new Promise<void>((resolve) => { markLockAcquired = resolve; });
-    const holdLock = new Promise<void>((resolve) => { releaseLock = resolve; });
-    const lockTransaction = lockerDatabase.$transaction(async (transaction) => {
+    let releaseLower: () => void = () => undefined;
+    let releaseHigher: () => void = () => undefined;
+    let markLowerAcquired: () => void = () => undefined;
+    let markHigherAcquired: () => void = () => undefined;
+    const lowerAcquired = new Promise<void>((resolve) => { markLowerAcquired = resolve; });
+    const higherAcquired = new Promise<void>((resolve) => { markHigherAcquired = resolve; });
+    const holdLower = new Promise<void>((resolve) => { releaseLower = resolve; });
+    const holdHigher = new Promise<void>((resolve) => { releaseHigher = resolve; });
+    const lowerTransaction = lowerBlockerDatabase.$transaction(async (transaction) => {
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fixture.leaderId}))`;
-      markLockAcquired();
-      await holdLock;
+      markLowerAcquired();
+      await holdLower;
+    });
+    const higherTransaction = higherBlockerDatabase.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fixture.technicianId}))`;
+      markHigherAcquired();
+      await holdHigher;
     });
     let write: Promise<ActivityMutationResult> | undefined;
     try {
-      await lockAcquired;
+      await Promise.all([lowerAcquired, higherAcquired]);
       write = createActivitiesMutationRepository(writerDatabase).createManualActivity(
         manualInput(fixture, {
           startedAt: new Date("2026-08-05T04:00:00.000Z"),
           endedAt: new Date("2026-08-05T05:00:00.000Z"),
           team: [
+            { technicianId: fixture.technicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
             { technicianId: fixture.leaderId, role: "RESPONSIBLE", participationPercentage: "50.00" },
-            { technicianId: fixture.leaderId, role: "PARTICIPANT", participationPercentage: "50.00" },
           ],
         }),
-        { ...fixture.actor, technicianId: fixture.leaderId, permissions: ["ACTIVITIES_CREATE_OWN"] },
+        fixture.actor,
         now,
       );
-      const locks = await waitForTechnicianLockWaiters(fixture.leaderId, 1);
-      const writerLocks = locks.filter(({ granted }) => !granted);
-      expect(writerLocks).toHaveLength(1);
-      expect(new Set(writerLocks.map(({ pid }) => pid)).size).toBe(1);
-      releaseLock();
-      await lockTransaction;
+      const initialLocks = await waitForTechnicianLockWaiters(fixture.leaderId, 1);
+      const writerPid = initialLocks.find(({ granted }) => !granted)?.pid;
+      if (writerPid === undefined) throw new Error("Expected a writer waiting for the lower technician lock");
+      releaseLower();
+      await lowerTransaction;
+      await waitForTechnicianLockState(fixture.leaderId, writerPid, true);
+      await waitForTechnicianLockState(fixture.technicianId, writerPid, false);
+      releaseHigher();
+      await higherTransaction;
       const result = await write;
-      expect(result).toMatchObject({
-        kind: "CREATED",
-        activity: { tecnicos: [{ tecnico: { id: fixture.leaderId }, role: "RESPONSIBLE" }] },
-      });
+      expect(result.kind).toBe("CREATED");
       if (result.kind === "CREATED") activityIds.push(result.activity.id);
     } finally {
-      releaseLock();
-      await Promise.allSettled([lockTransaction, ...(write === undefined ? [] : [write])]);
-      await lockerDatabase.$disconnect();
+      releaseLower();
+      releaseHigher();
+      await Promise.allSettled([
+        lowerTransaction,
+        higherTransaction,
+        ...(write === undefined ? [] : [write]),
+      ]);
+      const persistedIds = await database.actividad.findMany({
+        where: {
+          sucursalId: fixture.branchId,
+          description: "Preparar equipo de red",
+          startedAt: new Date("2026-08-05T04:00:00.000Z"),
+          endedAt: new Date("2026-08-05T05:00:00.000Z"),
+        },
+        select: { id: true },
+      });
+      activityIds.push(...persistedIds.map(({ id }) => id).filter((id) => !activityIds.includes(id)));
+      await lowerBlockerDatabase.$disconnect();
+      await higherBlockerDatabase.$disconnect();
       await writerDatabase.$disconnect();
     }
   });
