@@ -26,11 +26,13 @@ describe("activities read repository", () => {
     await removeActivitiesReadFixture(database, fixture);
   });
 
-  it("lists only active activity types in display and name order", async () => {
+  it("lists only active activity types in display, name and id order", async () => {
     const types = await createActivitiesReadRepository(database).listActivityTypes();
 
     const matching = types.filter((type) => type.code.startsWith(`ACT-${fixture.suffix}`));
     expect(matching.map(({ id }) => id)).toEqual([
+      fixture.catalogTieFirstTypeId,
+      fixture.catalogTieSecondTypeId,
       fixture.primaryTypeId,
       fixture.secondaryTypeId,
     ]);
@@ -39,16 +41,24 @@ describe("activities read repository", () => {
   it("applies every list filter without including soft-deleted activities", async () => {
     const repository = createActivitiesReadRepository(database);
     const common = { kind: "ALL" } as const;
-    const status = await repository.listActivities(listFilters({ status: ["PENDING"] }), common);
+    const status = await repository.listActivities(listFilters({ search: fixture.suffix, status: ["PENDING"] }), common);
     const type = await repository.listActivities(listFilters({ activityTypeId: fixture.secondaryTypeId }), common);
     const client = await repository.listActivities(listFilters({ clientId: fixture.secondaryClientId }), common);
     const branch = await repository.listActivities(listFilters({ branchId: fixture.secondaryBranchId }), common);
     const order = await repository.listActivities(listFilters({ orderId: fixture.primaryOrderId }), common);
     const technician = await repository.listActivities(listFilters({ technicianId: fixture.searchTechnicianId }), common);
-    const started = await repository.listActivities(listFilters({ startedFrom: new Date("2026-08-01T08:30:00.000Z"), startedTo: new Date("2026-08-01T09:30:00.000Z") }), common);
+    const startedFrom = await repository.listActivities(listFilters({ search: fixture.suffix, startedFrom: new Date("2026-08-01T08:30:00.000Z") }), common);
+    const startedTo = await repository.listActivities(listFilters({ search: fixture.suffix, startedTo: new Date("2026-08-01T08:30:00.000Z") }), common);
 
-    expect(status.items.map(({ id }) => id)).toContain(fixture.pendingActivityId);
-    expect(status.items.map(({ id }) => id)).not.toContain(fixture.deletedActivityId);
+    expect(status).toMatchObject({
+      items: [
+        { id: fixture.pendingActivityId },
+        { id: fixture.createdAtTieThirdId },
+        { id: fixture.createdAtTieSecondId },
+        { id: fixture.createdAtTieFirstId },
+      ],
+      totalItems: 4,
+    });
     expect(type.items.map(({ id }) => id)).toEqual([fixture.runningActivityId]);
     expect(client.items.map(({ id }) => id)).toEqual([fixture.runningActivityId]);
     expect(branch.items.map(({ id }) => id)).toEqual([fixture.runningActivityId]);
@@ -58,7 +68,8 @@ describe("activities read repository", () => {
       fixture.createdAtTieSecondId,
       fixture.createdAtTieFirstId,
     ]);
-    expect(started.items.map(({ id }) => id)).toEqual([fixture.runningActivityId]);
+    expect(startedFrom.items.map(({ id }) => id)).toEqual([fixture.runningActivityId]);
+    expect(startedTo.items.map(({ id }) => id)).toEqual([fixture.completedActivityId]);
   });
 
   it("searches descriptions, results, orders, clients and technicians case-insensitively", async () => {
@@ -111,5 +122,33 @@ describe("activities read repository", () => {
     expect(current?.id).toBe(fixture.pendingActivityId);
     expect(historical?.id).toBe(fixture.runningActivityId);
     expect([foreign, deleted, absent]).toEqual([null, null, null]);
+  });
+
+  it("excludes activities whose client, branch, type or order parent is deleted", async () => {
+    const repository = createActivitiesReadRepository(database);
+    const all = await repository.listActivities(listFilters({ search: fixture.suffix }), { kind: "ALL" });
+    const deletedParents = [
+      fixture.deletedClientActivityId,
+      fixture.deletedBranchActivityId,
+      fixture.deletedTypeActivityId,
+      fixture.deletedOrderActivityId,
+    ];
+    const details = [];
+    for (const id of deletedParents) {
+      details.push(await repository.findActivityById(id, { kind: "ALL" }));
+    }
+
+    expect(all).toMatchObject({
+      items: [
+        { id: fixture.pendingActivityId },
+        { id: fixture.runningActivityId },
+        { id: fixture.completedActivityId },
+        { id: fixture.createdAtTieThirdId },
+        { id: fixture.createdAtTieSecondId },
+        { id: fixture.createdAtTieFirstId },
+      ],
+      totalItems: 6,
+    });
+    expect(details).toEqual([null, null, null, null]);
   });
 });
