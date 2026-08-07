@@ -116,16 +116,23 @@ describe("activities timer operation repository", () => {
       },
       select: { id: true },
     });
-    const before = await database.actividad.findUniqueOrThrow({
+    const snapshot = () => database.actividad.findUniqueOrThrow({
       where: { id: invalid.id },
-      select: { status: true, version: true, startedAt: true, updatedAt: true, tecnicos: { select: { participationPercentage: true } } },
+      select: {
+        status: true, version: true, startedAt: true, updatedAt: true,
+        tecnicos: {
+          orderBy: { tecnicoId: "asc" },
+          select: {
+            tecnicoId: true, role: true, participationPercentage: true,
+            startedAt: true, endedAt: true,
+          },
+        },
+      },
     });
+    const before = await snapshot();
 
     await expect(createActivitiesOperationRepository(database).startActivity(invalid.id, { version: 1 }, fixture.actor, startedAt)).resolves.toEqual({ kind: "INVALID_PARTICIPATION_TOTAL" });
-    await expect(database.actividad.findUniqueOrThrow({
-      where: { id: invalid.id },
-      select: { status: true, version: true, startedAt: true, updatedAt: true, tecnicos: { select: { participationPercentage: true } } },
-    })).resolves.toEqual(before);
+    await expect(snapshot()).resolves.toEqual(before);
     await expect(database.auditoria.count({ where: { entity: "Actividad", entityId: invalid.id } })).resolves.toBe(0);
   });
 
