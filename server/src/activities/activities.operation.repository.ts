@@ -1,7 +1,7 @@
 import { Prisma } from "../../generated/prisma/client.js";
 import type { PrismaClient } from "../../generated/prisma/client.js";
 import type {
-  ActivitiesCloseRepository,
+  ActivitiesOperationRepository,
   ActivityDetailRecord,
   ActivityMutationResult,
 } from "./activities.repository.types.js";
@@ -11,9 +11,12 @@ import {
   runSerializableTransaction,
   writeActivityAudit,
 } from "./activities.mutation.repository.js";
-import { validateActivityTeam } from "./activities.repository.helpers.js";
+import {
+  validateActivityTeam,
+  validateCompletedAdjustmentContext,
+} from "./activities.repository.helpers.js";
 import { transitionActivity } from "./activities.state-machine.js";
-import { calculateActivityMinutes } from "./activities.time.js";
+import { calculateActivityMinutes, overlapsAny } from "./activities.time.js";
 import type {
   ActivityActorContext,
   ActivityCommand,
@@ -21,6 +24,7 @@ import type {
   CompleteActivityInput,
   CancelActivityInput,
   PauseActivityInput,
+  AdjustActivityInput,
 } from "./activities.types.js";
 
 interface OperationalActivity {
@@ -246,9 +250,274 @@ async function cancelActivity(
   return { kind: "UPDATED", activity: detail };
 }
 
+interface ActivityAdjustmentSnapshot {
+  activityTypeId: string;
+  description: string;
+  observations: string | null;
+  result: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  pausedMinutes: number;
+  productiveMinutes: number | null;
+  team: Array<{
+    technicianId: string;
+    role: "RESPONSIBLE" | "PARTICIPANT";
+    participationPercentage: string;
+  }>;
+}
+
+function adjustmentSnapshot(activity: ActivityDetailRecord): ActivityAdjustmentSnapshot {
+  return {
+    activityTypeId: activity.tipoActividad.id,
+    description: activity.description,
+    observations: activity.observations,
+    result: activity.result,
+    startedAt: activity.startedAt?.toISOString() ?? null,
+    endedAt: activity.endedAt?.toISOString() ?? null,
+    pausedMinutes: activity.pausedMinutes,
+    productiveMinutes: activity.productiveMinutes,
+    team: activity.tecnicos.map(({ tecnico, role, participationPercentage }) => ({
+      technicianId: tecnico.id,
+      role,
+      participationPercentage: participationPercentage.toFixed(2),
+    })),
+  };
+}
+
+const adjustmentFields = [
+  "activityTypeId",
+  "description",
+  "observations",
+  "result",
+  "startedAt",
+  "endedAt",
+  "team",
+] as const;
+
+function changedAdjustmentFields(
+  before: ActivityAdjustmentSnapshot,
+  after: ActivityAdjustmentSnapshot,
+): string[] {
+  return adjustmentFields.filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
+}
+
+function isValidCompletedRange(startedAt: Date, endedAt: Date, now: Date): boolean {
+  return Number.isFinite(startedAt.getTime())
+    && Number.isFinite(endedAt.getTime())
+    && startedAt.getTime() < endedAt.getTime()
+    && startedAt.getTime() <= now.getTime()
+    && endedAt.getTime() <= now.getTime();
+}
+
+async function adjustmentOverlaps(
+  transaction: Prisma.TransactionClient,
+  activityId: string,
+  technicianIds: readonly string[],
+  productiveSegments: ReturnType<typeof calculateActivityMinutes>["productiveSegments"],
+): Promise<boolean> {
+  for (const technicianId of technicianIds) {
+    for (const segment of productiveSegments) {
+      if (overlapsAny(segment, await findOtherProductiveSegments(transaction, technicianId, segment, activityId))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function findOtherProductiveSegments(
+  transaction: Prisma.TransactionClient,
+  technicianId: string,
+  range: { startedAt: Date; endedAt: Date },
+  activityId: string,
+): Promise<Array<{ startedAt: Date; endedAt: Date }>> {
+  const memberships = await transaction.actividadTecnico.findMany({
+    where: {
+      tecnicoId: technicianId,
+      actividad: {
+        id: { not: activityId },
+        deletedAt: null,
+        status: { not: "CANCELLED" },
+        startedAt: { lt: range.endedAt },
+        endedAt: { gt: range.startedAt },
+      },
+    },
+    select: {
+      actividad: {
+        select: {
+          startedAt: true,
+          endedAt: true,
+          pausas: {
+            where: { endedAt: { not: null } },
+            select: { startedAt: true, endedAt: true },
+          },
+        },
+      },
+    },
+  });
+  return memberships.flatMap(({ actividad }) => {
+    if (actividad.startedAt === null || actividad.endedAt === null) return [];
+    return calculateActivityMinutes(
+      actividad.startedAt,
+      actividad.endedAt,
+      actividad.pausas.flatMap((pause) => pause.endedAt === null ? [] : [{
+        startedAt: pause.startedAt,
+        endedAt: pause.endedAt,
+      }]),
+    ).productiveSegments;
+  });
+}
+
+async function writeAdjustmentAudit(
+  transaction: Prisma.TransactionClient,
+  activity: ActivityDetailRecord,
+  actor: ActivityActorContext,
+  now: Date,
+  reason: string,
+  changedFields: string[],
+  previousVersion: number,
+  version: number,
+  before: ActivityAdjustmentSnapshot,
+  after: ActivityAdjustmentSnapshot,
+): Promise<void> {
+  await transaction.auditoria.create({
+    data: {
+      userId: actor.userId,
+      action: "ACTIVITY_ADJUSTED",
+      entity: "Actividad",
+      entityId: activity.id,
+      beforeData: Prisma.DbNull,
+      afterData: JSON.parse(JSON.stringify({
+        reason, changedFields, previousVersion, version, before, after,
+      })) as Prisma.InputJsonValue,
+      reason,
+      occurredAt: now,
+      requestId: actor.requestId,
+    },
+  });
+}
+
+async function adjustCompletedActivity(
+  transaction: Prisma.TransactionClient,
+  id: string,
+  input: AdjustActivityInput,
+  actor: ActivityActorContext,
+  now: Date,
+): Promise<ActivityMutationResult> {
+  if (!(await lockActivity(transaction, id))) return { kind: "ACTIVITY_NOT_FOUND" };
+  const initial = await loadActivity(transaction, id);
+  if (!initial) return { kind: "ACTIVITY_NOT_FOUND" };
+  if (initial.status !== "COMPLETED") return { kind: "INVALID_ACTIVITY_STATE" };
+  if (initial.version !== input.version) return { kind: "VERSION_CONFLICT" };
+  if (!actor.permissions.includes("ACTIVITIES_MANAGE")) return { kind: "FORBIDDEN" };
+  if (initial.startedAt === null || initial.endedAt === null) return { kind: "INVALID_TEMPORAL_RANGE" };
+
+  const requestedTeam = input.team === undefined
+    ? initial.tecnicos.map(({ tecnico, role, participationPercentage }) => ({
+      technicianId: tecnico.id, role, participationPercentage: participationPercentage.toFixed(2),
+    }))
+    : validateActivityTeam(input.team);
+  if (!requestedTeam) return { kind: "INVALID_PARTICIPATION_TOTAL" };
+  await lockTechnicians(transaction, [
+    ...initial.tecnicos.map(({ tecnico }) => tecnico.id),
+    ...requestedTeam.map(({ technicianId }) => technicianId),
+  ]);
+
+  const beforeActivity = await loadActivity(transaction, id);
+  if (!beforeActivity) return { kind: "ACTIVITY_NOT_FOUND" };
+  if (beforeActivity.status !== "COMPLETED") return { kind: "INVALID_ACTIVITY_STATE" };
+  if (beforeActivity.version !== input.version) return { kind: "VERSION_CONFLICT" };
+  const startedAt = input.startedAt ?? beforeActivity.startedAt;
+  const endedAt = input.endedAt ?? beforeActivity.endedAt;
+  if (startedAt === null || endedAt === null || !isValidCompletedRange(startedAt, endedAt, now)) {
+    return { kind: "INVALID_TEMPORAL_RANGE" };
+  }
+  const context = await validateCompletedAdjustmentContext(
+    transaction, beforeActivity, input, actor, startedAt, endedAt,
+  );
+  if ("kind" in context) return context;
+  const pauses = await transaction.pausaActividad.findMany({
+    where: { actividadId: id },
+    select: { startedAt: true, endedAt: true },
+    orderBy: [{ startedAt: "asc" }, { id: "asc" }],
+  });
+  if (pauses.some(({ startedAt: pauseStartedAt, endedAt: pauseEndedAt }) => (
+    pauseEndedAt === null
+    || pauseStartedAt.getTime() < startedAt.getTime()
+    || pauseEndedAt.getTime() > endedAt.getTime()
+  ))) return { kind: "INVALID_TEMPORAL_RANGE" };
+  let minutes: ReturnType<typeof calculateActivityMinutes>;
+  try {
+    minutes = calculateActivityMinutes(
+      startedAt,
+      endedAt,
+      pauses.map(({ startedAt: pauseStartedAt, endedAt: pauseEndedAt }) => ({ startedAt: pauseStartedAt, endedAt: pauseEndedAt! })),
+    );
+  } catch {
+    return { kind: "INVALID_TEMPORAL_RANGE" };
+  }
+  if (await adjustmentOverlaps(
+    transaction,
+    id,
+    context.team.map(({ technicianId }) => technicianId),
+    minutes.productiveSegments,
+  )) return { kind: "TIME_OVERLAP" };
+
+  const changed = await transaction.actividad.updateMany({
+    where: { id, deletedAt: null, status: "COMPLETED", version: input.version },
+    data: {
+      tipoActividadId: input.activityTypeId ?? beforeActivity.tipoActividad.id,
+      description: input.description ?? beforeActivity.description,
+      observations: input.observations !== undefined
+        ? input.observations
+        : beforeActivity.observations,
+      result: input.result ?? beforeActivity.result,
+      startedAt,
+      endedAt,
+      pausedMinutes: minutes.pausedMinutes,
+      productiveMinutes: minutes.productiveMinutes,
+      updatedAt: now,
+      version: { increment: 1 },
+    },
+  });
+  if (changed.count !== 1) return { kind: "VERSION_CONFLICT" };
+  if (input.team !== undefined) {
+    await transaction.actividadTecnico.deleteMany({ where: { actividadId: id } });
+    await transaction.actividadTecnico.createMany({
+      data: context.team.map(({ technicianId, role, participationPercentage }) => ({
+        actividadId: id,
+        tecnicoId: technicianId,
+        role,
+        participationPercentage,
+        startedAt,
+        endedAt,
+      })),
+    });
+  } else {
+    await transaction.actividadTecnico.updateMany({ where: { actividadId: id }, data: { startedAt, endedAt } });
+  }
+  const activity = await loadActivity(transaction, id);
+  if (!activity) throw new Error("Adjusted activity could not be hydrated");
+  const before = adjustmentSnapshot(beforeActivity);
+  const after = adjustmentSnapshot(activity);
+  await writeAdjustmentAudit(
+    transaction,
+    activity,
+    actor,
+    now,
+    input.reason,
+    changedAdjustmentFields(before, after),
+    beforeActivity.version,
+    activity.version,
+    before,
+    after,
+  );
+  return { kind: "UPDATED", activity };
+}
+
 export function createActivitiesOperationRepository(
   database: PrismaClient,
-): ActivitiesCloseRepository {
+): ActivitiesOperationRepository {
   return {
     startActivity: (id, input, actor, now) => runSerializableTransaction(
       database, (transaction) => transitionTimer(transaction, id, input, actor, now, "START"),
@@ -264,6 +533,9 @@ export function createActivitiesOperationRepository(
     ),
     cancelActivity: (id, input, actor, now) => runSerializableTransaction(
       database, (transaction) => cancelActivity(transaction, id, input, actor, now),
+    ),
+    adjustCompletedActivity: (id, input, actor, now) => runSerializableTransaction(
+      database, (transaction) => adjustCompletedActivity(transaction, id, input, actor, now),
     ),
   };
 }

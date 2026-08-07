@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { createDatabaseClient } from "../../src/config/database.js";
 import { createActivitiesMutationRepository } from "../../src/activities/activities.mutation.repository.js";
 import { createActivitiesOperationRepository } from "../../src/activities/activities.operation.repository.js";
+import { adjustActivitySchema } from "../../src/activities/activities.schemas.js";
 import type { ActivityActorContext, CreateActivityInput } from "../../src/activities/activities.types.js";
 import { database, disconnectTestDatabase } from "./database-test-context.js";
 
@@ -12,6 +13,9 @@ interface Fixture {
   clientId: string;
   branchId: string;
   typeId: string;
+  adjustmentTypeId: string;
+  serviceTypeId: string;
+  orderId: string;
   technicianId: string;
   otherTechnicianId: string;
   userId: string;
@@ -24,14 +28,18 @@ async function createFixture(): Promise<Fixture> {
     where: { email: "admin.demo@geeksolution.example.test" }, select: { id: true },
   });
   const fixture = {
-    clientId: randomUUID(), branchId: randomUUID(), typeId: randomUUID(), technicianId: randomUUID(), otherTechnicianId: randomUUID(), userId: user.id,
+    clientId: randomUUID(), branchId: randomUUID(), typeId: randomUUID(), adjustmentTypeId: randomUUID(), serviceTypeId: randomUUID(), orderId: randomUUID(), technicianId: randomUUID(), otherTechnicianId: randomUUID(), userId: user.id,
     actor: { userId: user.id, technicianId: null, permissions: ["ACTIVITIES_MANAGE"], requestId: randomUUID() },
   };
   await database.cliente.create({ data: { id: fixture.clientId, code: `AO-${suffix}`, tradeName: "Cliente operación" } });
   await database.sucursalCliente.create({ data: { id: fixture.branchId, clienteId: fixture.clientId, code: "MAIN", name: "Principal", address: "Centro" } });
   await database.tipoActividad.create({ data: { id: fixture.typeId, code: `AOP-${suffix}`, name: "Operación" } });
+  await database.tipoActividad.create({ data: { id: fixture.adjustmentTypeId, code: `AOA-${suffix}`, name: "Ajuste" } });
   await database.tecnico.create({ data: { id: fixture.technicianId, code: `AOT-${suffix}`, fullName: "Técnico operación" } });
   await database.tecnico.create({ data: { id: fixture.otherTechnicianId, code: `AOU-${suffix}`, fullName: "Segundo técnico" } });
+  await database.tipoServicio.create({ data: { id: fixture.serviceTypeId, code: `AOS-${suffix}`, name: "Servicio de ajuste" } });
+  await database.ordenTrabajo.create({ data: { id: fixture.orderId, orderNumber: `AO-${suffix}`, sucursalId: fixture.branchId, tipoServicioId: fixture.serviceTypeId, reportedProblem: "Ajuste histórico" } });
+  await database.ordenTecnico.create({ data: { ordenId: fixture.orderId, tecnicoId: fixture.technicianId, role: "PRIMARY", assignedAt: new Date("2026-08-06T07:00:00.000Z"), unassignedAt: new Date("2026-08-06T08:00:00.000Z") } });
   return fixture;
 }
 
@@ -56,9 +64,13 @@ async function removeFixture(fixture: Fixture): Promise<void> {
   await database.pausaActividad.deleteMany({ where: { actividadId: { in: activityIds } } });
   await database.actividadTecnico.deleteMany({ where: { actividadId: { in: activityIds } } });
   await database.actividad.deleteMany({ where: { id: { in: activityIds } } });
+  await database.ordenTecnico.deleteMany({ where: { ordenId: fixture.orderId } });
+  await database.ordenTrabajo.delete({ where: { id: fixture.orderId } });
+  await database.tipoServicio.delete({ where: { id: fixture.serviceTypeId } });
   await database.tecnico.delete({ where: { id: fixture.technicianId } });
   await database.tecnico.delete({ where: { id: fixture.otherTechnicianId } });
   await database.tipoActividad.delete({ where: { id: fixture.typeId } });
+  await database.tipoActividad.delete({ where: { id: fixture.adjustmentTypeId } });
   await database.sucursalCliente.delete({ where: { id: fixture.branchId } });
   await database.cliente.delete({ where: { id: fixture.clientId } });
 }
@@ -419,5 +431,220 @@ describe("activities timer operation repository", () => {
     await expect(createActivitiesOperationRepository(failingDatabase as unknown as typeof database).cancelActivity(id, { version: 3, reason: "No debe persistir" }, fixture.actor, new Date("2026-08-06T12:03:00.000Z"))).rejects.toThrow("audit failed");
     await expect(before()).resolves.toEqual(snapshot);
     await expect(database.auditoria.count({ where: { entity: "Actividad", entityId: id } })).resolves.toBe(3);
+  });
+
+  it("adjusts every allowlisted completed field, preserves omitted values, synchronizes the replacement team, and writes immutable allowlisted snapshots", async () => {
+    const originalStart = new Date("2026-08-06T08:00:00.000Z");
+    const originalEnd = new Date("2026-08-06T08:05:00.000Z");
+    const created = await createActivitiesMutationRepository(database).createManualActivity({
+      ...input(fixture), description: "Descripción original", observations: "Observación original",
+      startedAt: originalStart, endedAt: originalEnd, result: "Resultado original", justification: "Registro inicial",
+    }, fixture.actor, startedAt);
+    if (created.kind !== "CREATED") throw new Error("Expected completed manual activity");
+
+    const adjustedStart = new Date("2026-08-06T08:01:00.000Z");
+    const adjustedEnd = new Date("2026-08-06T08:11:00.000Z");
+    const result = await createActivitiesOperationRepository(database).adjustCompletedActivity(created.activity.id, {
+      version: 1, reason: "Corregir cierre validado", activityTypeId: fixture.adjustmentTypeId,
+      description: "Descripción corregida", observations: null, result: "Resultado corregido", startedAt: adjustedStart, endedAt: adjustedEnd,
+      team: [
+        { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "60.00" },
+        { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "40.00" },
+      ],
+    }, fixture.actor, new Date("2026-08-06T12:00:00.000Z"));
+
+    expect(result).toMatchObject({
+      kind: "UPDATED",
+      activity: { status: "COMPLETED", description: "Descripción corregida", observations: null, result: "Resultado corregido", startedAt: adjustedStart, endedAt: adjustedEnd, pausedMinutes: 0, productiveMinutes: 10, version: 2 },
+    });
+    if (result.kind !== "UPDATED") return;
+    expect(result.activity.tecnicos.map(({ tecnico, role, participationPercentage, startedAt: memberStartedAt, endedAt }) => ({
+      technicianId: tecnico.id, role, participationPercentage: participationPercentage.toFixed(2), startedAt: memberStartedAt, endedAt,
+    }))).toEqual([
+      { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "60.00", startedAt: adjustedStart, endedAt: adjustedEnd },
+      { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "40.00", startedAt: adjustedStart, endedAt: adjustedEnd },
+    ]);
+    await expect(database.auditoria.findFirstOrThrow({
+      where: { entity: "Actividad", entityId: created.activity.id, action: "ACTIVITY_ADJUSTED" },
+      select: { reason: true, beforeData: true, afterData: true },
+    })).resolves.toEqual({
+      reason: "Corregir cierre validado",
+      beforeData: null,
+      afterData: {
+        reason: "Corregir cierre validado",
+        changedFields: ["activityTypeId", "description", "observations", "result", "startedAt", "endedAt", "team"],
+        previousVersion: 1,
+        version: 2,
+        before: {
+        activityTypeId: fixture.typeId, description: "Descripción original", observations: "Observación original", result: "Resultado original",
+        startedAt: originalStart.toISOString(), endedAt: originalEnd.toISOString(), pausedMinutes: 0, productiveMinutes: 5,
+        team: [{ technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+        },
+        after: {
+        activityTypeId: fixture.adjustmentTypeId, description: "Descripción corregida", observations: null, result: "Resultado corregido",
+        startedAt: adjustedStart.toISOString(), endedAt: adjustedEnd.toISOString(), pausedMinutes: 0, productiveMinutes: 10,
+        team: [
+          { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "60.00" },
+          { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "40.00" },
+        ],
+        },
+      },
+    });
+  });
+
+  it("merges one temporal endpoint, recalculates persisted pauses, and rejects a range that leaves a pause outside", async () => {
+    const id = await createPendingActivity(fixture);
+    const repository = createActivitiesOperationRepository(database);
+    await repository.startActivity(id, { version: 1 }, fixture.actor, startedAt);
+    await repository.pauseActivity(id, { version: 2, reason: "Pausa registrada" }, fixture.actor, new Date("2026-08-06T12:02:00.000Z"));
+    await repository.resumeActivity(id, { version: 3 }, fixture.actor, new Date("2026-08-06T12:04:00.000Z"));
+    await repository.completeActivity(id, { version: 4, result: "Trabajo cerrado" }, fixture.actor, new Date("2026-08-06T12:10:00.000Z"));
+
+    await expect(repository.adjustCompletedActivity(id, {
+      version: 5, reason: "Extender el cierre", endedAt: new Date("2026-08-06T12:11:00.000Z"),
+    }, fixture.actor, new Date("2026-08-06T12:12:00.000Z"))).resolves.toMatchObject({
+      kind: "UPDATED", activity: {
+        description: "Iniciar cronómetro", observations: null, result: "Trabajo cerrado",
+        startedAt, endedAt: new Date("2026-08-06T12:11:00.000Z"), pausedMinutes: 2, productiveMinutes: 9, version: 6,
+      },
+    });
+    const snapshot = await database.actividad.findUniqueOrThrow({ where: { id }, select: { startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true } });
+    await expect(repository.adjustCompletedActivity(id, {
+      version: 6, reason: "No puede expulsar la pausa", startedAt: new Date("2026-08-06T12:03:00.000Z"),
+    }, fixture.actor, new Date("2026-08-06T12:12:00.000Z"))).resolves.toEqual({ kind: "INVALID_TEMPORAL_RANGE" });
+    await expect(database.actividad.findUniqueOrThrow({ where: { id }, select: { startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true } })).resolves.toEqual(snapshot);
+  });
+
+  it("rejects overlap, stale or non-completed adjustments and rolls back an adjustment when audit fails", async () => {
+    expect(adjustActivitySchema.safeParse({ version: 1, reason: "Motivo", description: "Cambio", injected: true }).success).toBe(false);
+    const repository = createActivitiesOperationRepository(database);
+    const blocker = await createActivitiesMutationRepository(database).createManualActivity({
+      ...input(fixture), startedAt: new Date("2026-08-06T07:00:00.000Z"), endedAt: new Date("2026-08-06T07:10:00.000Z"), result: "Bloquea", justification: "Registro inicial",
+    }, fixture.actor, startedAt);
+    const target = await createActivitiesMutationRepository(database).createManualActivity({
+      ...input(fixture), startedAt: new Date("2026-08-06T08:00:00.000Z"), endedAt: new Date("2026-08-06T08:10:00.000Z"), result: "Objetivo", justification: "Registro inicial",
+    }, fixture.actor, startedAt);
+    if (blocker.kind !== "CREATED" || target.kind !== "CREATED") throw new Error("Expected completed manual activities");
+    await expect(repository.adjustCompletedActivity(target.activity.id, {
+      version: 1, reason: "Total inválido", team: [{ technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "99.99" }],
+    }, fixture.actor, startedAt)).resolves.toEqual({ kind: "INVALID_PARTICIPATION_TOTAL" });
+    await expect(repository.adjustCompletedActivity(target.activity.id, {
+      version: 1, reason: "Cruza otro trabajo", startedAt: new Date("2026-08-06T07:05:00.000Z"),
+    }, fixture.actor, startedAt)).resolves.toEqual({ kind: "TIME_OVERLAP" });
+    await expect(repository.adjustCompletedActivity(target.activity.id, {
+      version: 7, reason: "Versión obsoleta", description: "No cambia",
+    }, fixture.actor, startedAt)).resolves.toEqual({ kind: "VERSION_CONFLICT" });
+    const pendingId = await createPendingActivity(fixture);
+    await expect(repository.adjustCompletedActivity(pendingId, {
+      version: 1, reason: "No está cerrada", description: "No cambia",
+    }, fixture.actor, startedAt)).resolves.toEqual({ kind: "INVALID_ACTIVITY_STATE" });
+
+    const rollbackSnapshot = () => database.actividad.findUniqueOrThrow({
+      where: { id: target.activity.id },
+      select: {
+        tipoActividadId: true, description: true, observations: true, result: true,
+        startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true, updatedAt: true,
+        tecnicos: { orderBy: { tecnicoId: "asc" }, select: { tecnicoId: true, role: true, participationPercentage: true, startedAt: true, endedAt: true } },
+      },
+    });
+    const snapshot = await rollbackSnapshot();
+    const transaction = database.$transaction.bind(database);
+    const failingDatabase = {
+      ...database,
+      $transaction: (callback: (transactionClient: typeof database) => Promise<unknown>) => transaction(async (transactionClient) => {
+        vi.spyOn(transactionClient.auditoria, "create").mockRejectedValueOnce(new Error("audit failed"));
+        return callback(transactionClient as typeof database);
+      }),
+    };
+    await expect(createActivitiesOperationRepository(failingDatabase as unknown as typeof database).adjustCompletedActivity(target.activity.id, {
+      version: 1, reason: "No debe persistir", activityTypeId: fixture.adjustmentTypeId, description: "Cambio revertido",
+      result: "Resultado revertido", startedAt: new Date("2026-08-06T08:01:00.000Z"), endedAt: new Date("2026-08-06T08:11:00.000Z"),
+      team: [
+        { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "60.00" },
+        { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "40.00" },
+      ],
+    }, fixture.actor, startedAt)).rejects.toThrow("audit failed");
+    await expect(rollbackSnapshot()).resolves.toEqual(snapshot);
+  });
+
+  it("rejects future ranges and team order assignments that did not cover the corrected completed interval", async () => {
+    const repository = createActivitiesOperationRepository(database);
+    const ordered = await createActivitiesMutationRepository(database).createManualActivity({
+      orderId: fixture.orderId, activityTypeId: fixture.typeId, description: "Trabajo de orden", result: "Terminado", justification: "Registro inicial",
+      startedAt: new Date("2026-08-06T07:10:00.000Z"), endedAt: new Date("2026-08-06T07:20:00.000Z"),
+      team: [{ technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+    }, fixture.actor, startedAt);
+    if (ordered.kind !== "CREATED") throw new Error("Expected ordered completed activity");
+    await expect(repository.adjustCompletedActivity(ordered.activity.id, {
+      version: 1, reason: "No estaba asignado al final", endedAt: new Date("2026-08-06T08:01:00.000Z"),
+    }, fixture.actor, new Date("2026-08-06T12:00:00.000Z"))).resolves.toEqual({ kind: "TECHNICIAN_NOT_ASSIGNED_TO_ORDER" });
+    await expect(repository.adjustCompletedActivity(ordered.activity.id, {
+      version: 1, reason: "No puede ser futuro", endedAt: new Date("2026-08-06T12:01:00.000Z"),
+    }, fixture.actor, new Date("2026-08-06T12:00:00.000Z"))).resolves.toEqual({ kind: "INVALID_TEMPORAL_RANGE" });
+  });
+
+  it("allows an adjustment that preserves a legitimate sub-minute timer interval", async () => {
+    const id = await createPendingActivity(fixture);
+    const repository = createActivitiesOperationRepository(database);
+    await repository.startActivity(id, { version: 1 }, fixture.actor, startedAt);
+    await repository.completeActivity(id, { version: 2, result: "Cierre breve" }, fixture.actor, new Date("2026-08-06T12:00:59.999Z"));
+    await expect(repository.adjustCompletedActivity(id, {
+      version: 3, reason: "Corregir descripción", description: "Cierre breve corregido",
+    }, fixture.actor, new Date("2026-08-06T12:01:00.000Z"))).resolves.toMatchObject({
+      kind: "UPDATED", activity: { description: "Cierre breve corregido", productiveMinutes: 0, version: 4 },
+    });
+  });
+
+  it("serializes a forced concurrent adjustment through the prior and final technician lock union", async () => {
+    const firstTarget = await createActivitiesMutationRepository(database).createManualActivity({
+      ...input(fixture), startedAt: new Date("2026-08-06T08:00:00.000Z"), endedAt: new Date("2026-08-06T08:10:00.000Z"), result: "Objetivo", justification: "Registro inicial",
+    }, fixture.actor, startedAt);
+    const secondTarget = await createActivitiesMutationRepository(database).createManualActivity({
+      ...input(fixture), startedAt: new Date("2026-08-06T09:00:00.000Z"), endedAt: new Date("2026-08-06T09:10:00.000Z"), result: "Segundo objetivo", justification: "Registro inicial",
+      team: [{ technicianId: fixture.otherTechnicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+    }, fixture.actor, startedAt);
+    if (firstTarget.kind !== "CREATED" || secondTarget.kind !== "CREATED") throw new Error("Expected completed manual activities");
+    const secondDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const blockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    let release: () => void = () => undefined;
+    let markLocked: () => void = () => undefined;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+    const blocker = blockerDatabase.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fixture.otherTechnicianId}))`;
+      markLocked();
+      await hold;
+    });
+    try {
+      await locked;
+      const adjustments = Promise.all([
+        createActivitiesOperationRepository(database).adjustCompletedActivity(firstTarget.activity.id, {
+          version: 1, reason: "Primero", description: "Cambio uno",
+          team: [
+            { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+            { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
+          ],
+        }, fixture.actor, startedAt),
+        createActivitiesOperationRepository(secondDatabase).adjustCompletedActivity(secondTarget.activity.id, { version: 1, reason: "Segundo", description: "Cambio dos" }, fixture.actor, startedAt),
+      ]);
+      const deadline = Date.now() + 2_000;
+      let waiters = 0;
+      while (Date.now() < deadline) {
+        const locks = await database.$queryRaw<Array<{ waiting: bigint }>>`SELECT COUNT(*) AS waiting FROM pg_locks WHERE locktype = 'advisory' AND granted = false`;
+        waiters = Number(locks[0]?.waiting ?? 0);
+        if (waiters >= 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(waiters).toBeGreaterThanOrEqual(1);
+      release();
+      await blocker;
+      expect((await adjustments).map((result) => result.kind)).toEqual(["UPDATED", "UPDATED"]);
+      await expect(database.actividad.findMany({ where: { id: { in: [firstTarget.activity.id, secondTarget.activity.id] } }, orderBy: { id: "asc" }, select: { version: true } })).resolves.toEqual([{ version: 2 }, { version: 2 }]);
+    } finally {
+      release();
+      await Promise.allSettled([blocker]);
+      await secondDatabase.$disconnect();
+      await blockerDatabase.$disconnect();
+    }
   });
 });

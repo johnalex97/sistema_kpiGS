@@ -1,10 +1,12 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 import type { ActivityFailureKind } from "./activities.repository.types.js";
+import type { ActivityDetailRecord } from "./activities.repository.types.js";
 import type {
   ActivityActorContext,
   ActivityTeamMemberInput,
   CreateActivityInput,
   ManualActivityInput,
+  AdjustActivityInput,
 } from "./activities.types.js";
 
 export interface ValidatedActivityContext {
@@ -127,4 +129,30 @@ export async function validateActivityContext(
     return { kind: "TECHNICIAN_NOT_ASSIGNED_TO_ORDER" };
   }
   return { branchId, orderId, team };
+}
+
+export async function validateCompletedAdjustmentContext(
+  transaction: Prisma.TransactionClient,
+  activity: ActivityDetailRecord,
+  input: AdjustActivityInput,
+  actor: ActivityActorContext,
+  startedAt: Date,
+  endedAt: Date,
+): Promise<ValidatedActivityContext | { kind: ActivityFailureKind }> {
+  const team = input.team ?? activity.tecnicos.map(({ tecnico, role, participationPercentage }) => ({
+    technicianId: tecnico.id,
+    role,
+    participationPercentage: participationPercentage.toFixed(2),
+  }));
+  const context: ManualActivityInput = {
+    ...(activity.orden === null ? { branchId: activity.sucursal.id } : { orderId: activity.orden.id }),
+    activityTypeId: input.activityTypeId ?? activity.tipoActividad.id,
+    description: input.description ?? activity.description,
+    team,
+    startedAt,
+    endedAt,
+    result: input.result ?? activity.result ?? "Adjustment",
+    justification: input.reason,
+  };
+  return validateActivityContext(transaction, context, actor);
 }

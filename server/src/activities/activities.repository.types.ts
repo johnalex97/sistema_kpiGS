@@ -10,6 +10,7 @@ import type {
   PauseActivityInput,
   CompleteActivityInput,
   CancelActivityInput,
+  AdjustActivityInput,
   ReplaceActivityTeamInput,
   UpdateActivityInput,
   ActivityVersionInput,
@@ -137,9 +138,24 @@ export interface ActivitiesCloseRepository extends ActivitiesTimerRepository {
   cancelActivity(id: string, input: CancelActivityInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
 }
 
+export interface ActivitiesOperationRepository extends ActivitiesCloseRepository {
+  adjustCompletedActivity(
+    id: string,
+    input: AdjustActivityInput,
+    actor: ActivityActorContext,
+    now: Date,
+  ): Promise<ActivityMutationResult>;
+}
+
 export interface ActivitiesMutationRepository extends
   ActivitiesPendingMutationRepository,
   ActivitiesManualMutationRepository {}
+
+export type ActivitiesRepository =
+  ActivitiesReadRepository &
+  ActivitiesPendingMutationRepository &
+  ActivitiesManualMutationRepository &
+  ActivitiesOperationRepository;
 
 export type ActivityFailureKind =
   | "ACTIVITY_NOT_FOUND"
