@@ -11,6 +11,7 @@ import {
   runSerializableTransaction,
   writeActivityAudit,
 } from "./activities.mutation.repository.js";
+import { validateActivityTeam } from "./activities.repository.helpers.js";
 import { transitionActivity } from "./activities.state-machine.js";
 import type {
   ActivityActorContext,
@@ -35,9 +36,11 @@ async function lockActivity(
 }
 
 function hasValidTeam(activity: ActivityDetailRecord): boolean {
-  return activity.tecnicos.length > 0
-    && activity.tecnicos.filter(({ role }) => role === "RESPONSIBLE").length === 1
-    && new Set(activity.tecnicos.map(({ tecnico }) => tecnico.id)).size === activity.tecnicos.length;
+  return validateActivityTeam(activity.tecnicos.map(({ tecnico, role, participationPercentage }) => ({
+    technicianId: tecnico.id,
+    role,
+    participationPercentage: participationPercentage.toFixed(2),
+  }))) !== null;
 }
 
 function actorCanOperate(activity: ActivityDetailRecord, actor: ActivityActorContext): boolean {

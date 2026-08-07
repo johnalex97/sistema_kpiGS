@@ -77,13 +77,56 @@ describe("activities timer operation repository", () => {
   afterAll(async () => { await removeFixture(fixture); await disconnectTestDatabase(); });
 
   it("starts a pending activity with the injected server time on the whole team and one audit/version increment", async () => {
-    const id = await createPendingActivity(fixture);
+    const created = await createActivitiesMutationRepository(database).createActivity({
+      ...input(fixture),
+      team: [
+        { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+        { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
+      ],
+    }, fixture.actor, startedAt);
+    if (created.kind !== "CREATED") throw new Error("Expected pending team activity");
+    const id = created.activity.id;
     const result = await createActivitiesOperationRepository(database).startActivity(id, { version: 1 }, fixture.actor, startedAt);
 
     expect(result).toMatchObject({ kind: "UPDATED", activity: { id, status: "IN_PROGRESS", startedAt, version: 2 } });
     if (result.kind !== "UPDATED") return;
-    expect(result.activity.tecnicos).toMatchObject([{ tecnico: { id: fixture.technicianId }, startedAt, endedAt: null }]);
+    expect(result.activity.tecnicos.map(({ tecnico, startedAt: memberStartedAt, endedAt }) => ({
+      technicianId: tecnico.id, startedAt: memberStartedAt, endedAt,
+    }))).toEqual([
+      { technicianId: fixture.technicianId, startedAt, endedAt: null },
+      { technicianId: fixture.otherTechnicianId, startedAt, endedAt: null },
+    ]);
     await expect(database.auditoria.count({ where: { entity: "Actividad", entityId: id, action: "ACTIVITY_STARTED" } })).resolves.toBe(1);
+  });
+
+  it("rejects a persisted team whose exact credit total is invalid without changing it or auditing", async () => {
+    const invalid = await database.actividad.create({
+      data: {
+        sucursalId: fixture.branchId,
+        tipoActividadId: fixture.typeId,
+        status: "PENDING",
+        description: "Equipo con crédito inválido",
+        tecnicos: {
+          create: [{
+            tecnicoId: fixture.technicianId,
+            role: "RESPONSIBLE",
+            participationPercentage: "99.99",
+          }],
+        },
+      },
+      select: { id: true },
+    });
+    const before = await database.actividad.findUniqueOrThrow({
+      where: { id: invalid.id },
+      select: { status: true, version: true, startedAt: true, updatedAt: true, tecnicos: { select: { participationPercentage: true } } },
+    });
+
+    await expect(createActivitiesOperationRepository(database).startActivity(invalid.id, { version: 1 }, fixture.actor, startedAt)).resolves.toEqual({ kind: "INVALID_PARTICIPATION_TOTAL" });
+    await expect(database.actividad.findUniqueOrThrow({
+      where: { id: invalid.id },
+      select: { status: true, version: true, startedAt: true, updatedAt: true, tecnicos: { select: { participationPercentage: true } } },
+    })).resolves.toEqual(before);
+    await expect(database.auditoria.count({ where: { entity: "Actividad", entityId: invalid.id } })).resolves.toBe(0);
   });
 
   it("opens one shared pause and resumes by closing that same pause", async () => {

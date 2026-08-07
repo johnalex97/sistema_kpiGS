@@ -24,7 +24,9 @@ function percentageInHundredths(value: string): number | null {
   return Number(value.replace(".", ""));
 }
 
-function validTeam(team: ActivityTeamMemberInput[]): ActivityTeamMemberInput[] | null {
+export function validateActivityTeam(
+  team: ActivityTeamMemberInput[],
+): ActivityTeamMemberInput[] | null {
   const sorted = [...team].sort((left, right) => left.technicianId.localeCompare(right.technicianId));
   if (sorted.length === 0 || new Set(sorted.map(({ technicianId }) => technicianId)).size !== sorted.length) return null;
   if (sorted.filter(({ role }) => role === "RESPONSIBLE").length !== 1) return null;
@@ -117,7 +119,7 @@ export async function validateActivityContext(
       ? [{ technicianId: validOrderAssignments.find(({ role }) => role === "PRIMARY")!.tecnicoId, role: "RESPONSIBLE" as const, participationPercentage: "100.00" }]
       : [])
     : [{ technicianId: actor.technicianId!, role: "RESPONSIBLE" as const, participationPercentage: "100.00" }];
-  const team = validTeam(requestedTeam);
+  const team = validateActivityTeam(requestedTeam);
   if (!team) return invalid();
   const technicianIds = team.map(({ technicianId }) => technicianId);
   if (!(await activeTechnicians(transaction, technicianIds))) return { kind: "RESOURCE_INACTIVE" };
