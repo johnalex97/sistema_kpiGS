@@ -58,6 +58,53 @@ async function createPendingActivity(fixture: Fixture): Promise<string> {
   return created.activity.id;
 }
 
+interface AdvisoryLockRow {
+  classid: bigint;
+  objid: bigint;
+  objsubid: bigint;
+}
+
+async function waitForBackendPid(readPid: () => number | undefined): Promise<number> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const pid = readPid();
+    if (pid !== undefined) return pid;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("The adjustment transaction did not expose its backend PID");
+}
+
+async function advisoryLockHeldBy(pid: number): Promise<AdvisoryLockRow> {
+  const locks = await database.$queryRaw<AdvisoryLockRow[]>`
+    SELECT classid, objid, objsubid
+    FROM pg_locks
+    WHERE locktype = 'advisory' AND pid = ${pid} AND granted = true
+  `;
+  if (locks.length !== 1) throw new Error("Expected exactly one advisory lock held by blocker");
+  return locks[0]!;
+}
+
+async function waitForExactAdvisoryWaiter(
+  pid: number,
+  expected: AdvisoryLockRow,
+): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const locks = await database.$queryRaw<Array<AdvisoryLockRow & { granted: boolean }>>`
+      SELECT classid, objid, objsubid, granted
+      FROM pg_locks
+      WHERE locktype = 'advisory' AND pid = ${pid} AND granted = false
+    `;
+    if (locks.some((lock) => (
+      lock.classid === expected.classid
+      && lock.objid === expected.objid
+      && lock.objsubid === expected.objsubid
+    ))) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Adjustment backend ${pid} did not wait on the expected technician lock`);
+}
+
 async function removeFixture(fixture: Fixture): Promise<void> {
   const activityIds = (await database.actividad.findMany({ where: { sucursalId: fixture.branchId }, select: { id: true } })).map(({ id }) => id);
   await database.auditoria.deleteMany({ where: { entity: "Actividad", entityId: { in: activityIds } } });
@@ -500,13 +547,31 @@ describe("activities timer operation repository", () => {
     await repository.resumeActivity(id, { version: 3 }, fixture.actor, new Date("2026-08-06T12:04:00.000Z"));
     await repository.completeActivity(id, { version: 4, result: "Trabajo cerrado" }, fixture.actor, new Date("2026-08-06T12:10:00.000Z"));
 
-    await expect(repository.adjustCompletedActivity(id, {
-      version: 5, reason: "Extender el cierre", endedAt: new Date("2026-08-06T12:11:00.000Z"),
-    }, fixture.actor, new Date("2026-08-06T12:12:00.000Z"))).resolves.toMatchObject({
-      kind: "UPDATED", activity: {
-        description: "Iniciar cronómetro", observations: null, result: "Trabajo cerrado",
-        startedAt, endedAt: new Date("2026-08-06T12:11:00.000Z"), pausedMinutes: 2, productiveMinutes: 9, version: 6,
+    const adjustmentEnd = new Date("2026-08-06T12:11:00.000Z");
+    const adjustmentNow = new Date("2026-08-06T12:12:00.000Z");
+    const completeSnapshot = () => database.actividad.findUniqueOrThrow({
+      where: { id },
+      select: {
+        tipoActividadId: true, description: true, observations: true, result: true,
+        startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true, updatedAt: true,
+        tecnicos: {
+          orderBy: { tecnicoId: "asc" },
+          select: { tecnicoId: true, role: true, participationPercentage: true, startedAt: true, endedAt: true },
+        },
       },
+    });
+    const beforeEndpointAdjustment = await completeSnapshot();
+    await expect(repository.adjustCompletedActivity(id, {
+      version: 5, reason: "Extender el cierre", endedAt: adjustmentEnd,
+    }, fixture.actor, adjustmentNow)).resolves.toMatchObject({ kind: "UPDATED", activity: { version: 6 } });
+    await expect(completeSnapshot()).resolves.toEqual({
+      ...beforeEndpointAdjustment,
+      endedAt: adjustmentEnd,
+      pausedMinutes: 2,
+      productiveMinutes: 9,
+      version: 6,
+      updatedAt: adjustmentNow,
+      tecnicos: beforeEndpointAdjustment.tecnicos.map((member) => ({ ...member, endedAt: adjustmentEnd })),
     });
     const snapshot = await database.actividad.findUniqueOrThrow({ where: { id }, select: { startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true } });
     await expect(repository.adjustCompletedActivity(id, {
@@ -595,55 +660,98 @@ describe("activities timer operation repository", () => {
     });
   });
 
-  it("serializes a forced concurrent adjustment through the prior and final technician lock union", async () => {
-    const firstTarget = await createActivitiesMutationRepository(database).createManualActivity({
+  it("waits on the removed prior technician lock during a real A-to-B replacement", async () => {
+    const target = await createActivitiesMutationRepository(database).createManualActivity({
       ...input(fixture), startedAt: new Date("2026-08-06T08:00:00.000Z"), endedAt: new Date("2026-08-06T08:10:00.000Z"), result: "Objetivo", justification: "Registro inicial",
     }, fixture.actor, startedAt);
-    const secondTarget = await createActivitiesMutationRepository(database).createManualActivity({
-      ...input(fixture), startedAt: new Date("2026-08-06T09:00:00.000Z"), endedAt: new Date("2026-08-06T09:10:00.000Z"), result: "Segundo objetivo", justification: "Registro inicial",
-      team: [{ technicianId: fixture.otherTechnicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
-    }, fixture.actor, startedAt);
-    if (firstTarget.kind !== "CREATED" || secondTarget.kind !== "CREATED") throw new Error("Expected completed manual activities");
-    const secondDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    if (target.kind !== "CREATED") throw new Error("Expected completed manual activity");
+    const operationDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
     const blockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    let operationPid: number | undefined;
+    let blockerPid: number | undefined;
     let release: () => void = () => undefined;
     let markLocked: () => void = () => undefined;
     const hold = new Promise<void>((resolve) => { release = resolve; });
     const locked = new Promise<void>((resolve) => { markLocked = resolve; });
-    const blocker = blockerDatabase.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fixture.otherTechnicianId}))`;
+    const transaction = operationDatabase.$transaction.bind(operationDatabase);
+    const observedDatabase = {
+      ...operationDatabase,
+      $transaction: (callback: (transactionClient: typeof operationDatabase) => Promise<unknown>) => transaction(async (transactionClient) => {
+        const backend = await transactionClient.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        operationPid = backend[0]!.pid;
+        return callback(transactionClient as typeof operationDatabase);
+      }),
+    };
+    const blocker = blockerDatabase.$transaction(async (transactionClient) => {
+      const backend = await transactionClient.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+      blockerPid = backend[0]!.pid;
+      await transactionClient.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fixture.technicianId}))`;
       markLocked();
       await hold;
     });
     try {
       await locked;
-      const adjustments = Promise.all([
-        createActivitiesOperationRepository(database).adjustCompletedActivity(firstTarget.activity.id, {
-          version: 1, reason: "Primero", description: "Cambio uno",
-          team: [
-            { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "50.00" },
-            { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
-          ],
-        }, fixture.actor, startedAt),
-        createActivitiesOperationRepository(secondDatabase).adjustCompletedActivity(secondTarget.activity.id, { version: 1, reason: "Segundo", description: "Cambio dos" }, fixture.actor, startedAt),
-      ]);
-      const deadline = Date.now() + 2_000;
-      let waiters = 0;
-      while (Date.now() < deadline) {
-        const locks = await database.$queryRaw<Array<{ waiting: bigint }>>`SELECT COUNT(*) AS waiting FROM pg_locks WHERE locktype = 'advisory' AND granted = false`;
-        waiters = Number(locks[0]?.waiting ?? 0);
-        if (waiters >= 1) break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      expect(waiters).toBeGreaterThanOrEqual(1);
+      const adjustment = createActivitiesOperationRepository(observedDatabase as unknown as typeof database).adjustCompletedActivity(target.activity.id, {
+        version: 1, reason: "Reemplazar responsable", team: [{ technicianId: fixture.otherTechnicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+      }, fixture.actor, startedAt);
+      await waitForExactAdvisoryWaiter(await waitForBackendPid(() => operationPid), await advisoryLockHeldBy(blockerPid!));
       release();
       await blocker;
-      expect((await adjustments).map((result) => result.kind)).toEqual(["UPDATED", "UPDATED"]);
-      await expect(database.actividad.findMany({ where: { id: { in: [firstTarget.activity.id, secondTarget.activity.id] } }, orderBy: { id: "asc" }, select: { version: true } })).resolves.toEqual([{ version: 2 }, { version: 2 }]);
+      await expect(adjustment).resolves.toMatchObject({ kind: "UPDATED", activity: { version: 2 } });
     } finally {
       release();
       await Promise.allSettled([blocker]);
-      await secondDatabase.$disconnect();
+      await operationDatabase.$disconnect();
+      await blockerDatabase.$disconnect();
+    }
+  });
+
+  it("waits on the added final technician lock during a real A-to-A-plus-B replacement", async () => {
+    const target = await createActivitiesMutationRepository(database).createManualActivity({
+      ...input(fixture), startedAt: new Date("2026-08-06T09:00:00.000Z"), endedAt: new Date("2026-08-06T09:10:00.000Z"), result: "Objetivo", justification: "Registro inicial",
+    }, fixture.actor, startedAt);
+    if (target.kind !== "CREATED") throw new Error("Expected completed manual activity");
+    const operationDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const blockerDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    let operationPid: number | undefined;
+    let blockerPid: number | undefined;
+    let release: () => void = () => undefined;
+    let markLocked: () => void = () => undefined;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+    const transaction = operationDatabase.$transaction.bind(operationDatabase);
+    const observedDatabase = {
+      ...operationDatabase,
+      $transaction: (callback: (transactionClient: typeof operationDatabase) => Promise<unknown>) => transaction(async (transactionClient) => {
+        const backend = await transactionClient.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        operationPid = backend[0]!.pid;
+        return callback(transactionClient as typeof operationDatabase);
+      }),
+    };
+    const blocker = blockerDatabase.$transaction(async (transactionClient) => {
+      const backend = await transactionClient.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+      blockerPid = backend[0]!.pid;
+      await transactionClient.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fixture.otherTechnicianId}))`;
+      markLocked();
+      await hold;
+    });
+    try {
+      await locked;
+      const adjustment = createActivitiesOperationRepository(observedDatabase as unknown as typeof database).adjustCompletedActivity(target.activity.id, {
+        version: 1, reason: "Agregar participante",
+        team: [
+          { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+          { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
+        ],
+      }, fixture.actor, startedAt);
+      await waitForExactAdvisoryWaiter(await waitForBackendPid(() => operationPid), await advisoryLockHeldBy(blockerPid!));
+      release();
+      await blocker;
+      await expect(adjustment).resolves.toMatchObject({ kind: "UPDATED", activity: { version: 2 } });
+    } finally {
+      release();
+      await Promise.allSettled([blocker]);
+      await operationDatabase.$disconnect();
       await blockerDatabase.$disconnect();
     }
   });
