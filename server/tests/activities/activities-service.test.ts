@@ -22,6 +22,8 @@ import type {
 
 const fixedNow = new Date("2026-08-07T12:00:00.000Z");
 const activityId = "10000000-0000-4000-8000-000000000001";
+const foreignActivityId = "10000000-0000-4000-8000-000000000004";
+const missingActivityId = "10000000-0000-4000-8000-000000000005";
 const technicianId = "10000000-0000-4000-8000-000000000002";
 const otherTechnicianId = "10000000-0000-4000-8000-000000000003";
 
@@ -124,6 +126,16 @@ function expectForbidden(operation: Promise<unknown>) {
     name: "ApiError",
     statusCode: 403,
     code: "FORBIDDEN",
+    message: "No tiene permiso para realizar esta acción",
+  });
+}
+
+function expectActivityNotFound(operation: Promise<unknown>) {
+  return expect(operation).rejects.toMatchObject({
+    name: "ApiError",
+    statusCode: 404,
+    code: "ACTIVITY_NOT_FOUND",
+    message: "La actividad solicitada no existe",
   });
 }
 
@@ -177,6 +189,22 @@ describe("ActivitiesService reads", () => {
     await expect(createActivitiesService(repository).listActivities(
       listFilters, actor(["ACTIVITIES_VIEW_ALL"]),
     )).resolves.toMatchObject({ pagination: { totalPages: 0 } });
+  });
+
+  it("allows a linked technician to read the activity-type catalog", async () => {
+    const repository = repositoryWithSuccess();
+
+    await expect(createActivitiesService(repository).listActivityTypes(
+      actor(["ACTIVITIES_CREATE_OWN"], technicianId),
+    )).resolves.toEqual([activityType()]);
+    expect(repository.listActivityTypes).toHaveBeenCalledTimes(1);
+  });
+
+  it("denies the catalog without a qualifying activity permission", async () => {
+    const repository = repositoryWithSuccess();
+
+    await expectForbidden(createActivitiesService(repository).listActivityTypes(actor([])));
+    expect(repository.listActivityTypes).not.toHaveBeenCalled();
   });
 
   it("conceals foreign and missing scoped details as the same not-found result", async () => {
@@ -256,6 +284,32 @@ describe("ActivitiesService mutations", () => {
     }
   });
 
+  it.each([
+    { name: "an empty team", team: [] },
+    { name: "a self participant", team: [{ technicianId, role: "PARTICIPANT" as const, participationPercentage: "100.00" }] },
+    { name: "a non-100 self percentage", team: [{ technicianId, role: "RESPONSIBLE" as const, participationPercentage: "99.99" }] },
+  ])("rejects own creation with $name before every repository mutation", async ({ team }) => {
+    const repository = repositoryWithSuccess();
+    const service = createActivitiesService(repository);
+    const technician = actor(["ACTIVITIES_CREATE_OWN"], technicianId);
+
+    await expectForbidden(service.createActivity({ ...createInput, team }, technician));
+    await expectForbidden(service.createManualActivity({ ...manualInput, team }, technician));
+    expectNoMutationCalls(repository);
+  });
+
+  it.each([
+    ["no create permission", actor(["ACTIVITIES_OPERATE_OWN"], technicianId)],
+    ["no linked technician", actor(["ACTIVITIES_CREATE_OWN"])],
+  ] as const)("denies pending and manual own creation with %s", async (_name, deniedActor) => {
+    const repository = repositoryWithSuccess();
+    const service = createActivitiesService(repository);
+
+    await expectForbidden(service.createActivity(createInput, deniedActor));
+    await expectForbidden(service.createManualActivity(manualInput, deniedActor));
+    expectNoMutationCalls(repository);
+  });
+
   it("allows linked technicians to delegate own timer operations and cancellation", async () => {
     const repository = repositoryWithSuccess();
     const service = createActivitiesService(repository, () => fixedNow);
@@ -272,6 +326,51 @@ describe("ActivitiesService mutations", () => {
     expect(repository.resumeActivity).toHaveBeenCalledWith(activityId, versionInput, technician, fixedNow);
     expect(repository.completeActivity).toHaveBeenCalledWith(activityId, completeInput, technician, fixedNow);
     expect(repository.cancelActivity).toHaveBeenCalledWith(activityId, cancelInput, technician, fixedNow);
+    expect(repository.findActivityById).toHaveBeenNthCalledWith(1, activityId, { kind: "TECHNICIAN", technicianId });
+    expect(repository.findActivityById).toHaveBeenNthCalledWith(2, activityId, { kind: "TECHNICIAN", technicianId });
+    expect(repository.findActivityById).toHaveBeenNthCalledWith(3, activityId, { kind: "TECHNICIAN", technicianId });
+    expect(repository.findActivityById).toHaveBeenNthCalledWith(4, activityId, { kind: "TECHNICIAN", technicianId });
+    expect(repository.findActivityById).toHaveBeenNthCalledWith(5, activityId, { kind: "TECHNICIAN", technicianId });
+  });
+
+  it.each([
+    {
+      name: "start",
+      actor: actor(["ACTIVITIES_OPERATE_OWN"], technicianId),
+      invoke: (service: ReturnType<typeof createActivitiesService>, id: string, operationActor: ActivityActorContext) => service.startActivity(id, versionInput, operationActor),
+    },
+    {
+      name: "pause",
+      actor: actor(["ACTIVITIES_OPERATE_OWN"], technicianId),
+      invoke: (service: ReturnType<typeof createActivitiesService>, id: string, operationActor: ActivityActorContext) => service.pauseActivity(id, pauseInput, operationActor),
+    },
+    {
+      name: "resume",
+      actor: actor(["ACTIVITIES_OPERATE_OWN"], technicianId),
+      invoke: (service: ReturnType<typeof createActivitiesService>, id: string, operationActor: ActivityActorContext) => service.resumeActivity(id, versionInput, operationActor),
+    },
+    {
+      name: "complete",
+      actor: actor(["ACTIVITIES_OPERATE_OWN"], technicianId),
+      invoke: (service: ReturnType<typeof createActivitiesService>, id: string, operationActor: ActivityActorContext) => service.completeActivity(id, completeInput, operationActor),
+    },
+    {
+      name: "cancel",
+      actor: actor(["ACTIVITIES_CREATE_OWN"], technicianId),
+      invoke: (service: ReturnType<typeof createActivitiesService>, id: string, operationActor: ActivityActorContext) => service.cancelActivity(id, cancelInput, operationActor),
+    },
+  ])("returns the same not-found result for foreign and missing own $name activities", async (scenario) => {
+    const repository = repositoryWithSuccess();
+    vi.mocked(repository.findActivityById).mockResolvedValue(null);
+    const service = createActivitiesService(repository, () => fixedNow);
+    const scope = { kind: "TECHNICIAN" as const, technicianId };
+
+    await expectActivityNotFound(scenario.invoke(service, foreignActivityId, scenario.actor));
+    await expectActivityNotFound(scenario.invoke(service, missingActivityId, scenario.actor));
+
+    expect(repository.findActivityById).toHaveBeenNthCalledWith(1, foreignActivityId, scope);
+    expect(repository.findActivityById).toHaveBeenNthCalledWith(2, missingActivityId, scope);
+    expectNoMutationCalls(repository);
   });
 
   it("maps a participant ownership rejection without leaking activity existence", async () => {
@@ -280,7 +379,54 @@ describe("ActivitiesService mutations", () => {
     const technician = actor(["ACTIVITIES_OPERATE_OWN"], otherTechnicianId);
 
     await expectForbidden(createActivitiesService(repository, () => fixedNow).startActivity(activityId, versionInput, technician));
+    expect(repository.findActivityById).toHaveBeenCalledWith(
+      activityId, { kind: "TECHNICIAN", technicianId: otherTechnicianId },
+    );
     expect(repository.startActivity).toHaveBeenCalledWith(activityId, versionInput, technician, fixedNow);
+  });
+
+  it.each([
+    {
+      name: "pause with create-own instead of operate-own",
+      invoke: (service: ReturnType<typeof createActivitiesService>, operationActor: ActivityActorContext) => service.pauseActivity(activityId, pauseInput, operationActor),
+      operationActor: actor(["ACTIVITIES_CREATE_OWN"], technicianId),
+    },
+    {
+      name: "resume with create-own instead of operate-own",
+      invoke: (service: ReturnType<typeof createActivitiesService>, operationActor: ActivityActorContext) => service.resumeActivity(activityId, versionInput, operationActor),
+      operationActor: actor(["ACTIVITIES_CREATE_OWN"], technicianId),
+    },
+    {
+      name: "complete with create-own instead of operate-own",
+      invoke: (service: ReturnType<typeof createActivitiesService>, operationActor: ActivityActorContext) => service.completeActivity(activityId, completeInput, operationActor),
+      operationActor: actor(["ACTIVITIES_CREATE_OWN"], technicianId),
+    },
+    {
+      name: "pause without a linked technician",
+      invoke: (service: ReturnType<typeof createActivitiesService>, operationActor: ActivityActorContext) => service.pauseActivity(activityId, pauseInput, operationActor),
+      operationActor: actor(["ACTIVITIES_OPERATE_OWN"]),
+    },
+    {
+      name: "resume without a linked technician",
+      invoke: (service: ReturnType<typeof createActivitiesService>, operationActor: ActivityActorContext) => service.resumeActivity(activityId, versionInput, operationActor),
+      operationActor: actor(["ACTIVITIES_OPERATE_OWN"]),
+    },
+    {
+      name: "complete without a linked technician",
+      invoke: (service: ReturnType<typeof createActivitiesService>, operationActor: ActivityActorContext) => service.completeActivity(activityId, completeInput, operationActor),
+      operationActor: actor(["ACTIVITIES_OPERATE_OWN"]),
+    },
+    {
+      name: "cancel without a linked technician",
+      invoke: (service: ReturnType<typeof createActivitiesService>, operationActor: ActivityActorContext) => service.cancelActivity(activityId, cancelInput, operationActor),
+      operationActor: actor(["ACTIVITIES_CREATE_OWN"]),
+    },
+  ])("denies $name before repository access", async ({ invoke, operationActor }) => {
+    const repository = repositoryWithSuccess();
+
+    await expectForbidden(invoke(createActivitiesService(repository), operationActor));
+    expect(repository.findActivityById).not.toHaveBeenCalled();
+    expectNoMutationCalls(repository);
   });
 
   it("denies unauthorized mutations before repository access", async () => {

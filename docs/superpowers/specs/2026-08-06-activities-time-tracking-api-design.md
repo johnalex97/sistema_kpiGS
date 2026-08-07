@@ -189,8 +189,12 @@ Reglas:
 - todas las mutaciones exigen un `Origin` permitido.
 
 Los IDs ajenos y los inexistentes devolverán la misma respuesta `404` para no
-revelar existencia. El servicio volverá a comprobar propiedad dentro de la
-transacción en operaciones sensibles.
+revelar existencia. Antes de iniciar, pausar, reanudar, completar o cancelar
+mediante un permiso propio, el servicio consultará la actividad con el alcance
+del técnico: si no es visible devolverá `ACTIVITY_NOT_FOUND` (`404`) y no
+invocará la mutación. Una actividad visible a un participante sin propiedad
+operativa puede devolver `FORBIDDEN`; el repositorio volverá a comprobar la
+propiedad dentro de la transacción en operaciones sensibles.
 
 ## 8. Máquina de estados
 

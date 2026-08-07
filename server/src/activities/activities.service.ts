@@ -75,16 +75,17 @@ function requireOwnCreate(actor: ActivityActorContext): string {
   return actor.technicianId;
 }
 
-function requireOperation(actor: ActivityActorContext): void {
-  if (hasPermission(actor, "ACTIVITIES_MANAGE")) return;
+function ownOperationScope(actor: ActivityActorContext): ActivityAccessScope | null {
+  if (hasPermission(actor, "ACTIVITIES_MANAGE")) return null;
   if (!hasPermission(actor, "ACTIVITIES_OPERATE_OWN") || actor.technicianId === null) {
     throw forbidden();
   }
+  return { kind: "TECHNICIAN", technicianId: actor.technicianId };
 }
 
-function requireCancellation(actor: ActivityActorContext): void {
-  if (hasPermission(actor, "ACTIVITIES_MANAGE")) return;
-  requireOwnCreate(actor);
+function ownCancellationScope(actor: ActivityActorContext): ActivityAccessScope | null {
+  if (hasPermission(actor, "ACTIVITIES_MANAGE")) return null;
+  return { kind: "TECHNICIAN", technicianId: requireOwnCreate(actor) };
 }
 
 function accessScope(actor: ActivityActorContext): ActivityAccessScope {
@@ -168,6 +169,17 @@ export function createActivitiesService(
     return mapMutationResult(await operation(timestamp));
   }
 
+  async function mutateOwn(
+    id: string,
+    scope: ActivityAccessScope | null,
+    operation: (timestamp: Date) => Promise<ActivityMutationResult>,
+  ): Promise<PublicActivityDetail> {
+    if (scope !== null && await repository.findActivityById(id, scope) === null) {
+      throw errors.ACTIVITY_NOT_FOUND();
+    }
+    return mutate(operation);
+  }
+
   return {
     async listActivityTypes(actor) {
       accessScope(actor);
@@ -215,28 +227,43 @@ export function createActivitiesService(
     },
 
     async startActivity(id, input, actor) {
-      requireOperation(actor);
-      return mutate((timestamp) => repository.startActivity(id, input, actor, timestamp));
+      return mutateOwn(
+        id,
+        ownOperationScope(actor),
+        (timestamp) => repository.startActivity(id, input, actor, timestamp),
+      );
     },
 
     async pauseActivity(id, input, actor) {
-      requireOperation(actor);
-      return mutate((timestamp) => repository.pauseActivity(id, input, actor, timestamp));
+      return mutateOwn(
+        id,
+        ownOperationScope(actor),
+        (timestamp) => repository.pauseActivity(id, input, actor, timestamp),
+      );
     },
 
     async resumeActivity(id, input, actor) {
-      requireOperation(actor);
-      return mutate((timestamp) => repository.resumeActivity(id, input, actor, timestamp));
+      return mutateOwn(
+        id,
+        ownOperationScope(actor),
+        (timestamp) => repository.resumeActivity(id, input, actor, timestamp),
+      );
     },
 
     async completeActivity(id, input, actor) {
-      requireOperation(actor);
-      return mutate((timestamp) => repository.completeActivity(id, input, actor, timestamp));
+      return mutateOwn(
+        id,
+        ownOperationScope(actor),
+        (timestamp) => repository.completeActivity(id, input, actor, timestamp),
+      );
     },
 
     async cancelActivity(id, input, actor) {
-      requireCancellation(actor);
-      return mutate((timestamp) => repository.cancelActivity(id, input, actor, timestamp));
+      return mutateOwn(
+        id,
+        ownCancellationScope(actor),
+        (timestamp) => repository.cancelActivity(id, input, actor, timestamp),
+      );
     },
 
     async adjustCompletedActivity(id, input, actor) {
