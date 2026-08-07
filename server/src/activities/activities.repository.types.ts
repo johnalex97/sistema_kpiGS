@@ -8,6 +8,8 @@ import type {
   CreateActivityInput,
   ManualActivityInput,
   PauseActivityInput,
+  CompleteActivityInput,
+  CancelActivityInput,
   ReplaceActivityTeamInput,
   UpdateActivityInput,
   ActivityVersionInput,
@@ -128,6 +130,11 @@ export interface ActivitiesTimerRepository {
   startActivity(id: string, input: ActivityVersionInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
   pauseActivity(id: string, input: PauseActivityInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
   resumeActivity(id: string, input: ActivityVersionInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
+}
+
+export interface ActivitiesCloseRepository extends ActivitiesTimerRepository {
+  completeActivity(id: string, input: CompleteActivityInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
+  cancelActivity(id: string, input: CancelActivityInput, actor: ActivityActorContext, now: Date): Promise<ActivityMutationResult>;
 }
 
 export interface ActivitiesMutationRepository extends

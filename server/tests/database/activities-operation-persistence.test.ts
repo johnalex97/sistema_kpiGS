@@ -258,4 +258,166 @@ describe("activities timer operation repository", () => {
       await blockerDatabase.$disconnect();
     }
   });
+
+  it("completes a running team with raw-millisecond pause accounting, final timestamps, and an allowlisted audit", async () => {
+    const created = await createActivitiesMutationRepository(database).createActivity({
+      ...input(fixture),
+      team: [
+        { technicianId: fixture.technicianId, role: "RESPONSIBLE", participationPercentage: "50.00" },
+        { technicianId: fixture.otherTechnicianId, role: "PARTICIPANT", participationPercentage: "50.00" },
+      ],
+    }, fixture.actor, startedAt);
+    if (created.kind !== "CREATED") throw new Error("Expected pending team activity");
+    const repository = createActivitiesOperationRepository(database);
+    const pausedAt = new Date("2026-08-06T12:00:30.000Z");
+    const resumedAt = new Date("2026-08-06T12:01:31.000Z");
+    const completedAt = new Date("2026-08-06T12:02:30.000Z");
+
+    await repository.startActivity(created.activity.id, { version: 1 }, fixture.actor, startedAt);
+    await repository.pauseActivity(created.activity.id, { version: 2, reason: "Esperando validaciÃ³n" }, fixture.actor, pausedAt);
+    await repository.resumeActivity(created.activity.id, { version: 3 }, fixture.actor, resumedAt);
+    const result = await repository.completeActivity(created.activity.id, {
+      version: 4,
+      result: "Servicio resuelto",
+      observations: "Validado con cliente",
+    }, fixture.actor, completedAt);
+
+    expect(result).toMatchObject({
+      kind: "UPDATED",
+      activity: {
+        id: created.activity.id,
+        status: "COMPLETED",
+        result: "Servicio resuelto",
+        observations: "Validado con cliente",
+        endedAt: completedAt,
+        pausedMinutes: 1,
+        productiveMinutes: 1,
+        version: 5,
+      },
+    });
+    if (result.kind !== "UPDATED") return;
+    expect(result.activity.tecnicos.map(({ tecnico, startedAt: memberStartedAt, endedAt }) => ({
+      technicianId: tecnico.id, startedAt: memberStartedAt, endedAt,
+    }))).toEqual([
+      { technicianId: fixture.technicianId, startedAt, endedAt: completedAt },
+      { technicianId: fixture.otherTechnicianId, startedAt, endedAt: completedAt },
+    ]);
+    await expect(database.auditoria.findFirstOrThrow({
+      where: { entity: "Actividad", entityId: created.activity.id, action: "ACTIVITY_COMPLETED" },
+      select: { reason: true, beforeData: true, afterData: true, occurredAt: true },
+    })).resolves.toEqual(expect.objectContaining({
+      reason: null,
+      occurredAt: completedAt,
+      beforeData: expect.objectContaining({ status: "IN_PROGRESS", version: 4 }),
+      afterData: expect.objectContaining({ status: "COMPLETED", version: 5 }),
+    }));
+  });
+
+  it("rejects completion with an open pause and preserves the running activity", async () => {
+    const id = await createPendingActivity(fixture);
+    const repository = createActivitiesOperationRepository(database);
+    await repository.startActivity(id, { version: 1 }, fixture.actor, startedAt);
+    await repository.pauseActivity(id, { version: 2, reason: "Esperando repuesto" }, fixture.actor, new Date("2026-08-06T12:01:00.000Z"));
+    const before = await database.actividad.findUniqueOrThrow({
+      where: { id },
+      select: { status: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true },
+    });
+
+    await expect(repository.completeActivity(id, { version: 3, result: "No debe completar" }, fixture.actor, new Date("2026-08-06T12:02:00.000Z"))).resolves.toEqual({ kind: "INVALID_ACTIVITY_STATE" });
+    await expect(database.actividad.findUniqueOrThrow({
+      where: { id },
+      select: { status: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true },
+    })).resolves.toEqual(before);
+  });
+
+  it("enforces contextual cancellation, closes an open pause, and keeps cancelled work out of productive minutes", async () => {
+    const repository = createActivitiesOperationRepository(database);
+    const ownActor = { ...fixture.actor, technicianId: fixture.technicianId, permissions: ["ACTIVITIES_CREATE_OWN"] };
+    const pendingId = await createPendingActivity(fixture);
+    await expect(repository.cancelActivity(pendingId, { version: 1, reason: "Cliente cancelÃ³" }, ownActor, new Date("2026-08-06T12:01:00.000Z"))).resolves.toMatchObject({
+      kind: "UPDATED", activity: { status: "CANCELLED", productiveMinutes: null, version: 2 },
+    });
+
+    const runningId = await createPendingActivity(fixture);
+    await repository.startActivity(runningId, { version: 1 }, fixture.actor, startedAt);
+    await expect(repository.cancelActivity(runningId, { version: 2, reason: "TÃ©cnico no puede" }, ownActor, new Date("2026-08-06T12:01:00.000Z"))).resolves.toEqual({ kind: "FORBIDDEN" });
+    await repository.pauseActivity(runningId, { version: 2, reason: "En espera" }, fixture.actor, new Date("2026-08-06T12:01:00.000Z"));
+    const cancelledAt = new Date("2026-08-06T12:02:30.000Z");
+    const cancelled = await repository.cancelActivity(runningId, { version: 3, reason: "Orden retirada" }, fixture.actor, cancelledAt);
+
+    expect(cancelled).toMatchObject({ kind: "UPDATED", activity: {
+      status: "CANCELLED", startedAt, endedAt: null, pausedMinutes: 0, productiveMinutes: null, version: 4,
+      pausas: [{ endedAt: cancelledAt, reason: "En espera" }],
+    } });
+    await expect(database.auditoria.findFirstOrThrow({
+      where: { entity: "Actividad", entityId: runningId, action: "ACTIVITY_CANCELLED" },
+      select: { reason: true, occurredAt: true },
+    })).resolves.toEqual({ reason: "Orden retirada", occurredAt: cancelledAt });
+    await expect(repository.cancelActivity(runningId, { version: 4, reason: "Reintento" }, fixture.actor, cancelledAt)).resolves.toEqual({ kind: "INVALID_ACTIVITY_STATE" });
+
+    const completedId = await createPendingActivity(fixture);
+    await repository.startActivity(completedId, { version: 1 }, fixture.actor, startedAt);
+    await expect(repository.completeActivity(completedId, { version: 2, result: "Cerrada" }, ownActor, new Date("2026-08-06T12:00:59.999Z"))).resolves.toMatchObject({
+      kind: "UPDATED", activity: { pausedMinutes: 0, productiveMinutes: 0 },
+    });
+    await expect(repository.cancelActivity(completedId, { version: 3, reason: "No reabrir" }, ownActor, cancelledAt)).resolves.toEqual({ kind: "INVALID_ACTIVITY_STATE" });
+  });
+
+  it("rolls back completion timestamps, minutes, team, pauses, version, and audit when its audit write fails", async () => {
+    const id = await createPendingActivity(fixture);
+    const repository = createActivitiesOperationRepository(database);
+    await repository.startActivity(id, { version: 1 }, fixture.actor, startedAt);
+    await repository.pauseActivity(id, { version: 2, reason: "Pausa cerrada" }, fixture.actor, new Date("2026-08-06T12:01:00.000Z"));
+    await repository.resumeActivity(id, { version: 3 }, fixture.actor, new Date("2026-08-06T12:02:00.000Z"));
+    const before = () => database.actividad.findUniqueOrThrow({
+      where: { id },
+      select: {
+        status: true, startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true, updatedAt: true,
+        tecnicos: { orderBy: { tecnicoId: "asc" }, select: { startedAt: true, endedAt: true } },
+        pausas: { orderBy: { id: "asc" }, select: { startedAt: true, endedAt: true, reason: true } },
+      },
+    });
+    const snapshot = await before();
+    const transaction = database.$transaction.bind(database);
+    const failingDatabase = {
+      ...database,
+      $transaction: (callback: (transactionClient: typeof database) => Promise<unknown>) => transaction(async (transactionClient) => {
+        vi.spyOn(transactionClient.auditoria, "create").mockRejectedValueOnce(new Error("audit failed"));
+        return callback(transactionClient as typeof database);
+      }),
+    };
+
+    await expect(createActivitiesOperationRepository(failingDatabase as unknown as typeof database).completeActivity(id, { version: 4, result: "No debe persistir" }, fixture.actor, new Date("2026-08-06T12:03:00.000Z"))).rejects.toThrow("audit failed");
+    await expect(before()).resolves.toEqual(snapshot);
+    await expect(database.auditoria.count({ where: { entity: "Actividad", entityId: id } })).resolves.toBe(4);
+  });
+
+  it("rolls back cancellation state, open-pause closure, timestamps, version, and audit when its audit write fails", async () => {
+    const id = await createPendingActivity(fixture);
+    const repository = createActivitiesOperationRepository(database);
+    await repository.startActivity(id, { version: 1 }, fixture.actor, startedAt);
+    const pausedAt = new Date("2026-08-06T12:01:00.000Z");
+    await repository.pauseActivity(id, { version: 2, reason: "No cerrar todavÃ­a" }, fixture.actor, pausedAt);
+    const before = () => database.actividad.findUniqueOrThrow({
+      where: { id },
+      select: {
+        status: true, startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, version: true, updatedAt: true,
+        tecnicos: { orderBy: { tecnicoId: "asc" }, select: { startedAt: true, endedAt: true } },
+        pausas: { orderBy: { id: "asc" }, select: { startedAt: true, endedAt: true, reason: true } },
+      },
+    });
+    const snapshot = await before();
+    const transaction = database.$transaction.bind(database);
+    const failingDatabase = {
+      ...database,
+      $transaction: (callback: (transactionClient: typeof database) => Promise<unknown>) => transaction(async (transactionClient) => {
+        vi.spyOn(transactionClient.auditoria, "create").mockRejectedValueOnce(new Error("audit failed"));
+        return callback(transactionClient as typeof database);
+      }),
+    };
+
+    await expect(createActivitiesOperationRepository(failingDatabase as unknown as typeof database).cancelActivity(id, { version: 3, reason: "No debe persistir" }, fixture.actor, new Date("2026-08-06T12:03:00.000Z"))).rejects.toThrow("audit failed");
+    await expect(before()).resolves.toEqual(snapshot);
+    await expect(database.auditoria.count({ where: { entity: "Actividad", entityId: id } })).resolves.toBe(3);
+  });
 });

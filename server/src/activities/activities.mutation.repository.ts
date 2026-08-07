@@ -75,7 +75,9 @@ export async function writeActivityAudit(
     | "ACTIVITY_MANUAL_RECORDED"
     | "ACTIVITY_STARTED"
     | "ACTIVITY_PAUSED"
-    | "ACTIVITY_RESUMED",
+    | "ACTIVITY_RESUMED"
+    | "ACTIVITY_COMPLETED"
+    | "ACTIVITY_CANCELLED",
   activity: ActivityDetailRecord,
   actor: ActivityActorContext,
   now: Date,
