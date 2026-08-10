@@ -132,7 +132,13 @@ async function aggregateSnapshot(activityId: string) {
   return {
     activity: {
       id: activity.id,
+      branchId: activity.sucursalId,
+      orderId: activity.ordenId,
+      activityTypeId: activity.tipoActividadId,
       status: activity.status,
+      description: activity.description,
+      observations: activity.observations,
+      result: activity.result,
       version: activity.version,
       startedAt: iso(activity.startedAt),
       endedAt: iso(activity.endedAt),
@@ -140,7 +146,10 @@ async function aggregateSnapshot(activityId: string) {
       productiveMinutes: activity.productiveMinutes,
       createdAt: iso(activity.createdAt),
       updatedAt: iso(activity.updatedAt),
+      deletedAt: iso(activity.deletedAt),
       team: activity.tecnicos.map((member) => ({
+        id: member.id,
+        activityId: member.actividadId,
         technicianId: member.tecnicoId,
         role: member.role,
         participationPercentage: member.participationPercentage.toFixed(2),
@@ -149,9 +158,12 @@ async function aggregateSnapshot(activityId: string) {
       })),
       pauses: activity.pausas.map((pause) => ({
         id: pause.id,
+        activityId: pause.actividadId,
         startedAt: iso(pause.startedAt),
         endedAt: iso(pause.endedAt),
         reason: pause.reason,
+        userId: pause.userId,
+        createdAt: iso(pause.createdAt),
       })),
     },
     audits: audits.map((audit) => ({
@@ -165,6 +177,35 @@ async function aggregateSnapshot(activityId: string) {
       afterData: audit.afterData,
     })),
   };
+}
+
+async function writeScopeSnapshot(
+  description: string,
+  technicianIds: readonly string[],
+) {
+  const activities = await database.actividad.findMany({
+    where: { description },
+    orderBy: { id: "asc" },
+    select: { id: true },
+  });
+  return {
+    description,
+    technicianIds: [...technicianIds].sort(),
+    activities: await Promise.all(activities.map(({ id }) => aggregateSnapshot(id))),
+  };
+}
+
+async function captureWriteScope(
+  description: string,
+  technicianIds: readonly string[],
+) {
+  const snapshot = await writeScopeSnapshot(description, technicianIds);
+  for (const aggregate of snapshot.activities) {
+    if (!createdActivityIds.includes(aggregate.activity.id)) {
+      createdActivityIds.push(aggregate.activity.id);
+    }
+  }
+  return snapshot;
 }
 
 describe("activities HTTP", () => {
@@ -301,17 +342,21 @@ describe("activities HTTP", () => {
     createdActivityIds.push(target.body.data.id);
     const before = await aggregateSnapshot(target.body.data.id);
     const noPermissions = await authenticatedAgent(users.noActivityPermissions);
+    const createDescription = "CreaciÃ³n denegada HTTP";
+    const createBefore = await writeScopeSnapshot(createDescription, [technicianIds.foreign]);
     const requests = [
-      () => noPermissions.get("/api/v1/activities"),
-      () => noPermissions.post("/api/v1/activities").set("Origin", allowedOrigin).send(pendingInput("CreaciÃ³n denegada HTTP")),
-      () => noPermissions.put(`/api/v1/activities/${target.body.data.id}/team`).set("Origin", allowedOrigin).send({ version: 1, team: [{ technicianId: technicianIds.foreign, role: "RESPONSIBLE", participationPercentage: "100.00" }] }),
-      () => noPermissions.post(`/api/v1/activities/${target.body.data.id}/start`).set("Origin", allowedOrigin).send({ version: 1 }),
+      await noPermissions.get("/api/v1/activities"),
+      await noPermissions.post("/api/v1/activities").set("Origin", allowedOrigin).send(pendingInput(createDescription)),
+      await noPermissions.put(`/api/v1/activities/${target.body.data.id}/team`).set("Origin", allowedOrigin).send({ version: 1, team: [{ technicianId: technicianIds.foreign, role: "RESPONSIBLE", participationPercentage: "100.00" }] }),
+      await noPermissions.post(`/api/v1/activities/${target.body.data.id}/start`).set("Origin", allowedOrigin).send({ version: 1 }),
     ];
-    for (const send of requests) {
-      const response = await send().expect(403);
+    const createAfter = await captureWriteScope(createDescription, [technicianIds.foreign]);
+    for (const response of requests) {
+      expect(response.status).toBe(403);
       expect(response.body).toMatchObject({ success: false, data: null, errors: [{ code: "FORBIDDEN" }], meta: { requestId: expect.any(String) } });
     }
     expect(await aggregateSnapshot(target.body.data.id)).toEqual(before);
+    expect(createAfter).toEqual(createBefore);
   });
 
   it("rejects adversarial requests without leaking or mutating activities", async () => {
@@ -321,20 +366,28 @@ describe("activities HTTP", () => {
     await request(app).post("/api/v1/activities").set("Origin", allowedOrigin).send({}).expect(401);
 
     const provisional = await authenticatedAgent(users.provisional);
+    const provisionalDescription = "Provisional HTTP";
+    const provisionalBefore = await writeScopeSnapshot(provisionalDescription, [technicianIds.foreign]);
     const passwordRequired = await provisional.post("/api/v1/activities").set("Origin", allowedOrigin)
-      .send(pendingInput("Provisional HTTP", [{ technicianId: technicianIds.foreign, role: "RESPONSIBLE", participationPercentage: "100.00" }])).expect(403);
+      .send(pendingInput(provisionalDescription, [{ technicianId: technicianIds.foreign, role: "RESPONSIBLE", participationPercentage: "100.00" }]));
+    const provisionalAfter = await captureWriteScope(provisionalDescription, [technicianIds.foreign]);
+    expect(passwordRequired.status).toBe(403);
     expect(passwordRequired.body.errors[0].code).toBe("PASSWORD_CHANGE_REQUIRED");
+    expect(provisionalAfter).toEqual(provisionalBefore);
 
     const admin = await authenticatedAgent(users.admin);
     const missingOrigin = await admin.post("/api/v1/activities").send({}).expect(403);
     expect(missingOrigin.body.errors[0].code).toBe("ORIGIN_REQUIRED");
-    const invalidBefore = await database.actividad.count();
+    const invalidDescription = "Clave desconocida HTTP";
+    const invalidBefore = await writeScopeSnapshot(invalidDescription, [technicianIds.foreign]);
     const invalid = await admin.post("/api/v1/activities").set("Origin", allowedOrigin).send({
-      ...pendingInput("Clave desconocida HTTP", [{ technicianId: technicianIds.foreign, role: "RESPONSIBLE", participationPercentage: "100.00" }]),
+      ...pendingInput(invalidDescription, [{ technicianId: technicianIds.foreign, role: "RESPONSIBLE", participationPercentage: "100.00" }]),
       unexpected: true,
-    }).expect(400);
+    });
+    const invalidAfter = await captureWriteScope(invalidDescription, [technicianIds.foreign]);
+    expect(invalid.status).toBe(400);
     expect(invalid.body.errors[0].code).toBe("VALIDATION_ERROR");
-    expect(await database.actividad.count()).toBe(invalidBefore);
+    expect(invalidAfter).toEqual(invalidBefore);
 
     const participantActivity = await admin.post("/api/v1/activities").set("Origin", allowedOrigin).send(
       pendingInput("Participante no opera HTTP", [
@@ -381,16 +434,17 @@ describe("activities HTTP", () => {
     }).expect(201);
     createdActivityIds.push(overlapAnchor.body.data.id);
     const overlapBefore = await aggregateSnapshot(overlapAnchor.body.data.id);
+    const overlapDescription = "Solapamiento HTTP";
+    const overlapWriteBefore = await writeScopeSnapshot(overlapDescription, [technicianIds.foreign]);
     const overlap = await admin.post("/api/v1/activities/manual").set("Origin", allowedOrigin).send({
-      ...pendingInput("Solapamiento HTTP"), result: "No debe registrarse", justification: "Prueba de solapamiento",
+      ...pendingInput(overlapDescription), result: "No debe registrarse", justification: "Prueba de solapamiento",
       startedAt: "2026-08-02T08:00:00.000Z", endedAt: "2026-08-02T10:00:00.000Z",
       team: [{ technicianId: technicianIds.foreign, role: "RESPONSIBLE", participationPercentage: "100.00" }],
     });
-    if (overlap.status === 201 && typeof overlap.body.data?.id === "string") {
-      createdActivityIds.push(overlap.body.data.id);
-    }
+    const overlapWriteAfter = await captureWriteScope(overlapDescription, [technicianIds.foreign]);
     expect(overlap.status).toBe(409);
     expect(overlap.body.errors[0].code).toBe("TIME_OVERLAP");
     expect(await aggregateSnapshot(overlapAnchor.body.data.id)).toEqual(overlapBefore);
+    expect(overlapWriteAfter).toEqual(overlapWriteBefore);
   });
 });
