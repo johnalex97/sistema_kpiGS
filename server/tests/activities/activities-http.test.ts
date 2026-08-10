@@ -184,7 +184,12 @@ async function writeScopeSnapshot(
   technicianIds: readonly string[],
 ) {
   const activities = await database.actividad.findMany({
-    where: { description },
+    where: {
+      OR: [
+        { description },
+        { tecnicos: { some: { tecnicoId: { in: [...technicianIds] } } } },
+      ],
+    },
     orderBy: { id: "asc" },
     select: { id: true },
   });
