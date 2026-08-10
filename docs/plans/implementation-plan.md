@@ -111,7 +111,19 @@ Salida: flujo completo de órdenes con historial.
 - Validar incompatibilidad de actividades activas.
 - Distribuir métricas de actividades grupales.
 
-Salida: registro diario real y probado.
+Estado: completada. La API protegida expone catálogo, listado y detalle, crea
+pendientes y cargas manuales, mantiene equipos con un responsable y total
+`100.00`, opera cronómetros y pausas, cancela estados abiertos y ajusta
+finalizadas con motivo, versión y auditoría. Los técnicos sólo consultan sus
+participaciones y sólo operan como responsables; los IDs ajenos se ocultan como
+404. Un técnico no puede mantener más de un cronómetro activo ni registrar una
+carga manual que se solape con tiempo productivo. Las cargas manuales usan un
+rango no futuro de 1 minuto a 24 horas. La sexta migración aporta permisos e
+índices de actividades.
+
+Salida verificada: 13 endpoints transaccionales, seis migraciones, seed
+idempotente y pruebas unitarias, PostgreSQL y HTTP. No se incorporan
+OpenAPI/Swagger ni conexión del frontend en esta etapa.
 
 ## 9. Evidencias
 

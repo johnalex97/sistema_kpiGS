@@ -1,12 +1,13 @@
 # Diagnóstico de arquitectura actual
 
-Fecha de actualización: 1 de agosto de 2026.
+Fecha de actualización: 10 de agosto de 2026.
 
 ## Resumen
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express
 independiente, persistencia PostgreSQL mediante Prisma y autenticación backend
-con sesiones opacas y APIs persistentes de técnicos, clientes y órdenes. El diseño es navegable
+con sesiones opacas y APIs persistentes de técnicos, clientes, órdenes y
+actividades. El diseño es navegable
 y responsive, pero todavía no existen pantalla de acceso ni conexión del
 frontend con la API.
 
@@ -48,8 +49,8 @@ server/
 
 No existen todavía servicios HTTP ni contexto de autenticación en el frontend.
 El backend ya consume persistencia para autenticación, técnicos, clientes,
-sucursales, contactos y órdenes. Aún no existen controladores o repositorios
-HTTP para actividades.
+sucursales, contactos, órdenes y actividades. El frontend no tiene todavía
+servicios HTTP ni contexto de autenticación.
 
 ## Funcionalidades que operan en el navegador
 
@@ -91,13 +92,14 @@ al recargar la página.
 ## Problemas técnicos
 
 1. El frontend todavía no consume la API.
-2. No hay validaciones definitivas de negocio para actividades.
+2. El formulario visual de actividades no consume sus validaciones ni API real.
 3. Los indicadores KPI son valores fijos y no resultados calculados.
-4. La autorización por propiedad existe para órdenes, pero falta en actividades.
+4. La autorización por propiedad ya existe en órdenes y actividades, pero aún
+   no llega al frontend.
 5. No hay tratamiento de carga, error de API o reintentos en el frontend.
 6. Los usuarios demo no pueden iniciar sesión; el administrador requiere
    variables privadas de seed.
-7. Las actividades todavía no tienen repositorios ni API HTTP.
+7. No existen evidencias, reincidencias operativas ni cálculo de KPI real.
 8. Algunos controles visuales todavía no ejecutan ninguna acción.
 
 ## Validaciones ejecutadas
@@ -117,17 +119,19 @@ Backend, ejecutado desde `server/`:
 | --- | --- |
 | `npm run typecheck` | Correcto |
 | `npm run lint` | Correcto; 0 advertencias |
-| `npm run test` | Correcto; 155 pruebas |
-| `npm run test:db` | Correcto; 167 pruebas HTTP y PostgreSQL |
+| `npm run test` | Correcto; 239 pruebas unitarias y de contrato |
+| `npm run test:db` | Correcto; 219 pruebas HTTP y PostgreSQL (con advertencias deprecadas de `pg`) |
 | `npm run build` | Correcto |
-| `npm run db:validate` | Schema Prisma válido |
-| `npm run db:verify` | 31 tablas de dominio, 33 checks, 11 índices verificados y 2 secuencias |
-| `npx prisma migrate status` | 5 migraciones aplicadas |
-| `GET /api/v1/health` | HTTP 200 con correlación |
+| `npm run db:format`, `db:validate`, `db:generate` | Correctos; schema válido y cliente regenerado |
+| Seed | El `db:seed` literal requiere una contraseña administrativa local válida; el seed sin cuenta administrativa se repitió con conteos idénticos `3/3/2/3/2/2` (roles/técnicos/clientes/órdenes/actividades/reincidencias) |
+| `npm run db:verify` | 31 tablas de dominio, 33 checks, 15 índices y 2 secuencias verificados |
+| `npx prisma migrate status` | Correcto; seis migraciones aplicadas |
+| Smoke compilado de actividades | Health 200; catálogo 200; pendiente 201; iniciar/pausar/reanudar/completar 200; manual 201; solapamiento 409; participante 403; ajuste y detalle 200; versiones `1→2→3→4→5` |
 | Flujo auth compilado | Login 200, me 200 y logout 204 |
 | API de técnicos | 7 endpoints con ciclo completo |
 | API de clientes | 16 endpoints con ciclo completo de clientes, sucursales y contactos |
 | API de órdenes | 17 endpoints con ciclo, propiedad, materiales e historial |
+| API de actividades | 13 endpoints con catálogo, listado/detalle, pendientes, carga manual, equipo, cronómetro, cancelación y ajuste auditado |
 
 ## Arquitectura objetivo
 
@@ -149,7 +153,7 @@ Backend, ejecutado desde `server/`:
 
 El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
 PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
-`"Sistema_kpiGS"` tiene 31 tablas de dominio, cinco migraciones, seed idempotente
+`"Sistema_kpiGS"` tiene 31 tablas de dominio, seis migraciones, seed idempotente
 y un esquema `test` aislado.
 
 El módulo `clients` sigue la cadena completa route → middleware → controller →
@@ -165,6 +169,16 @@ asignación principal/soporte, transiciones de siete estados y materiales con
 costo histórico. ADMIN y SUPERVISOR administran y ven todas las órdenes; un
 TECHNICIAN solo consulta órdenes actuales o históricas asignadas y solo el
 principal activo puede operar su trabajo.
+
+El módulo `activities` usa repositorios separados de lectura, mutación y
+operación. Su equipo exige un responsable, porcentajes que suman exactamente
+`100.00` y asignaciones activas cuando hay orden. El cronómetro permite un solo
+estado `IN_PROGRESS` por técnico; las pausas no son productivas. La carga
+manual exige justificación, 1 minuto a 24 horas y no se solapa con intervalos
+productivos previos. ADMIN y SUPERVISOR pueden corregir actividades completadas
+con motivo, versión y auditoría; el técnico sólo ve sus participaciones y opera
+la actividad propia donde es responsable. No hay integración de estas rutas en
+la SPA ni documentación OpenAPI/Swagger.
 
 La separación será:
 

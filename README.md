@@ -8,10 +8,12 @@ cumplimiento, eficiencia y calidad.
 
 El repositorio contiene un frontend modular, una API Express independiente,
 persistencia PostgreSQL administrada mediante Prisma, autenticación backend
-con sesiones revocables y APIs protegidas de técnicos, clientes y órdenes. El frontend todavía usa datos de demostración porque
+con sesiones revocables y APIs protegidas de técnicos, clientes, órdenes y
+actividades. El frontend todavía usa datos de demostración porque
 la pantalla de acceso y la conexión entre ambas
 aplicaciones corresponden a etapas posteriores. Las actividades creadas desde
-el formulario se conservan únicamente durante la sesión del navegador.
+el formulario visual se conservan únicamente durante la sesión del navegador;
+la API de actividades sí persiste el registro operativo en PostgreSQL.
 
 Consulta:
 
@@ -80,7 +82,11 @@ códigos de técnico y la unicidad de correo laboral activo. La cuarta,
 contactos, la secuencia de clientes y las restricciones de RTN y contactos
 principales. La quinta, `20260801170000_orders_api_constraints`, agrega cuatro
 índices para agenda abierta, visibilidad por técnico, trabajo principal activo
-y paginación estable del historial de órdenes.
+y paginación estable del historial de órdenes. La sexta,
+`20260806150000_activities_api_constraints`, renombra el permiso propio de
+actividades a `ACTIVITIES_CREATE_OWN` y agrega cuatro índices de lectura de
+actividades. Las seis migraciones deben estar aplicadas tanto en `public` como
+en `test`.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
 apuntarse al esquema `public`.
@@ -148,6 +154,19 @@ POST /api/v1/orders/:orderId/adjustments
 POST /api/v1/orders/:orderId/materials
 PATCH /api/v1/orders/:orderId/materials/:usageId
 DELETE /api/v1/orders/:orderId/materials/:usageId
+GET /api/v1/activity-types
+GET /api/v1/activities
+POST /api/v1/activities
+POST /api/v1/activities/manual
+GET /api/v1/activities/:activityId
+PATCH /api/v1/activities/:activityId
+PUT /api/v1/activities/:activityId/team
+POST /api/v1/activities/:activityId/start
+POST /api/v1/activities/:activityId/pause
+POST /api/v1/activities/:activityId/resume
+POST /api/v1/activities/:activityId/complete
+POST /api/v1/activities/:activityId/cancel
+POST /api/v1/activities/:activityId/adjustments
 ```
 
 Los endpoints mutables de autenticación requieren un encabezado `Origin`
@@ -199,6 +218,33 @@ npm run test:db -- tests/database/orders-read-persistence.test.ts tests/database
 El frontend React sigue usando `src/mocks/data.ts`; esta entrega no conecta sus
 pantallas con la API de órdenes.
 
+La API de actividades añade 13 endpoints. `ACTIVITIES_VIEW_ALL` permite a ADMIN
+y SUPERVISOR consultar catálogo, lista y detalle; un TECHNICIAN sólo ve sus
+participaciones actuales o históricas. `ACTIVITIES_MANAGE` permite a ADMIN y
+SUPERVISOR crear equipos, editar pendientes, cancelar actividades abiertas y
+ajustar finalizadas. `ACTIVITIES_CREATE_OWN` permite al TECHNICIAN crear sólo
+una actividad pendiente o manual propia al 100.00%; `ACTIVITIES_OPERATE_OWN`
+le permite iniciar, pausar, reanudar y completar únicamente la actividad donde
+es responsable. Un ID ajeno y uno inexistente producen el mismo 404. Todas las
+mutaciones requieren sesión, contraseña definitiva, `Origin` permitido y
+`version` cuando el comando modifica una actividad existente.
+
+El flujo es `PENDING → IN_PROGRESS ↔ PAUSED → COMPLETED`, con cancelación de
+estados abiertos. La actividad debe tener un responsable y cero o más
+participantes cuya suma decimal sea exactamente `100.00`. El servidor es el
+reloj oficial: sólo admite un cronómetro `IN_PROGRESS` por técnico y calcula
+tiempo productivo restando las pausas. La carga manual termina directamente en
+`COMPLETED`, exige justificación, intervalo no futuro de al menos 1 minuto y de
+máximo 24 horas, y no puede solaparse con segmentos productivos; los intervalos
+consecutivos `[inicio, fin)` sí son válidos. Los equipos de una orden deben
+pertenecer a sus asignaciones activas. Las correcciones de una actividad
+`COMPLETED` sólo corresponden a ADMIN o SUPERVISOR, requieren motivo y quedan
+auditadas junto con el cambio transaccional.
+
+El listado admite paginación, búsqueda, estado, tipo, cliente, sucursal, orden,
+técnico y rango de inicio; se ordena por `createdAt DESC, id DESC`. No se
+expone OpenAPI/Swagger en esta fase.
+
 Respuesta:
 
 ```json
@@ -226,8 +272,8 @@ Comandos del backend:
 | `npm run dev` | Ejecuta la API con recarga |
 | `npm run typecheck` | Valida TypeScript sin emitir |
 | `npm run lint` | Ejecuta ESLint |
-| `npm run test` | Ejecuta 155 pruebas unitarias y de contrato |
-| `npm run test:db` | Ejecuta 167 pruebas HTTP y PostgreSQL contra el esquema `test` |
+| `npm run test` | Ejecuta pruebas unitarias y de contrato |
+| `npm run test:db` | Ejecuta pruebas HTTP y PostgreSQL contra el esquema `test` |
 | `npm run build` | Genera `server/dist/` |
 | `npm run start` | Ejecuta el build |
 | `npm run db:format` | Formatea `schema.prisma` |
@@ -304,7 +350,7 @@ explícitamente en `src/mocks/data.ts`.
 
 PostgreSQL posee además un seed independiente con:
 
-- 3 roles y 15 permisos.
+- 3 roles y permisos, incluidos los cuatro de actividades.
 - 3 técnicos, uno vinculado a usuario y dos sin cuenta.
 - 2 clientes y sus sucursales/contactos.
 - 3 órdenes.
@@ -337,8 +383,10 @@ seguros, cierre controlado de Prisma, contraseñas `scrypt`, bloqueo temporal,
 sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 El frontend todavía no muestra login ni consume la base o la API de negocio.
-La autorización por propiedad ya se aplica en órdenes; la de actividades se
-incorporará al crear esos endpoints. No utilices el sistema para información sensible o datos
+La autorización por propiedad ya se aplica en órdenes y actividades. El
+frontend no integra aún la API de actividades: continúan pendientes la pantalla
+de acceso, evidencias, reincidencias, cálculo/persistencia de KPI, reportes y
+la integración de los mocks con datos reales. No utilices el sistema para información sensible o datos
 personales reales hasta completar las fases funcionales y el despliegue HTTPS.
 
 Los secretos, archivos `.env`, cliente Prisma generado, logs y builds están
