@@ -184,7 +184,7 @@ npm test -- tests/auth/authorization.test.ts
 npm run db:verify
 ```
 
-Expected: focused tests pass, seed counts are identical twice, six migrations
+Expected: focused tests pass, seed counts are identical twice, seven migrations
 are current, and SQL verification lists the new permissions/indexes.
 
 - [ ] **Step 6: Commit**
@@ -1129,7 +1129,7 @@ npm run db:verify
 npx prisma migrate status
 ```
 
-Expected: schema valid, identical seed counts twice, six migrations current,
+Expected: schema valid, identical seed counts twice, seven migrations current,
 permissions/indexes present.
 
 - [ ] **Step 3: Run every automated gate fresh**
@@ -1184,7 +1184,7 @@ must be explicitly adjudicated before integration. Then apply
 
 ## Completion Checklist
 
-- [ ] Six migrations are applied in `public` and `test`.
+- [ ] Seven migrations are applied in `public` and `test`.
 - [ ] Seed is idempotent and role permissions match the design.
 - [ ] All 13 endpoints are mounted and protected.
 - [ ] Technician own visibility and foreign-ID concealment are proven.

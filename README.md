@@ -85,8 +85,11 @@ principales. La quinta, `20260801170000_orders_api_constraints`, agrega cuatro
 y paginación estable del historial de órdenes. La sexta,
 `20260806150000_activities_api_constraints`, renombra el permiso propio de
 actividades a `ACTIVITIES_CREATE_OWN` y agrega cuatro índices de lectura de
-actividades. Las seis migraciones deben estar aplicadas tanto en `public` como
-en `test`.
+actividades. La séptima, `20260810203000_activities_history_integrity`, añade la
+ACL histórica de participación, convierte las asignaciones de órdenes en un
+historial append-only con una sola asignación abierta por orden y técnico, y
+corrige la descripción del permiso `ACTIVITIES_CREATE_OWN`. Las siete
+migraciones deben estar aplicadas tanto en `public` como en `test`.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
 apuntarse al esquema `public`.
@@ -208,6 +211,11 @@ respuesta anterior; una versión obsoleta devuelve `VERSION_CONFLICT` sin aplica
 cambios. Las mutaciones requieren además `Origin` permitido, sesión autenticada
 y contraseña definitiva, en ese orden.
 
+Las asignaciones de una orden son intervalos append-only: desasignar fija
+`unassignedAt` y reasignar crea una fila nueva. Un índice único parcial permite
+como máximo una fila abierta para cada pareja orden/técnico, mientras conserva
+todos sus ciclos cerrados para consultas y validaciones históricas.
+
 Las pruebas enfocadas de órdenes se ejecutan desde `server/`:
 
 ```powershell
@@ -221,11 +229,13 @@ pantallas con la API de órdenes.
 La API de actividades añade 13 endpoints. `ACTIVITIES_VIEW_ALL` permite a ADMIN
 y SUPERVISOR consultar catálogo, lista y detalle; un TECHNICIAN sólo ve sus
 participaciones actuales o históricas. `ACTIVITIES_MANAGE` permite a ADMIN y
-SUPERVISOR crear equipos, editar pendientes, cancelar actividades abiertas y
-ajustar finalizadas. `ACTIVITIES_CREATE_OWN` permite al TECHNICIAN crear sólo
-una actividad pendiente o manual propia al 100.00%; `ACTIVITIES_OPERATE_OWN`
-le permite iniciar, pausar, reanudar y completar únicamente la actividad donde
-es responsable. Un ID ajeno y uno inexistente producen el mismo 404. Todas las
+SUPERVISOR crear equipos, editar pendientes, cancelar actividades abiertas,
+ajustar finalizadas e iniciar, pausar, reanudar o completar cronómetros como
+respaldo administrativo. `ACTIVITIES_CREATE_OWN` permite al TECHNICIAN crear
+sólo una actividad pendiente o manual propia al 100.00% y cancelar esa actividad
+propia únicamente mientras permanezca `PENDING`; `ACTIVITIES_OPERATE_OWN` le
+permite iniciar, pausar, reanudar y completar únicamente la actividad donde es
+responsable. Un ID ajeno y uno inexistente producen el mismo 404. Todas las
 mutaciones requieren sesión, contraseña definitiva, `Origin` permitido y
 `version` cuando el comando modifica una actividad existente.
 
@@ -240,6 +250,22 @@ consecutivos `[inicio, fin)` sí son válidos. Los equipos de una orden deben
 pertenecer a sus asignaciones activas. Las correcciones de una actividad
 `COMPLETED` sólo corresponden a ADMIN o SUPERVISOR, requieren motivo y quedan
 auditadas junto con el cambio transaccional.
+
+La detección de solapamientos también cubre trabajo abierto: usa `endedAt` para
+actividades cerradas, el inicio de la pausa abierta para `PAUSED` y el reloj
+inyectado para `IN_PROGRESS`, siempre restando pausas cerradas. `START` y
+`RESUME` revalidan recursos y asignaciones vigentes después de adquirir sus
+bloqueos; una invalidación posterior no impide completar o cancelar trabajo ya
+abierto. En ajustes completados, las referencias omitidas se conservan aunque
+hayan quedado inactivas o canceladas; sólo un tipo o equipo enviado de nuevo
+debe estar activo, y los cambios de tiempo o equipo ligados a una orden exigen
+cobertura histórica del intervalo final. Un rango temporal inválido se publica
+como HTTP 400 con código `VALIDATION_ERROR`.
+
+La visibilidad técnica usa el equipo canónico actual o una ACL histórica
+inmutable. Crear una actividad y reemplazar o ajustar su equipo agrega los
+participantes a esa ACL dentro de la misma transacción; retirar a alguien del
+equipo no elimina su acceso histórico.
 
 El listado admite paginación, búsqueda, estado, tipo, cliente, sucursal, orden,
 técnico y rango de inicio; se ordena por `createdAt DESC, id DESC`. No se

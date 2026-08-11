@@ -30,7 +30,7 @@ src/
 
 server/
 ├── database/          # Scripts seguros para pgAdmin y verificación
-├── prisma/            # Schema, migración inicial y seed por dominio
+├── prisma/            # Schema, migraciones versionadas y seed por dominio
 ├── generated/prisma/  # Cliente generado; ignorado por Git
 ├── src/
 │   ├── auth/         # Sesión, contraseña, servicio, repositorio y HTTP
@@ -120,18 +120,18 @@ Backend, ejecutado desde `server/`:
 | `npm run typecheck` | Correcto |
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm run test` | Correcto; 239 pruebas unitarias y de contrato |
-| `npm run test:db` | Correcto; 219 pruebas HTTP y PostgreSQL (con advertencias deprecadas de `pg`) |
+| `npm run test:db` | Correcto; 230 pruebas HTTP y PostgreSQL en el esquema `test` aislado (con advertencias deprecadas de `pg`) |
 | `npm run build` | Correcto |
 | `npm run db:format`, `db:validate`, `db:generate` | Correctos; schema válido y cliente regenerado |
 | Seed | El `db:seed` literal requiere una contraseña administrativa local válida; el seed sin cuenta administrativa se repitió con conteos idénticos `3/3/2/3/2/2` (roles/técnicos/clientes/órdenes/actividades/reincidencias) |
-| `npm run db:verify` | 31 tablas de dominio, 33 checks, 15 índices y 2 secuencias verificados |
-| `npx prisma migrate status` | Correcto; seis migraciones aplicadas |
+| `npm run db:verify` | 32 tablas de dominio, 33 checks, 18 índices y 2 secuencias verificados |
+| `npx prisma migrate status` | Correcto; siete migraciones aplicadas |
 | Smoke compilado de actividades | Health 200; catálogo 200; pendiente 201; iniciar/pausar/reanudar/completar 200; manual 201; solapamiento 409; participante 403; ajuste y detalle 200; versiones `1→2→3→4→5` |
 | Flujo auth compilado | Login 200, me 200 y logout 204 |
 | API de técnicos | 7 endpoints con ciclo completo |
 | API de clientes | 16 endpoints con ciclo completo de clientes, sucursales y contactos |
 | API de órdenes | 17 endpoints con ciclo, propiedad, materiales e historial |
-| API de actividades | 13 endpoints con catálogo, listado/detalle, pendientes, carga manual, equipo, cronómetro, cancelación y ajuste auditado |
+| API de actividades | 13 endpoints protegidos, con mutaciones transaccionales; catálogo, listado/detalle, pendientes, carga manual, equipo, cronómetro, cancelación y ajuste auditado |
 
 ## Arquitectura objetivo
 
@@ -153,7 +153,7 @@ Backend, ejecutado desde `server/`:
 
 El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
 PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
-`"Sistema_kpiGS"` tiene 31 tablas de dominio, seis migraciones, seed idempotente
+`"Sistema_kpiGS"` tiene 32 tablas de dominio, siete migraciones, seed idempotente
 y un esquema `test` aislado.
 
 El módulo `clients` sigue la cadena completa route → middleware → controller →
@@ -168,17 +168,32 @@ anuales `GS-AAAA-NNNN`, control optimista por `version`, historial paginado,
 asignación principal/soporte, transiciones de siete estados y materiales con
 costo histórico. ADMIN y SUPERVISOR administran y ven todas las órdenes; un
 TECHNICIAN solo consulta órdenes actuales o históricas asignadas y solo el
-principal activo puede operar su trabajo.
+principal activo puede operar su trabajo. Cada asignación es un intervalo
+append-only: la baja cierra la fila vigente, la reasignación crea otra y un
+índice único parcial impide dos filas abiertas para la misma orden y técnico sin
+perder los ciclos cerrados.
 
 El módulo `activities` usa repositorios separados de lectura, mutación y
 operación. Su equipo exige un responsable, porcentajes que suman exactamente
 `100.00` y asignaciones activas cuando hay orden. El cronómetro permite un solo
 estado `IN_PROGRESS` por técnico; las pausas no son productivas. La carga
 manual exige justificación, 1 minuto a 24 horas y no se solapa con intervalos
-productivos previos. ADMIN y SUPERVISOR pueden corregir actividades completadas
-con motivo, versión y auditoría; el técnico sólo ve sus participaciones y opera
-la actividad propia donde es responsable. No hay integración de estas rutas en
-la SPA ni documentación OpenAPI/Swagger.
+productivos previos, incluidos los de actividades `PAUSED` o `IN_PROGRESS` con
+un reloj inyectado. ADMIN y SUPERVISOR pueden operar cronómetros como respaldo y
+corregir actividades completadas con motivo, versión y auditoría; un TECHNICIAN
+opera la actividad propia donde es responsable y sólo puede cancelarla mientras
+permanezca `PENDING`. `START` y `RESUME` revalidan recursos y asignaciones
+vigentes tras los bloqueos, sin impedir completar o cancelar trabajo abierto si
+una referencia se invalida después.
+
+Los ajustes completados conservan referencias omitidas aunque ya estén inactivas
+o canceladas, exigen vigencia para un tipo o equipo seleccionado de nuevo y
+comprueban cobertura histórica de asignación al cambiar equipo o tiempo. La
+tabla `actividad_visibilidad_tecnico` funciona como ACL histórica inmutable: las
+creaciones y los cambios de equipo agregan participantes atómicamente y una baja
+del equipo canónico no elimina su visibilidad anterior. Los rangos temporales
+inválidos se exponen como HTTP 400 con código `VALIDATION_ERROR`. No hay
+integración de estas rutas en la SPA ni documentación OpenAPI/Swagger.
 
 La separación será:
 

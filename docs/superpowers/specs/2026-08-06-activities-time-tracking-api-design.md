@@ -29,6 +29,10 @@ puntajes ni modificar el frontend React.
   con motivo y auditoría transaccional.
 - Cuando existe una orden, el equipo de la actividad debe pertenecer a sus
   asignaciones activas.
+- Las asignaciones de técnicos a órdenes conservan intervalos append-only: una
+  desasignación cierra el intervalo abierto y una reasignación crea otro.
+- La visibilidad de una actividad para quienes participaron en ella es histórica
+  e inmutable aunque posteriormente se reemplace el equipo canónico.
 
 ## 3. Alcance funcional
 
@@ -103,6 +107,7 @@ La fase reutilizará:
 
 - `Actividad`;
 - `ActividadTecnico`;
+- `ActividadVisibilidadTecnico`;
 - `PausaActividad`;
 - `TipoActividad`;
 - `OrdenTrabajo` y `OrdenTecnico`;
@@ -110,8 +115,11 @@ La fase reutilizará:
 - `Tecnico` y su vínculo opcional con `Usuario`;
 - `Auditoria`.
 
-Una migración incremental añadirá únicamente permisos, índices o restricciones
-que falten. No se modificarán migraciones aplicadas.
+Las migraciones incrementales añadirán únicamente los permisos, tablas, índices
+o restricciones que falten. No se modificarán migraciones aplicadas. La
+migración de integridad histórica añade `ActividadVisibilidadTecnico`, rellena
+su ACL desde el equipo vigente y los snapshots de auditoría, y cambia
+`OrdenTecnico` a historial append-only.
 
 `Actividad.version` será la versión del agregado completo. Cada mutación válida
 la incrementará exactamente una vez, aunque modifique equipo o pausas dentro de
@@ -137,6 +145,20 @@ cliente puede enviarlo explícitamente, pero no puede elegir a un técnico ajeno
 
 En una actividad independiente, la sucursal debe estar activa y todos los
 técnicos deben estar activos y no eliminados.
+
+Cada fila de `OrdenTecnico` representa un intervalo de asignación. Al retirar a
+un técnico se fija `unassignedAt`; si vuelve a la orden se crea una fila nueva y
+no se reabre ni sobrescribe la anterior. Un índice único parcial sobre
+`(ordenId, tecnicoId)` cuando `unassignedAt IS NULL` garantiza como máximo una
+asignación abierta por pareja, sin impedir múltiples intervalos cerrados. Un
+índice cronológico por orden permite reconstruir el historial establemente.
+
+`ActividadVisibilidadTecnico` conserva el conjunto acumulativo de técnicos que
+han pertenecido a una actividad. Las creaciones y los reemplazos o ajustes de
+equipo insertan los nuevos miembros dentro de la misma transacción y nunca
+eliminan a los anteriores mientras exista la actividad. La lectura técnica se
+autoriza por equipo canónico actual o por esta ACL histórica; los filtros y la
+búsqueda siguen mostrando el equipo canónico, no miembros retirados.
 
 ### 6.2 Catálogo inicial
 
@@ -179,7 +201,8 @@ Reglas:
 - solo ADMIN y SUPERVISOR crean o modifican equipos grupales;
 - el responsable activo con `ACTIVITIES_OPERATE_OWN` inicia, pausa, reanuda y
   finaliza;
-- ADMIN y SUPERVISOR pueden operar como respaldo;
+- ADMIN y SUPERVISOR con `ACTIVITIES_MANAGE` pueden iniciar, pausar, reanudar y
+  finalizar cualquier actividad visible como respaldo operativo;
 - los participantes consultan, pero no controlan el cronómetro;
 - un técnico cancela únicamente su actividad propia mientras esté `PENDING`;
 - ADMIN y SUPERVISOR cancelan actividades `PENDING`, `IN_PROGRESS` o `PAUSED`;
@@ -236,6 +259,14 @@ Precondiciones:
 - cancelar requiere motivo y cierra cualquier pausa abierta dentro de la misma
   transacción;
 - editar datos o equipo ordinariamente solo es posible en `PENDING`.
+
+Después de bloquear el agregado y sus recursos, `START` y `RESUME` revalidan que
+los técnicos, el tipo, la sucursal y el cliente continúen activos, y que la orden
+continúe activa, no cancelada y con asignaciones abiertas para todo el equipo.
+Esta revalidación de vigencia se aplica solo a `START` y `RESUME`: una
+invalidación posterior no impide pausar y, especialmente, no deja sin salida una
+actividad ya abierta, que aún puede completarse o cancelarse si cumple estado,
+versión y autorización.
 
 ## 9. Registro en tiempo real
 
@@ -305,10 +336,13 @@ Un intervalo se representa como `[inicio, fin)`: el final no pertenece al
 intervalo. Dos actividades consecutivas, donde una termina exactamente cuando
 la siguiente inicia, son válidas.
 
-Para actividades completadas por cronómetro, los intervalos productivos se
-obtienen restando las pausas cerradas del intervalo total. Por ello una carga
-manual u otra actividad sí puede ocupar completamente un hueco pausado, pero no
-puede cruzar sus segmentos productivos.
+Los intervalos productivos se obtienen restando las pausas cerradas del rango
+efectivo de cada actividad. En una actividad cerrada, el fin efectivo es
+`endedAt`; en `PAUSED`, es el inicio de su pausa abierta; y en `IN_PROGRESS`, es
+el `now` inyectado una sola vez por la operación. Por ello una carga manual u
+otra actividad sí puede ocupar completamente un hueco pausado, pero no puede
+cruzar sus segmentos productivos, incluso si la actividad conflictiva todavía
+está abierta.
 
 Las consultas de conflicto:
 
@@ -333,16 +367,24 @@ Campos ajustables:
 - responsable, participantes y porcentajes.
 
 No se pueden cambiar `sucursalId`, `ordenId`, estado, autor original ni marcas de
-creación. Si cambia el equipo de una actividad ligada a una orden, todos los
-nuevos miembros deben haber estado asignados a la orden en el intervalo
-corregido. Si cambia el tiempo o el equipo, se recalculan pausas, minutos y
-solapamientos dentro de la misma transacción.
+creación. Las referencias omitidas se preservan sin volver a exigir su vigencia
+actual: una inactivación o cancelación posterior no invalida el dato histórico.
+Si se envía un nuevo `tipoActividadId`, el tipo seleccionado debe estar activo;
+si se envía `team`, todos los técnicos seleccionados deben estar activos. Si
+cambia el tiempo o el equipo de una actividad ligada a una orden, cada miembro
+del equipo final debe contar con un intervalo histórico de asignación que cubra
+el rango corregido. Esos mismos cambios recalculan pausas, minutos y
+solapamientos dentro de la misma transacción; cambios puramente descriptivos no
+revalidan referencias omitidas ni ejecutan comprobaciones temporales nuevas.
 
 Un ajuste temporal no crea, elimina ni desplaza pausas. Todos los intervalos de
 pausa persistidos deben quedar completamente dentro del nuevo rango y mantener
 su orden; de lo contrario se rechaza con `INVALID_TEMPORAL_RANGE`. Al cambiar el
 equipo de una actividad completada, las marcas `startedAt` y `endedAt` de cada
 participación se sincronizan con el rango final de la actividad.
+
+`INVALID_TEMPORAL_RANGE` es un resultado interno del repositorio. Su contrato
+HTTP público permanece como estado `400` con código `VALIDATION_ERROR`.
 
 La auditoría guardará:
 
@@ -407,8 +449,7 @@ Errores de dominio relevantes:
 - `RESOURCE_INACTIVE` — 409;
 - `INVALID_PARTICIPATION_TOTAL` — 400;
 - `TECHNICIAN_NOT_ASSIGNED_TO_ORDER` — 400;
-- `INVALID_TEMPORAL_RANGE` — 400;
-- `VALIDATION_ERROR` — 400;
+- `VALIDATION_ERROR` — 400, incluidos los rangos temporales inválidos;
 - `FORBIDDEN` — 403.
 
 Errores de Prisma o PostgreSQL previsibles se traducirán a resultados de
@@ -471,9 +512,16 @@ metadata allowlisted. Las pausas quedarán además persistidas en
 - inicio concurrente de dos actividades para el mismo técnico;
 - orden estable de bloqueos para equipos compartidos;
 - carga manual válida en un hueco pausado;
-- rechazo de intervalos solapados;
+- rechazo de intervalos solapados con actividades cerradas, `PAUSED` o
+  `IN_PROGRESS`, usando un reloj inyectado;
+- revalidación de vigencia y asignaciones en `START` y `RESUME`, sin bloquear el
+  cierre de trabajo ya abierto después de una invalidación;
 - control optimista de versión;
-- ajustes cerrados y recálculo;
+- ajustes cerrados, referencias omitidas preservadas, referencias nuevas activas
+  y recálculo;
+- ciclos de asignación append-only y cobertura histórica para carga manual y
+  ajustes;
+- conservación de visibilidad para integrantes retirados del equipo;
 - rollback ante fallo de auditoría;
 - seed idempotente y permisos por rol;
 - índices y restricciones de la migración.
@@ -510,15 +558,19 @@ La fase estará completa cuando:
 1. los 13 endpoints estén montados y protegidos;
 2. un técnico pueda registrar trabajo individual pendiente o manual;
 3. un líder pueda crear y administrar actividades grupales;
-4. una actividad ligada a orden solo use su sucursal y técnicos asignados;
+4. una actividad ligada a orden solo use su sucursal y técnicos con cobertura de
+   asignación válida para la operación;
 5. iniciar, pausar, reanudar y completar produzca tiempos reproducibles;
 6. ningún técnico contabilice dos cronómetros al mismo tiempo;
 7. los intervalos manuales no dupliquen tiempo productivo;
 8. los porcentajes grupales sumen exactamente `100.00`;
 9. las actividades completadas solo cambien por ajuste auditado;
-10. los técnicos no puedan descubrir ni modificar actividades ajenas;
+10. los técnicos no puedan descubrir ni modificar actividades ajenas y quienes
+    participaron conserven la visibilidad histórica;
 11. todas las mutaciones sean atómicas y con versión;
-12. migración, seed, documentación, pruebas y gates estén verdes.
+12. las asignaciones de orden sean append-only y mantengan una sola fila abierta
+    por orden y técnico;
+13. migración, seed, documentación, pruebas y gates estén verdes.
 
 ## 19. Compatibilidad con fases posteriores
 
