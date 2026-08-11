@@ -212,6 +212,7 @@ export async function validateCompletedAdjustmentContext(
   input: AdjustActivityInput,
   startedAt: Date,
   endedAt: Date,
+  historicalCoverageChanged: boolean,
 ): Promise<ValidatedActivityContext | { kind: ActivityFailureKind }> {
   if (input.activityTypeId !== undefined && !(await activeActivityType(transaction, input.activityTypeId))) {
     return { kind: "ACTIVITY_TYPE_NOT_FOUND" };
@@ -229,9 +230,6 @@ export async function validateCompletedAdjustmentContext(
     return { kind: "RESOURCE_INACTIVE" };
   }
 
-  const historicalCoverageChanged = input.team !== undefined
-    || input.startedAt !== undefined
-    || input.endedAt !== undefined;
   if (activity.orden !== null && historicalCoverageChanged) {
     const assignments = await transaction.ordenTecnico.findMany({
       where: {
@@ -255,41 +253,51 @@ export async function validateCompletedAdjustmentContext(
   };
 }
 
-async function lockCurrentActivityParents(
+async function lockActiveClient(
   transaction: Prisma.TransactionClient,
-  activity: ActivityDetailRecord,
+  clientId: string,
 ): Promise<boolean> {
-  if (activity.orden !== null) {
-    const rows = await transaction.$queryRaw<Array<{ id: string }>>`
-      SELECT order_row."id"
-      FROM "orden_trabajo" AS order_row
-      JOIN "sucursal_cliente" AS branch_row
-        ON branch_row."id" = order_row."sucursal_id"
-      JOIN "cliente" AS client_row
-        ON client_row."id" = branch_row."cliente_id"
-      WHERE order_row."id" = ${activity.orden.id}::uuid
-        AND order_row."deleted_at" IS NULL
-        AND order_row."status" <> 'cancelled'::"estado_orden"
-        AND branch_row."is_active" = true
-        AND branch_row."deleted_at" IS NULL
-        AND client_row."is_active" = true
-        AND client_row."deleted_at" IS NULL
-      FOR UPDATE OF order_row, branch_row, client_row
-    `;
-    return rows.length === 1;
-  }
-
   const rows = await transaction.$queryRaw<Array<{ id: string }>>`
-    SELECT branch_row."id"
-    FROM "sucursal_cliente" AS branch_row
-    JOIN "cliente" AS client_row
-      ON client_row."id" = branch_row."cliente_id"
-    WHERE branch_row."id" = ${activity.sucursal.id}::uuid
-      AND branch_row."is_active" = true
-      AND branch_row."deleted_at" IS NULL
-      AND client_row."is_active" = true
-      AND client_row."deleted_at" IS NULL
-    FOR UPDATE OF branch_row, client_row
+    SELECT "id"
+    FROM "cliente"
+    WHERE "id" = ${clientId}::uuid
+      AND "is_active" = true
+      AND "deleted_at" IS NULL
+    FOR UPDATE
+  `;
+  return rows.length === 1;
+}
+
+async function lockActiveBranch(
+  transaction: Prisma.TransactionClient,
+  branchId: string,
+  clientId: string,
+): Promise<boolean> {
+  const rows = await transaction.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "sucursal_cliente"
+    WHERE "id" = ${branchId}::uuid
+      AND "cliente_id" = ${clientId}::uuid
+      AND "is_active" = true
+      AND "deleted_at" IS NULL
+    FOR UPDATE
+  `;
+  return rows.length === 1;
+}
+
+async function lockActiveOrder(
+  transaction: Prisma.TransactionClient,
+  orderId: string,
+  branchId: string,
+): Promise<boolean> {
+  const rows = await transaction.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "orden_trabajo"
+    WHERE "id" = ${orderId}::uuid
+      AND "sucursal_id" = ${branchId}::uuid
+      AND "deleted_at" IS NULL
+      AND "status" <> 'cancelled'::"estado_orden"
+    FOR UPDATE
   `;
   return rows.length === 1;
 }
@@ -298,7 +306,18 @@ export async function validateOperationalActivityContext(
   transaction: Prisma.TransactionClient,
   activity: ActivityDetailRecord,
 ): Promise<{ kind: ActivityFailureKind } | null> {
-  if (!(await lockCurrentActivityParents(transaction, activity))) {
+  const clientId = activity.sucursal.cliente.id;
+  if (!(await lockActiveClient(transaction, clientId))) {
+    return { kind: "RESOURCE_INACTIVE" };
+  }
+  if (!(await lockActiveBranch(transaction, activity.sucursal.id, clientId))) {
+    return { kind: "RESOURCE_INACTIVE" };
+  }
+  if (activity.orden !== null && !(await lockActiveOrder(
+    transaction,
+    activity.orden.id,
+    activity.sucursal.id,
+  ))) {
     return { kind: "RESOURCE_INACTIVE" };
   }
 

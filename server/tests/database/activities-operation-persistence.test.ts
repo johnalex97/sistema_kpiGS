@@ -4,6 +4,7 @@ import { createDatabaseClient } from "../../src/config/database.js";
 import { createActivitiesMutationRepository } from "../../src/activities/activities.mutation.repository.js";
 import { createActivitiesOperationRepository } from "../../src/activities/activities.operation.repository.js";
 import { createActivitiesReadRepository } from "../../src/activities/activities.read.repository.js";
+import { createClientsRepository } from "../../src/clients/clients.repository.js";
 import { adjustActivitySchema } from "../../src/activities/activities.schemas.js";
 import type { ActivityActorContext, CreateActivityInput } from "../../src/activities/activities.types.js";
 import { database, disconnectTestDatabase } from "./database-test-context.js";
@@ -117,7 +118,58 @@ async function waitForDatabaseLockWaiter(pid: number): Promise<void> {
     if (Number(locks[0]?.waiting ?? 0) > 0) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`Activity backend ${pid} did not wait for the order lock`);
+  throw new Error(`Activity backend ${pid} did not wait for the expected row lock`);
+}
+
+function clientActor(fixture: Fixture, requestId: string) {
+  return {
+    userId: fixture.userId,
+    requestId,
+    ipAddress: null,
+    userAgent: null,
+  };
+}
+
+function pauseClientTransactionAfterParentLock(
+  clientDatabase: ReturnType<typeof createDatabaseClient>,
+  clientId: string,
+  markClientLocked: () => void,
+  holdClientLock: Promise<void>,
+) {
+  const transaction = clientDatabase.$transaction.bind(clientDatabase);
+  return {
+    ...clientDatabase,
+    $transaction: (callback: (transactionClient: typeof clientDatabase) => Promise<unknown>) => transaction(
+      async (transactionClient) => {
+        await transactionClient.$queryRaw`
+          SELECT "id" FROM "cliente" WHERE "id" = ${clientId}::uuid FOR UPDATE
+        `;
+        markClientLocked();
+        await holdClientLock;
+        return callback(transactionClient as typeof clientDatabase);
+      },
+    ),
+  };
+}
+
+function observeTransactionPid(
+  operationDatabase: ReturnType<typeof createDatabaseClient>,
+  recordPid: (pid: number) => void,
+) {
+  const transaction = operationDatabase.$transaction.bind(operationDatabase);
+  return {
+    ...operationDatabase,
+    $transaction: (
+      callback: (transactionClient: typeof operationDatabase) => Promise<unknown>,
+      options?: Parameters<typeof transaction>[1],
+    ) => transaction(async (transactionClient) => {
+      const rows = await transactionClient.$queryRaw<Array<{ pid: number }>>`
+        SELECT pg_backend_pid() AS pid
+      `;
+      recordPid(rows[0]!.pid);
+      return callback(transactionClient as typeof operationDatabase);
+    }, options),
+  };
 }
 
 async function removeFixture(fixture: Fixture): Promise<void> {
@@ -381,7 +433,7 @@ describe("activities timer operation repository", () => {
     const target = await createActivitiesMutationRepository(database).createActivity({
       orderId: fixture.orderId,
       activityTypeId: fixture.typeId,
-      description: "Inicio que espera cancelaciÃ³n",
+      description: "Inicio que espera cancelación",
       team: [{ technicianId: fixture.otherTechnicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
     }, fixture.actor, startedAt);
     if (target.kind !== "CREATED") throw new Error(`Expected pending activity, got ${target.kind}`);
@@ -441,6 +493,169 @@ describe("activities timer operation repository", () => {
     }
   });
 
+  it("starts a standalone activity without a deadlock while clients updates its branch", async () => {
+    const id = await createPendingActivity(fixture);
+    const branchBefore = await database.sucursalCliente.findUniqueOrThrow({
+      where: { id: fixture.branchId },
+      select: { name: true, version: true },
+    });
+    const operationDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const clientDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const requestId = randomUUID();
+    let operationPid: number | undefined;
+    let releaseClient: () => void = () => undefined;
+    let markClientLocked: () => void = () => undefined;
+    const holdClientLock = new Promise<void>((resolve) => { releaseClient = resolve; });
+    const clientLocked = new Promise<void>((resolve) => { markClientLocked = resolve; });
+    const observedClientDatabase = pauseClientTransactionAfterParentLock(
+      clientDatabase,
+      fixture.clientId,
+      markClientLocked,
+      holdClientLock,
+    );
+    const observedOperationDatabase = observeTransactionPid(
+      operationDatabase,
+      (pid) => { operationPid = pid; },
+    );
+    let branchUpdate: Promise<unknown> | undefined;
+    let start: Promise<unknown> | undefined;
+    try {
+      branchUpdate = createClientsRepository(
+        observedClientDatabase as unknown as typeof database,
+      ).updateBranch(
+        fixture.clientId,
+        fixture.branchId,
+        { version: branchBefore.version, name: "Principal concurrente standalone" },
+        clientActor(fixture, requestId),
+        startedAt,
+      );
+      await clientLocked;
+      start = createActivitiesOperationRepository(
+        observedOperationDatabase as unknown as typeof database,
+      ).startActivity(id, { version: 1 }, fixture.actor, startedAt);
+      await waitForDatabaseLockWaiter(await waitForBackendPid(() => operationPid));
+      releaseClient();
+
+      await expect(Promise.all([branchUpdate, start])).resolves.toMatchObject([
+        { kind: "UPDATED" },
+        { kind: "UPDATED", activity: { status: "IN_PROGRESS", version: 2 } },
+      ]);
+      await expect(database.auditoria.count({
+        where: { entity: "Actividad", entityId: id, action: "ACTIVITY_STARTED" },
+      })).resolves.toBe(1);
+    } finally {
+      releaseClient();
+      await Promise.allSettled([
+        ...(branchUpdate === undefined ? [] : [branchUpdate]),
+        ...(start === undefined ? [] : [start]),
+      ]);
+      await database.sucursalCliente.update({
+        where: { id: fixture.branchId },
+        data: branchBefore,
+      });
+      await database.auditoria.deleteMany({ where: { requestId } });
+      await operationDatabase.$disconnect();
+      await clientDatabase.$disconnect();
+    }
+  });
+
+  it("resumes an order activity without a deadlock while clients updates its branch", async () => {
+    const assignment = await database.ordenTecnico.create({
+      data: {
+        ordenId: fixture.orderId,
+        tecnicoId: fixture.otherTechnicianId,
+        role: "SUPPORT",
+        assignedAt: new Date("2026-08-06T09:00:00.000Z"),
+      },
+      select: { id: true },
+    });
+    const target = await createActivitiesMutationRepository(database).createActivity({
+      orderId: fixture.orderId,
+      activityTypeId: fixture.typeId,
+      description: "Actividad de orden concurrente",
+      team: [{ technicianId: fixture.otherTechnicianId, role: "RESPONSIBLE", participationPercentage: "100.00" }],
+    }, fixture.actor, startedAt);
+    if (target.kind !== "CREATED") throw new Error(`Expected pending order activity, got ${target.kind}`);
+    const repository = createActivitiesOperationRepository(database);
+    await repository.startActivity(target.activity.id, { version: 1 }, fixture.actor, startedAt);
+    await repository.pauseActivity(
+      target.activity.id,
+      { version: 2, reason: "Preparar carrera con cliente" },
+      fixture.actor,
+      new Date("2026-08-06T12:01:00.000Z"),
+    );
+
+    const branchBefore = await database.sucursalCliente.findUniqueOrThrow({
+      where: { id: fixture.branchId },
+      select: { name: true, version: true },
+    });
+    const operationDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const clientDatabase = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const requestId = randomUUID();
+    let operationPid: number | undefined;
+    let releaseClient: () => void = () => undefined;
+    let markClientLocked: () => void = () => undefined;
+    const holdClientLock = new Promise<void>((resolve) => { releaseClient = resolve; });
+    const clientLocked = new Promise<void>((resolve) => { markClientLocked = resolve; });
+    const observedClientDatabase = pauseClientTransactionAfterParentLock(
+      clientDatabase,
+      fixture.clientId,
+      markClientLocked,
+      holdClientLock,
+    );
+    const observedOperationDatabase = observeTransactionPid(
+      operationDatabase,
+      (pid) => { operationPid = pid; },
+    );
+    let branchUpdate: Promise<unknown> | undefined;
+    let resume: Promise<unknown> | undefined;
+    try {
+      branchUpdate = createClientsRepository(
+        observedClientDatabase as unknown as typeof database,
+      ).updateBranch(
+        fixture.clientId,
+        fixture.branchId,
+        { version: branchBefore.version, name: "Principal concurrente orden" },
+        clientActor(fixture, requestId),
+        new Date("2026-08-06T12:02:00.000Z"),
+      );
+      await clientLocked;
+      resume = createActivitiesOperationRepository(
+        observedOperationDatabase as unknown as typeof database,
+      ).resumeActivity(
+        target.activity.id,
+        { version: 3 },
+        fixture.actor,
+        new Date("2026-08-06T12:02:00.000Z"),
+      );
+      await waitForDatabaseLockWaiter(await waitForBackendPid(() => operationPid));
+      releaseClient();
+
+      await expect(Promise.all([branchUpdate, resume])).resolves.toMatchObject([
+        { kind: "UPDATED" },
+        { kind: "UPDATED", activity: { status: "IN_PROGRESS", version: 4 } },
+      ]);
+      await expect(database.pausaActividad.findMany({
+        where: { actividadId: target.activity.id },
+        select: { endedAt: true },
+      })).resolves.toEqual([{ endedAt: new Date("2026-08-06T12:02:00.000Z") }]);
+    } finally {
+      releaseClient();
+      await Promise.allSettled([
+        ...(branchUpdate === undefined ? [] : [branchUpdate]),
+        ...(resume === undefined ? [] : [resume]),
+      ]);
+      await database.sucursalCliente.update({
+        where: { id: fixture.branchId },
+        data: branchBefore,
+      });
+      await database.auditoria.deleteMany({ where: { requestId } });
+      await database.ordenTecnico.deleteMany({ where: { id: assignment.id } });
+      await operationDatabase.$disconnect();
+      await clientDatabase.$disconnect();
+    }
+  });
+
   it("rolls back the activity transition and pause row when its audit write fails", async () => {
     const id = await createPendingActivity(fixture);
     await createActivitiesOperationRepository(database).startActivity(id, { version: 1 }, fixture.actor, startedAt);
@@ -483,7 +698,11 @@ describe("activities timer operation repository", () => {
       const deadline = Date.now() + 2_000;
       let waiters = 0;
       while (Date.now() < deadline) {
-        const locks = await database.$queryRaw<Array<{ waiting: bigint }>>`SELECT COUNT(*) AS waiting FROM pg_locks WHERE locktype = 'advisory' AND granted = false`;
+        const locks = await database.$queryRaw<Array<{ waiting: bigint }>>`
+          SELECT COUNT(DISTINCT pid) AS waiting
+          FROM pg_locks
+          WHERE granted = false
+        `;
         waiters = Number(locks[0]?.waiting ?? 0);
         if (waiters >= 2) break;
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -724,6 +943,146 @@ describe("activities timer operation repository", () => {
         },
       },
     });
+  });
+
+  it("preserves the exact historical temporal snapshot for a description-only adjustment", async () => {
+    const originalStart = new Date("2026-08-06T08:00:00.000Z");
+    const originalEnd = new Date("2026-08-06T08:30:00.000Z");
+    const memberStart = new Date("2026-08-06T08:00:30.000Z");
+    const memberEnd = new Date("2026-08-06T08:29:30.000Z");
+    const created = await createActivitiesMutationRepository(database).createManualActivity({
+      ...input(fixture),
+      description: "DescripciÃ³n histÃ³rica",
+      startedAt: originalStart,
+      endedAt: originalEnd,
+      result: "Resultado histÃ³rico",
+      justification: "Registro inicial",
+    }, fixture.actor, startedAt);
+    if (created.kind !== "CREATED") throw new Error("Expected completed manual activity");
+    await database.actividad.update({
+      where: { id: created.activity.id },
+      data: { pausedMinutes: 7, productiveMinutes: 999 },
+    });
+    await database.pausaActividad.create({
+      data: {
+        actividadId: created.activity.id,
+        startedAt: new Date("2026-08-06T08:10:00.000Z"),
+        endedAt: new Date("2026-08-06T08:17:00.000Z"),
+        reason: "Historical pause",
+        userId: fixture.userId,
+        createdAt: new Date("2026-08-06T08:10:00.000Z"),
+      },
+    });
+    await database.actividadTecnico.updateMany({
+      where: { actividadId: created.activity.id },
+      data: { startedAt: memberStart, endedAt: memberEnd },
+    });
+    const temporalSnapshot = () => database.actividad.findUniqueOrThrow({
+      where: { id: created.activity.id },
+      select: {
+        startedAt: true,
+        endedAt: true,
+        pausedMinutes: true,
+        productiveMinutes: true,
+        tecnicos: {
+          orderBy: { tecnicoId: "asc" },
+          select: { tecnicoId: true, startedAt: true, endedAt: true },
+        },
+        pausas: {
+          orderBy: { id: "asc" },
+          select: { id: true, startedAt: true, endedAt: true, reason: true, userId: true, createdAt: true },
+        },
+      },
+    });
+    const before = await temporalSnapshot();
+
+    await expect(createActivitiesOperationRepository(database).adjustCompletedActivity(
+      created.activity.id,
+      { version: 1, reason: "Corregir sÃ³lo texto", description: "DescripciÃ³n corregida" },
+      fixture.actor,
+      new Date("2026-08-06T12:00:00.000Z"),
+    )).resolves.toMatchObject({
+      kind: "UPDATED",
+      activity: {
+        description: "DescripciÃ³n corregida",
+        pausedMinutes: 7,
+        productiveMinutes: 999,
+        version: 2,
+      },
+    });
+    await expect(temporalSnapshot()).resolves.toEqual(before);
+    await expect(database.auditoria.findFirstOrThrow({
+      where: { entity: "Actividad", entityId: created.activity.id, action: "ACTIVITY_ADJUSTED" },
+      select: { afterData: true },
+    })).resolves.toMatchObject({
+      afterData: {
+        changedFields: ["description"],
+        before: { pausedMinutes: 7, productiveMinutes: 999 },
+        after: { pausedMinutes: 7, productiveMinutes: 999 },
+      },
+    });
+  });
+
+  it("does not require historical assignment coverage for explicit unchanged time and team values", async () => {
+    const originalStart = new Date("2026-08-06T07:10:00.000Z");
+    const originalEnd = new Date("2026-08-06T07:20:00.000Z");
+    const assignment = await database.ordenTecnico.create({
+      data: {
+        ordenId: fixture.orderId,
+        tecnicoId: fixture.otherTechnicianId,
+        role: "SUPPORT",
+        assignedAt: new Date("2026-08-06T07:00:00.000Z"),
+        unassignedAt: new Date("2026-08-06T08:00:00.000Z"),
+      },
+      select: { id: true },
+    });
+    const team = [
+      { technicianId: fixture.otherTechnicianId, role: "RESPONSIBLE" as const, participationPercentage: "100.00" },
+    ];
+    try {
+      const created = await createActivitiesMutationRepository(database).createManualActivity({
+        orderId: fixture.orderId,
+        activityTypeId: fixture.typeId,
+        description: "Historical assignment",
+        result: "Completed",
+        justification: "Initial record",
+        startedAt: originalStart,
+        endedAt: originalEnd,
+        team,
+      }, fixture.actor, startedAt);
+      if (created.kind !== "CREATED") throw new Error(`Expected completed manual activity, got ${created.kind}`);
+      await database.ordenTecnico.delete({ where: { id: assignment.id } });
+
+      await expect(createActivitiesOperationRepository(database).adjustCompletedActivity(
+        created.activity.id,
+        {
+          version: 1,
+          reason: "Text-only correction with explicit snapshot",
+          description: "Historical assignment corrected",
+          startedAt: originalStart,
+          endedAt: originalEnd,
+          team,
+        },
+        fixture.actor,
+        new Date("2026-08-06T12:00:00.000Z"),
+      )).resolves.toMatchObject({
+        kind: "UPDATED",
+        activity: {
+          description: "Historical assignment corrected",
+          startedAt: originalStart,
+          endedAt: originalEnd,
+          version: 2,
+        },
+      });
+      await expect(database.auditoria.findFirstOrThrow({
+        where: { entity: "Actividad", entityId: created.activity.id, action: "ACTIVITY_ADJUSTED" },
+        select: { afterData: true },
+      })).resolves.toMatchObject({
+        afterData: { changedFields: ["description"] },
+      });
+    } finally {
+      await database.ordenTecnico.deleteMany({ where: { id: assignment.id } });
+    }
   });
 
   it("preserves omitted inactive references while rejecting newly selected inactive type and team references", async () => {

@@ -26,6 +26,18 @@ import type {
 const transactionOptions = { isolationLevel: Prisma.TransactionIsolationLevel.Serializable } as const;
 const serializableAttempts = 3;
 
+function isRetryablePostgresTransactionError(
+  error: Prisma.PrismaClientKnownRequestError,
+): boolean {
+  if (error.code !== "P2010") return false;
+  const adapterError = error.meta?.driverAdapterError;
+  if (typeof adapterError !== "object" || adapterError === null) return false;
+  const cause = Reflect.get(adapterError, "cause");
+  if (typeof cause !== "object" || cause === null) return false;
+  const sqlState = Reflect.get(cause, "originalCode") ?? Reflect.get(cause, "code");
+  return sqlState === "40P01" || sqlState === "40001";
+}
+
 export async function runSerializableTransaction<T>(
   database: PrismaClient,
   operation: (transaction: Prisma.TransactionClient) => Promise<T>,
@@ -36,7 +48,7 @@ export async function runSerializableTransaction<T>(
     } catch (error) {
       const retryable =
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2034";
+        (error.code === "P2034" || isRetryablePostgresTransactionError(error));
       if (!retryable || attempt === serializableAttempts) throw error;
     }
   }

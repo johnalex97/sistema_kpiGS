@@ -64,12 +64,15 @@ async function loadOperationalActivity(
   transaction: Prisma.TransactionClient,
   id: string,
   actor: ActivityActorContext,
+  lockTeam = true,
 ): Promise<OperationalActivity | { kind: "ACTIVITY_NOT_FOUND" | "INVALID_PARTICIPATION_TOTAL" | "FORBIDDEN" }> {
   if (!(await lockActivity(transaction, id))) return { kind: "ACTIVITY_NOT_FOUND" };
   const initial = await loadActivity(transaction, id);
   if (!initial) return { kind: "ACTIVITY_NOT_FOUND" };
   const initialTechnicianIds = initial.tecnicos.map(({ tecnico }) => tecnico.id);
   if (!hasValidTeam(initial)) return { kind: "INVALID_PARTICIPATION_TOTAL" };
+  if (!actorCanOperate(initial, actor)) return { kind: "FORBIDDEN" };
+  if (!lockTeam) return { activity: initial, technicianIds: initialTechnicianIds };
   await lockTechnicians(transaction, initialTechnicianIds);
   const activity = await loadActivity(transaction, id);
   if (!activity) return { kind: "ACTIVITY_NOT_FOUND" };
@@ -101,7 +104,7 @@ async function transitionTimer(
   now: Date,
   command: Extract<ActivityCommand, "START" | "RESUME">,
 ): Promise<ActivityMutationResult> {
-  const loaded = await loadOperationalActivity(transaction, id, actor);
+  const loaded = await loadOperationalActivity(transaction, id, actor, false);
   if ("kind" in loaded) return loaded;
   const { activity, technicianIds } = loaded;
   const nextStatus = transitionActivity(activity.status, command);
@@ -109,6 +112,14 @@ async function transitionTimer(
   if (activity.version !== input.version) return { kind: "VERSION_CONFLICT" };
   const contextFailure = await validateOperationalActivityContext(transaction, activity);
   if (contextFailure !== null) return contextFailure;
+  await lockTechnicians(transaction, technicianIds);
+  const lockedActivity = await loadActivity(transaction, id);
+  if (!lockedActivity) return { kind: "ACTIVITY_NOT_FOUND" };
+  if (!hasValidTeam(lockedActivity)) return { kind: "INVALID_PARTICIPATION_TOTAL" };
+  if (!actorCanOperate(lockedActivity, actor)) return { kind: "FORBIDDEN" };
+  const lockedNextStatus = transitionActivity(lockedActivity.status, command);
+  if (!lockedNextStatus) return { kind: "INVALID_ACTIVITY_STATE" };
+  if (lockedActivity.version !== input.version) return { kind: "VERSION_CONFLICT" };
   if (await hasOtherActiveTimer(transaction, id, technicianIds)) return { kind: "ACTIVE_TIMER_EXISTS" };
   if (command === "RESUME") {
     const pauses = await transaction.pausaActividad.findMany({
@@ -119,9 +130,9 @@ async function transitionTimer(
   }
 
   const changed = await transaction.actividad.updateMany({
-    where: { id, deletedAt: null, status: activity.status, version: input.version },
+    where: { id, deletedAt: null, status: lockedActivity.status, version: input.version },
     data: {
-      status: nextStatus,
+      status: lockedNextStatus,
       ...(command === "START" && { startedAt: now }),
       updatedAt: now,
       version: { increment: 1 },
@@ -141,7 +152,7 @@ async function transitionTimer(
     detail,
     actor,
     now,
-    activity,
+    lockedActivity,
   );
   return { kind: "UPDATED", activity: detail };
 }
@@ -395,43 +406,59 @@ async function adjustCompletedActivity(
   if (beforeActivity.version !== input.version) return { kind: "VERSION_CONFLICT" };
   const startedAt = input.startedAt ?? beforeActivity.startedAt;
   const endedAt = input.endedAt ?? beforeActivity.endedAt;
-  if (startedAt === null || endedAt === null || !isValidCompletedRange(startedAt, endedAt, now)) {
+  if (startedAt === null || endedAt === null) {
+    return { kind: "INVALID_TEMPORAL_RANGE" };
+  }
+  const beforeTeam = beforeActivity.tecnicos.map(({ tecnico, role, participationPercentage }) => ({
+    technicianId: tecnico.id,
+    role,
+    participationPercentage: participationPercentage.toFixed(2),
+  })).sort((left, right) => left.technicianId.localeCompare(right.technicianId));
+  const finalTeam = requestedTeam.map(({ technicianId, role, participationPercentage }) => ({
+    technicianId,
+    role,
+    participationPercentage,
+  })).sort((left, right) => left.technicianId.localeCompare(right.technicianId));
+  const teamChanged = JSON.stringify(beforeTeam) !== JSON.stringify(finalTeam);
+  const timeChanged = startedAt.getTime() !== beforeActivity.startedAt?.getTime()
+    || endedAt.getTime() !== beforeActivity.endedAt?.getTime();
+  const temporalOrTeamChanged = timeChanged || teamChanged;
+  if (temporalOrTeamChanged && !isValidCompletedRange(startedAt, endedAt, now)) {
     return { kind: "INVALID_TEMPORAL_RANGE" };
   }
   const context = await validateCompletedAdjustmentContext(
-    transaction, beforeActivity, input, startedAt, endedAt,
+    transaction, beforeActivity, input, startedAt, endedAt, temporalOrTeamChanged,
   );
   if ("kind" in context) return context;
-  const pauses = await transaction.pausaActividad.findMany({
-    where: { actividadId: id },
-    select: { startedAt: true, endedAt: true },
-    orderBy: [{ startedAt: "asc" }, { id: "asc" }],
-  });
-  if (pauses.some(({ startedAt: pauseStartedAt, endedAt: pauseEndedAt }) => (
-    pauseEndedAt === null
-    || pauseStartedAt.getTime() < startedAt.getTime()
-    || pauseEndedAt.getTime() > endedAt.getTime()
-  ))) return { kind: "INVALID_TEMPORAL_RANGE" };
-  let minutes: ReturnType<typeof calculateActivityMinutes>;
-  try {
-    minutes = calculateActivityMinutes(
-      startedAt,
-      endedAt,
-      pauses.map(({ startedAt: pauseStartedAt, endedAt: pauseEndedAt }) => ({ startedAt: pauseStartedAt, endedAt: pauseEndedAt! })),
-    );
-  } catch {
-    return { kind: "INVALID_TEMPORAL_RANGE" };
+  let minutes: ReturnType<typeof calculateActivityMinutes> | undefined;
+  if (temporalOrTeamChanged) {
+    const pauses = await transaction.pausaActividad.findMany({
+      where: { actividadId: id },
+      select: { startedAt: true, endedAt: true },
+      orderBy: [{ startedAt: "asc" }, { id: "asc" }],
+    });
+    if (pauses.some(({ startedAt: pauseStartedAt, endedAt: pauseEndedAt }) => (
+      pauseEndedAt === null
+      || pauseStartedAt.getTime() < startedAt.getTime()
+      || pauseEndedAt.getTime() > endedAt.getTime()
+    ))) return { kind: "INVALID_TEMPORAL_RANGE" };
+    try {
+      minutes = calculateActivityMinutes(
+        startedAt,
+        endedAt,
+        pauses.map(({ startedAt: pauseStartedAt, endedAt: pauseEndedAt }) => ({ startedAt: pauseStartedAt, endedAt: pauseEndedAt! })),
+      );
+    } catch {
+      return { kind: "INVALID_TEMPORAL_RANGE" };
+    }
+    if (await adjustmentOverlaps(
+      transaction,
+      id,
+      context.team.map(({ technicianId }) => technicianId),
+      minutes.productiveSegments,
+      now,
+    )) return { kind: "TIME_OVERLAP" };
   }
-  const overlapRelevant = input.team !== undefined
-    || input.startedAt !== undefined
-    || input.endedAt !== undefined;
-  if (overlapRelevant && await adjustmentOverlaps(
-    transaction,
-    id,
-    context.team.map(({ technicianId }) => technicianId),
-    minutes.productiveSegments,
-    now,
-  )) return { kind: "TIME_OVERLAP" };
 
   const changed = await transaction.actividad.updateMany({
     where: { id, deletedAt: null, status: "COMPLETED", version: input.version },
@@ -442,16 +469,18 @@ async function adjustCompletedActivity(
         ? input.observations
         : beforeActivity.observations,
       result: input.result ?? beforeActivity.result,
-      startedAt,
-      endedAt,
-      pausedMinutes: minutes.pausedMinutes,
-      productiveMinutes: minutes.productiveMinutes,
+      ...(temporalOrTeamChanged && {
+        startedAt,
+        endedAt,
+        pausedMinutes: minutes!.pausedMinutes,
+        productiveMinutes: minutes!.productiveMinutes,
+      }),
       updatedAt: now,
       version: { increment: 1 },
     },
   });
   if (changed.count !== 1) return { kind: "VERSION_CONFLICT" };
-  if (input.team !== undefined) {
+  if (teamChanged) {
     await transaction.actividadTecnico.deleteMany({ where: { actividadId: id } });
     await transaction.actividadTecnico.createMany({
       data: context.team.map(({ technicianId, role, participationPercentage }) => ({
@@ -463,14 +492,16 @@ async function adjustCompletedActivity(
         endedAt,
       })),
     });
-  } else {
+  } else if (timeChanged) {
     await transaction.actividadTecnico.updateMany({ where: { actividadId: id }, data: { startedAt, endedAt } });
   }
-  await grantActivityVisibility(
-    transaction,
-    id,
-    context.team.map(({ technicianId }) => technicianId),
-  );
+  if (teamChanged) {
+    await grantActivityVisibility(
+      transaction,
+      id,
+      context.team.map(({ technicianId }) => technicianId),
+    );
+  }
   const activity = await loadActivity(transaction, id);
   if (!activity) throw new Error("Adjusted activity could not be hydrated");
   const before = adjustmentSnapshot(beforeActivity);

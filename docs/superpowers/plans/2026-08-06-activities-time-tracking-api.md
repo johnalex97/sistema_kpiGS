@@ -15,13 +15,25 @@
 - Do not change frontend behavior or replace mocks in this phase.
 - Do not expose activity materials, evidence, recurrences, KPI calculations, reports, notifications, deployment, VPS, or domains.
 - A technician sees only activities where they are or were responsible/participant; foreign and nonexistent IDs have the same 404 behavior.
+- Historical read scope is additive: current canonical team membership OR an
+  immutable `ActividadVisibilidadTecnico` grant. Filters, search, ownership,
+  timer conflicts, and order coverage continue to use the canonical team only.
 - Exactly one `RESPONSIBLE` member is required and team percentages must total exactly `100.00`.
 - A technician may have paused work, but only one `IN_PROGRESS` activity at a time.
 - Manual intervals use `[start, end)`, cannot be future/inverted, last 1 minute through 24 hours, and cannot intersect productive segments.
 - Server time is authoritative for real-time operations; inject `now: () => Date` at the service boundary for deterministic tests.
+- After locks, `START` and `RESUME` alone revalidate current type, technicians,
+  branch, client, order, and open order assignments. Later invalidation must not
+  prevent `PAUSE`, `COMPLETE`, or `CANCEL` from closing already-open work.
 - Every aggregate mutation increments `Actividad.version` exactly once and writes `Auditoria` in the same transaction.
 - Lock technicians in sorted UUID order; concurrency tests must force the lock window with separate connections.
 - Completed activities change only through `POST /activities/:activityId/adjustments`; cancelled work never contributes KPI time.
+- A completed adjustment that does not change time or team preserves exact
+  historical activity/team timestamps and stored minute fields; omitted
+  references are not revalidated, while explicitly selected type/team must be
+  active.
+- The delivered database has seven forward-only migrations; the seventh adds
+  historical activity visibility and append-only order-assignment integrity.
 - Public records never include authentication data, deleted markers, raw Prisma relation keys, or auxiliary hydration IDs.
 - Preserve ignored local `.env` files and never print credentials.
 
@@ -70,7 +82,10 @@ generic workflow engine or refactor the approved orders module.
 
 **Files:**
 - Create: `server/prisma/migrations/20260806150000_activities_api_constraints/migration.sql`
+- Create: `server/prisma/migrations/20260810203000_activities_history_integrity/migration.sql`
+- Modify: `server/prisma/schema.prisma`
 - Modify: `server/prisma/seed/catalogs.ts`
+- Modify: `server/prisma/seed/operations.ts`
 - Modify: `server/database/verify-database.sql`
 - Modify: `server/tests/database/schema-contract.test.ts`
 - Modify: `server/tests/database/seed.test.ts`
@@ -78,7 +93,7 @@ generic workflow engine or refactor the approved orders module.
 
 **Interfaces:**
 - Consumes: existing `permiso`, `rol_permiso`, `actividad`, `actividad_tecnico`, and idempotent catalog seed.
-- Produces: permissions `ACTIVITIES_VIEW_ALL`, `ACTIVITIES_MANAGE`, `ACTIVITIES_CREATE_OWN`, `ACTIVITIES_OPERATE_OWN`; indexes `idx_activity_page`, `idx_activity_status_page`, `idx_activity_order_page`, `idx_activity_technician_visibility`.
+- Produces: permissions `ACTIVITIES_VIEW_ALL`, `ACTIVITIES_MANAGE`, `ACTIVITIES_CREATE_OWN`, `ACTIVITIES_OPERATE_OWN`; indexes `idx_activity_page`, `idx_activity_status_page`, `idx_activity_order_page`, `idx_activity_technician_visibility`; immutable ACL `ActividadVisibilidadTecnico`; append-only `OrdenTecnico` intervals with one open row per order/technician.
 
 - [ ] **Step 1: Write failing permission, migration, and seed assertions**
 
@@ -107,6 +122,11 @@ expect(indexNames).toEqual(
   ]),
 );
 ```
+
+Also assert the `ActividadVisibilidadTecnico` model/table and inverse ACL index,
+the chronological and partial-unique order-assignment indexes, the absence of the
+obsolete total `(ordenId, tecnicoId)` uniqueness, and one ACL row for every
+known seeded activity/team pair after both seed runs.
 
 Run the seed twice in the test and assert one row per permission code and one
 role-permission pair per assignment.
@@ -150,6 +170,13 @@ CREATE INDEX idx_activity_technician_visibility
 ON actividad_tecnico (tecnico_id, actividad_id);
 ```
 
+The seventh migration is forward-only. It creates
+`actividad_visibilidad_tecnico`, backfills current teams plus allowlisted
+before/after audit snapshots, adds `idx_activity_visibility_acl`, creates the
+partial unique index `uq_orden_tecnico_asignacion_abierta` and chronological
+`idx_order_assignment_history`, then drops the obsolete total order/technician
+uniqueness. Existing intervals or grants are never deleted.
+
 - [ ] **Step 4: Update the idempotent permission catalog and role mapping**
 
 The catalog must contain:
@@ -164,7 +191,10 @@ The catalog must contain:
 Assign `VIEW_ALL` and `MANAGE` to SUPERVISOR, `CREATE_OWN` and `OPERATE_OWN` to
 TECHNICIAN, and all four to ADMIN through the existing all-permissions rule.
 Update `verify-database.sql` to print these exact role mappings and all four new
-index names.
+activity-query index names, plus the ACL/history indexes; verify the obsolete
+total order/technician uniqueness is absent and every known participation has an
+ACL grant. Seed operations upsert ACL grants for demo activity teams and resolve
+only the open order-assignment row when current state is required.
 
 - [ ] **Step 5: Apply migration to `public` and `test`, then prove GREEN**
 
@@ -190,7 +220,7 @@ are current, and SQL verification lists the new permissions/indexes.
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add server/prisma/migrations/20260806150000_activities_api_constraints/migration.sql server/prisma/seed/catalogs.ts server/database/verify-database.sql server/tests/database/schema-contract.test.ts server/tests/database/seed.test.ts server/tests/auth/authorization.test.ts
+git add server/prisma/migrations/20260806150000_activities_api_constraints/migration.sql server/prisma/migrations/20260810203000_activities_history_integrity/migration.sql server/prisma/schema.prisma server/prisma/seed/catalogs.ts server/prisma/seed/operations.ts server/database/verify-database.sql server/tests/database/schema-contract.test.ts server/tests/database/seed.test.ts server/tests/auth/authorization.test.ts
 git commit -m "feat(activities): add permissions and database indexes"
 ```
 
@@ -405,7 +435,9 @@ git commit -m "feat(activities): define contracts and time rules"
 - Modify: `server/src/activities/activities.repository.types.ts`
 
 **Interfaces:**
-- Consumes: `ActivityAccessScope`, `ActivityListFilters`, `activitySummarySelect`, `activityDetailSelect`, `activityTypeSelect` from Task 2.
+- Consumes: `ActivityAccessScope`, `ActivityListFilters`,
+  `activitySummarySelect`, `activityDetailSelect`, `activityTypeSelect` from Task
+  2, plus the `ActividadVisibilidadTecnico` relation introduced by Task 1.
 - Produces:
 
 ```ts
@@ -428,11 +460,14 @@ export function createActivitiesReadRepository(
 - [ ] **Step 1: Create a deterministic read fixture and failing tests**
 
 The fixture creates two clients/branches, active and deleted types, four
-technicians, pending/running/completed/deleted activities, a historical
-participant, and three activities sharing `createdAt` with ordered UUIDs.
-Tests assert catalog ordering, every filter, stable pagination, search across
+technicians, pending/running/completed/deleted activities, a former participant
+removed from the canonical team but retained in the visibility ACL, and three
+activities sharing `createdAt` with ordered UUIDs. Tests assert catalog ordering,
+every filter, stable pagination, search across
 description/result/order/client/technician, ALL scope, TECHNICIAN current and
-historical scope, empty pages, and same null for foreign/deleted/nonexistent IDs.
+historical-ACL scope, empty pages, and same null for
+foreign/deleted/nonexistent IDs. ACL membership grants root visibility only;
+technician filters and search results remain based on the canonical team.
 
 - [ ] **Step 2: Run focused DB test and confirm RED**
 
@@ -448,13 +483,20 @@ Expected: repository module/function missing.
 Build `Prisma.ActividadWhereInput` with `deletedAt: null`. Technician scope is:
 
 ```ts
-{ tecnicos: { some: { tecnicoId: scope.technicianId } } }
+{
+  OR: [
+    { tecnicos: { some: { tecnicoId: scope.technicianId } } },
+    { visibilidadTecnicos: { some: { tecnicoId: scope.technicianId } } },
+  ],
+}
 ```
 
-Do not filter historical team rows by current state. Search uses case-insensitive
-`contains` over allowed text/relations. Ignore deleted parents in returned
-records. Use a `RepeatableRead` transaction for `findMany` plus `count` so items
-and total share a snapshot. Order by `createdAt DESC, id DESC`.
+Hydrate and filter technician relations from canonical `ActividadTecnico`; the
+ACL must never synthesize current team members or operational ownership. Search
+uses case-insensitive `contains` over allowed text/relations. Ignore deleted
+parents in returned records. Use a `RepeatableRead` transaction for `findMany`
+plus `count` so items and total share a snapshot. Order by `createdAt DESC, id
+DESC`.
 
 - [ ] **Step 4: Implement catalog and detail hydration**
 
@@ -524,8 +566,9 @@ Cover leader individual/group creation, technician implicit self-team at 100,
 order-derived branch, default order PRIMARY responsible, explicit valid order
 team, inactive branch/type/technician, foreign order technician, duplicate
 member, no/multiple responsible, bad total, pending edit, pending team replace,
-non-pending rejection, stale version, audit snapshot, one version increment, and
-audit-failure rollback.
+non-pending rejection, stale version, audit snapshot, one version increment,
+initial/current ACL grants, former-member visibility after team replacement, and
+audit-failure rollback of both domain and ACL.
 
 - [ ] **Step 2: Confirm RED**
 
@@ -552,17 +595,19 @@ Within one transaction:
 
 - [ ] **Step 4: Implement create/update/team transactions**
 
-Create writes `Actividad`, `ActividadTecnico`, and `ACTIVITY_CREATED`. Update and
-team replacement use `updateMany({ id, version, status: "PENDING",
-deletedAt: null })`, require count 1, increment version once, and write
-`ACTIVITY_UPDATED` or `ACTIVITY_TEAM_UPDATED`. Hydrate the complete detail inside
-the transaction.
+Create writes `Actividad`, canonical `ActividadTecnico`, additive
+`ActividadVisibilidadTecnico` grants, and `ACTIVITY_CREATED`. Update and team
+replacement use `updateMany({ id, version, status: "PENDING", deletedAt: null
+})`, require count 1, increment version once, and write `ACTIVITY_UPDATED` or
+`ACTIVITY_TEAM_UPDATED`. Team replacement grants every new member with
+`createMany(..., skipDuplicates: true)` and never deletes prior visibility.
+Hydrate the complete canonical detail inside the transaction.
 
 - [ ] **Step 5: Prove RED→GREEN and rollback**
 
 Temporarily force the audit write to throw in the test transaction, observe the
 test fail before implementation, restore the real path, and assert activity,
-team, version, updatedAt, and audit are unchanged on failure.
+team, visibility ACL, version, updatedAt, and audit are unchanged on failure.
 
 Run:
 
@@ -614,7 +659,7 @@ Cover technician self entry, leader group entry, 1-minute and 24-hour boundaries
 future/inverted/overlong ranges, active timer conflict, overlap with completed
 productive segment, adjacency, valid interval wholly inside a historical pause,
 multi-technician conflict, ordered locking, order historical assignment, audit
-justification, and rollback.
+justification, additive visibility grants, and rollback including ACL rows.
 
 - [ ] **Step 2: Force and verify the concurrency RED**
 
@@ -651,8 +696,8 @@ memory with `[start,end)` semantics.
 Validate parents/team, reject future/range limits against `now`, lock every team
 member, revalidate, reject active timer or overlap, create `COMPLETED` activity
 with no pauses, set activity/team start/end, calculate productive minutes, write
-`ACTIVITY_MANUAL_RECORDED` with justification, and hydrate inside the same
-transaction.
+additive ACL grants for the full team, `ACTIVITY_MANUAL_RECORDED` with
+justification, and hydrate inside the same transaction.
 
 - [ ] **Step 5: Run focused and full gates**
 
@@ -703,8 +748,11 @@ export function createActivitiesOperationRepository(
 Cover start with server time on activity/team, participant denied context result,
 bad state/version, invalid team, pause opening exactly one row with reason/user,
 double pause, resume closing the same pause, paused work permitting another
-start, resume blocked while another timer runs, version/audit increments, and
-rollback of domain plus pause row.
+start, resume blocked while another timer runs, inactive type/technician/branch/
+client, cancelled order, removed current assignment, version/audit increments,
+and rollback of domain plus pause row. Prove the current-resource checks run only
+for `START`/`RESUME`: invalidation after start does not block `PAUSE`, and Task 7
+must still allow `COMPLETE`/`CANCEL`.
 
 - [ ] **Step 2: Add a forced two-start concurrency test and confirm RED**
 
@@ -714,21 +762,35 @@ competition for one technician. Assert exactly one `UPDATED`, one
 After GREEN, temporarily bypass the technician lock, confirm this test fails,
 then restore it before running the full suite.
 
+Add forced parent-lock races for both standalone and order-linked activities.
+Hold the client row inside a real concurrent branch update and prove `START` or
+`RESUME` waits without a client↔branch cycle, then consumes the committed state.
+A three-attempt transaction retry may accept `P2034` and only `P2010` whose
+nested driver-adapter SQLSTATE is allowlisted as deadlock `40P01` or the observed
+serializable write conflict `40001`; unrelated `P2010` errors must not retry.
+
 - [ ] **Step 3: Implement shared operational transaction prelude**
 
-Fetch activity plus complete team under root lock, sort/lock all technician IDs,
-then re-read state/version/team/ownership. Require actor technician to be current
-responsible unless actor carries `ACTIVITIES_MANAGE`. Return discriminated
-failures instead of throwing business errors.
+Fetch activity plus complete canonical team under the root lock, then re-read
+state/version/team/ownership. Require actor technician to be current responsible
+unless actor carries `ACTIVITIES_MANAGE`. For `START` and `RESUME` only, acquire
+and validate current resources after that base check using separate lock queries
+in one global order: client → branch → optional order → activity type →
+technicians sorted by UUID; then require one open `OrdenTecnico` assignment for
+each member when an order exists. Return discriminated failures instead of
+throwing business errors. `PAUSE`, `COMPLETE`, and `CANCEL` use the base prelude
+without this current-resource validator.
 
 - [ ] **Step 4: Implement start, pause, and resume**
 
-- Start: `PENDING → IN_PROGRESS`, set activity/team `startedAt`, reject other
-  `IN_PROGRESS` membership, audit `ACTIVITY_STARTED`.
+- Start: revalidate the locked current context, then `PENDING → IN_PROGRESS`, set
+  activity/team `startedAt`, reject other `IN_PROGRESS` membership, audit
+  `ACTIVITY_STARTED`.
 - Pause: `IN_PROGRESS → PAUSED`, create one open `PausaActividad`, audit
   `ACTIVITY_PAUSED` with allowlisted reason.
-- Resume: lock team, reject other running membership, close the open pause at
-  `now`, `PAUSED → IN_PROGRESS`, audit `ACTIVITY_RESUMED`.
+- Resume: revalidate the locked current context, reject other running membership,
+  close the open pause at `now`, `PAUSED → IN_PROGRESS`, audit
+  `ACTIVITY_RESUMED`.
 
 Each command uses `expectedVersion`, changes version once, and returns a fully
 hydrated record from its transaction.
@@ -781,6 +843,8 @@ math, group timestamps, zero/nonnegative floor behavior, version, audit, and
 rollback. Cancellation: own pending allowed; technician started cancellation
 denied; leader pending/running/paused allowed; open pause closes; timestamps are
 retained; `productiveMinutes` is null; reason audited; completed/cancelled reject.
+For both close paths, invalidate a related technician/order/assignment after the
+timer starts and prove the already-open activity remains closable.
 
 - [ ] **Step 2: Confirm RED**
 
@@ -793,8 +857,9 @@ Expected: close methods missing or transition assertions fail.
 
 - [ ] **Step 3: Implement completion**
 
-Use the operational prelude, require `IN_PROGRESS`, load every pause, reject an
-open pause, calculate raw milliseconds, set activity/team `endedAt`, persist
+Use the base state/version/ownership prelude—not the `START`/`RESUME`
+current-resource validator—require `IN_PROGRESS`, load every pause, reject an open
+pause, calculate raw milliseconds, set activity/team `endedAt`, persist
 `pausedMinutes` and `productiveMinutes`, store result/observations, transition to
 `COMPLETED`, audit `ACTIVITY_COMPLETED`, increment once, hydrate in transaction.
 
@@ -804,7 +869,8 @@ Repository revalidates actor ownership supplied in `ActivityActorContext`:
 manager may cancel PENDING/IN_PROGRESS/PAUSED; technician must be responsible
 and state PENDING. Close an open pause at `now`, set state `CANCELLED`, preserve
 operational timestamps, leave `productiveMinutes: null`, audit reason, and
-increment once.
+increment once. Do not revalidate current parent/resource validity on this close
+path.
 
 - [ ] **Step 5: Prove rollback timestamps and run suites**
 
@@ -839,7 +905,8 @@ git commit -m "feat(activities): complete and cancel recorded work"
 - Modify: `server/tests/database/activities-operation-persistence.test.ts`
 
 **Interfaces:**
-- Consumes: `AdjustActivityInput`, overlap query, parent/team validators, completed activity detail.
+- Consumes: `AdjustActivityInput`, overlap query, conditional parent/team
+  validators, completed activity detail, and additive visibility grant helper.
 - Produces:
 
 ```ts
@@ -857,12 +924,18 @@ export type ActivitiesRepository = ActivitiesReadRepository &
 
 - [ ] **Step 1: Write failing adjustment tests**
 
-Cover every allowlisted field, preservation of omitted fields, explicit nullable
-observations, one temporal endpoint merged with stored counterpart, pause outside
-new range rejection, interval overlap, team historical order assignment, exact
-100 total, team timestamp synchronization, recalculation, reason, stale version,
-non-completed rejection, malicious extra fields rejected at schema boundary,
-before/after allowlist, changedFields, and audit-failure rollback.
+Cover every allowlisted field, preservation of omitted references even when
+their type/technician/order is later inactive or cancelled, rejection of an
+explicitly selected inactive type/team, explicit nullable observations, one
+temporal endpoint merged with its stored counterpart, pause outside the new
+range, interval overlap, team historical order assignment, exact 100 total, team
+timestamp synchronization, recalculation, reason, stale version, non-completed
+rejection, malicious extra fields rejected at schema boundary, before/after
+allowlist, changedFields, and audit-failure rollback. A description/type/
+observations/result-only adjustment must preserve byte-for-byte values of
+`startedAt`, `endedAt`, `pausedMinutes`, `productiveMinutes`, pause rows, and all
+canonical team timestamps. Team replacement must add ACL grants without removing
+former members, including on rollback probes.
 
 - [ ] **Step 2: Confirm RED**
 
@@ -897,12 +970,31 @@ No object spread from Prisma records is allowed in audit metadata.
 
 - [ ] **Step 4: Implement the adjustment transaction**
 
-Require `COMPLETED` and version; merge endpoints; ensure every pause remains
-inside the final range; validate type/team and historical order assignment;
-lock final and previous technician union in sorted order; exclude the current
-activity from overlap queries; recalculate minutes; synchronize team timestamps;
-increment once; write `ACTIVITY_ADJUSTED` metadata `{ reason, changedFields,
-before, after }`; hydrate before commit.
+Require `COMPLETED` and version. Preserve every omitted reference from the stored
+snapshot; validate current activity-type state only when `activityTypeId` is
+explicit and current technician state only when `team` is explicit. Lock the
+previous/requested technician union in sorted order.
+
+Branch on:
+
+```ts
+const timeChanged = finalStartedAt.getTime() !== storedStartedAt.getTime()
+  || finalEndedAt.getTime() !== storedEndedAt.getTime();
+const teamChanged = !sameNormalizedTeam(finalTeam, storedTeam);
+const temporalOrTeamChanged = timeChanged || teamChanged;
+```
+
+Only in that branch merge endpoints, ensure every pause remains inside the final
+range, require one historical order-assignment row per final member covering the
+whole range, exclude the current activity from overlap queries, recalculate
+minutes, and synchronize canonical team timestamps. Otherwise update only the
+explicitly requested non-temporal fields plus aggregate version/audit metadata;
+do not rewrite activity times, stored minutes, pause rows, or participation
+timestamps. If the normalized team actually changes, replace only the canonical
+team and add its ACL grants with `skipDuplicates`; never delete historical
+grants. Increment once,
+write `ACTIVITY_ADJUSTED` metadata `{ reason, changedFields, before, after }`, and
+hydrate before commit.
 
 - [ ] **Step 5: Run focused and full suites**
 
@@ -1105,16 +1197,18 @@ git commit -m "feat(activities): expose protected time tracking API"
 - Test: all existing frontend/backend/database suites
 
 **Interfaces:**
-- Consumes: complete 13-endpoint API and six-migration database.
+- Consumes: complete 13-endpoint API and seven-migration database.
 - Produces: reproducible local documentation and final verification evidence.
 
 - [ ] **Step 1: Update documentation with exact delivered behavior**
 
 Document permissions, endpoints, state flow, manual 1-minute/24-hour rules,
-team 100.00 rule, one active timer, overlap behavior, adjustment protection,
-commands, migration count, permission/index verification, and explicit remaining
-mock/frontend/KPI/evidence/reincidence work. Mark Stage 8 complete; do not claim
-OpenAPI/Swagger or UI integration.
+team 100.00 rule, one active timer, overlap behavior, current-or-historical-ACL
+read scope, canonical operational ownership, `START`/`RESUME`-only current
+resource revalidation, exact temporal preservation for non-temporal adjustments,
+commands, seven migrations, permission/index verification, and explicit
+remaining mock/frontend/KPI/evidence/reincidence work. Mark Stage 8 complete; do
+not claim OpenAPI/Swagger or UI integration.
 
 - [ ] **Step 2: Run Prisma and seed gates**
 
@@ -1187,8 +1281,13 @@ must be explicitly adjudicated before integration. Then apply
 - [ ] Seven migrations are applied in `public` and `test`.
 - [ ] Seed is idempotent and role permissions match the design.
 - [ ] All 13 endpoints are mounted and protected.
-- [ ] Technician own visibility and foreign-ID concealment are proven.
+- [ ] Technician current-or-historical-ACL visibility and foreign-ID concealment
+      are proven without expanding canonical operational ownership.
 - [ ] Pending, timer, manual, close, cancel, and adjustment flows are complete.
+- [ ] `START`/`RESUME` revalidate current resources after ordered locks, while
+      `PAUSE`/`COMPLETE`/`CANCEL` keep already-open work closable.
+- [ ] Non-temporal completed adjustments preserve exact stored times, minutes,
+      pauses, and participation timestamps.
 - [ ] Team/order/percentage invariants are transactional.
 - [ ] Forced concurrency proves one active timer and no overlapping manual time.
 - [ ] Rollback tests include activity, team, pauses, version, timestamps, and audit.
