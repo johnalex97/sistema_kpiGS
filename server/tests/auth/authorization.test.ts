@@ -7,6 +7,7 @@ import { parseEnvironment } from "../../src/config/env.js";
 import { createAuthenticationMiddleware } from "../../src/middlewares/authentication.middleware.js";
 import { requireAllowedOrigin } from "../../src/middlewares/origin.middleware.js";
 import {
+  requireAnyPermission,
   requirePasswordChanged,
   requirePermission,
 } from "../../src/middlewares/permission.middleware.js";
@@ -73,6 +74,28 @@ function protectedRequest(origin?: string) {
   return origin ? operation.set("Origin", origin) : operation;
 }
 
+function anyPermissionTestApp() {
+  return createApp({
+    env,
+    logger: silentLogger,
+    registerRoutes(app) {
+      app.post(
+        "/test/any-permission",
+        (request, _response, next) => {
+          if (principal) request.auth = principal;
+          next();
+        },
+        requireAnyPermission("ACTIVITIES_MANAGE", "ACTIVITIES_OPERATE_OWN"),
+        (_request, response) => response.status(204).end(),
+      );
+    },
+  });
+}
+
+function anyPermissionRequest() {
+  return request(anyPermissionTestApp()).post("/test/any-permission");
+}
+
 beforeEach(() => {
   principal = basePrincipal;
 });
@@ -108,5 +131,37 @@ describe("authentication and authorization middleware", () => {
 
   it("allows a changed password and persisted permission", async () => {
     await protectedRequest(allowedOrigin).expect(204);
+  });
+
+  it("creates an any-permission request handler", () => {
+    expect(requireAnyPermission("ORDERS_MANAGE", "ORDERS_OPERATE_OWN"))
+      .toBeTypeOf("function");
+  });
+
+  it.each(["ACTIVITIES_MANAGE", "ACTIVITIES_OPERATE_OWN"])(
+    "allows either listed permission",
+    async (permission) => {
+      principal = { ...basePrincipal, permissions: [permission] };
+
+      await anyPermissionRequest().expect(204);
+    },
+  );
+
+  it("denies when no listed permission is granted", async () => {
+    principal = { ...basePrincipal, permissions: ["USERS_MANAGE"] };
+
+    const response = await anyPermissionRequest();
+
+    expect(response.status).toBe(403);
+    expect(response.body.errors[0].code).toBe("FORBIDDEN");
+  });
+
+  it("denies an absent principal", async () => {
+    principal = null;
+
+    const response = await anyPermissionRequest();
+
+    expect(response.status).toBe(403);
+    expect(response.body.errors[0].code).toBe("FORBIDDEN");
   });
 });

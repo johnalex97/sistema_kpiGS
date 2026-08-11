@@ -98,6 +98,8 @@ Salida: maestros operativos conectados a datos reales.
 ## 7. Órdenes de trabajo
 
 - Crear numeración automática, asignaciones y estados.
+- Conservar cada ciclo de asignación como intervalo append-only y permitir una
+  sola asignación abierta por pareja orden/técnico.
 - Registrar agenda, prioridad, traslados, diagnóstico, materiales y resultado.
 - Proteger órdenes finalizadas con ajustes auditados.
 - Detectar órdenes críticas y atrasadas.
@@ -111,7 +113,27 @@ Salida: flujo completo de órdenes con historial.
 - Validar incompatibilidad de actividades activas.
 - Distribuir métricas de actividades grupales.
 
-Salida: registro diario real y probado.
+Estado: completada. La API protegida expone catálogo, listado y detalle, crea
+pendientes y cargas manuales, mantiene equipos con un responsable y total
+`100.00`, opera cronómetros y pausas, cancela estados abiertos y ajusta
+finalizadas con motivo, versión y auditoría. Los técnicos sólo consultan sus
+participaciones actuales o históricas y sólo operan como responsables; los IDs
+ajenos se ocultan como 404. ADMIN y SUPERVISOR pueden operar el cronómetro como
+respaldo, mientras un técnico sólo cancela su actividad propia en `PENDING`. Un
+técnico no puede mantener más de un cronómetro activo ni registrar una carga
+manual que se solape con tiempo productivo cerrado, pausado o en progreso. Las
+cargas manuales usan un rango no futuro de 1 minuto a 24 horas. `START` y
+`RESUME` revalidan los recursos actuales tras los bloqueos, pero una invalidación
+posterior no impide completar o cancelar trabajo abierto. Los ajustes preservan
+referencias omitidas, validan tipos y equipos nuevos y usan la cobertura
+histórica de asignaciones. La sexta migración aporta permisos e índices de
+actividades; la séptima incorpora la ACL histórica inmutable y convierte
+`OrdenTecnico` en historial append-only con unicidad parcial para la fila
+abierta.
+
+Salida verificada: 13 endpoints protegidos, con mutaciones transaccionales;
+siete migraciones, seed idempotente y pruebas unitarias, PostgreSQL y HTTP. No
+se incorporan OpenAPI/Swagger ni conexión del frontend en esta etapa.
 
 ## 9. Evidencias
 

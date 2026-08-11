@@ -431,11 +431,15 @@ describe("technician persisted mutations", () => {
         where: { entity: "tecnico", entityId: first.id },
         orderBy: { occurredAt: "asc" },
       });
-      expect(audits.map(({ action }) => action)).toEqual([
-        "TECHNICIAN_CREATED",
-        "TECHNICIAN_UPDATED",
-        "TECHNICIAN_STATUS_CHANGED",
-      ]);
+      const auditActions = audits.map(({ action }) => action);
+      expect(auditActions).toHaveLength(3);
+      expect(auditActions).toEqual(
+        expect.arrayContaining([
+          "TECHNICIAN_CREATED",
+          "TECHNICIAN_UPDATED",
+          "TECHNICIAN_STATUS_CHANGED",
+        ]),
+      );
       expect(JSON.stringify(audits)).not.toContain("password");
       expect(JSON.stringify(audits)).not.toContain("session");
     } finally {

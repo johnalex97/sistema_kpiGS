@@ -245,12 +245,13 @@ model Tecnico {
   deletedAt DateTime?     @map("deleted_at") @db.Timestamptz(3)
   version   Int           @default(1)
 
-  usuario       Usuario?              @relation(fields: [userId], references: [id], onDelete: SetNull)
-  ordenes       OrdenTecnico[]
-  actividades   ActividadTecnico[]
-  reincidencias ReincidenciaTecnico[]
-  metas         MetaTecnico[]
-  resultadosKpi ResultadoKPI[]
+  usuario             Usuario?                      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  ordenes             OrdenTecnico[]
+  actividades         ActividadTecnico[]
+  actividadesVisibles ActividadVisibilidadTecnico[]
+  reincidencias       ReincidenciaTecnico[]
+  metas               MetaTecnico[]
+  resultadosKpi       ResultadoKPI[]
 
   @@index([status, deletedAt])
   @@map("tecnico")
@@ -417,7 +418,7 @@ model OrdenTecnico {
   tecnico    Tecnico      @relation(fields: [tecnicoId], references: [id], onDelete: Restrict)
   assignedBy Usuario?     @relation("OrdenAsignadaPor", fields: [assignedById], references: [id], onDelete: SetNull)
 
-  @@unique([ordenId, tecnicoId])
+  @@index([ordenId, assignedAt, id], map: "idx_order_assignment_history")
   @@index([tecnicoId, unassignedAt])
   @@index([assignedById])
   @@map("orden_tecnico")
@@ -480,13 +481,14 @@ model Actividad {
   deletedAt         DateTime?       @map("deleted_at") @db.Timestamptz(3)
   version           Int             @default(1)
 
-  sucursal      SucursalCliente     @relation(fields: [sucursalId], references: [id], onDelete: Restrict)
-  orden         OrdenTrabajo?       @relation(fields: [ordenId], references: [id], onDelete: Restrict)
-  tipoActividad TipoActividad       @relation(fields: [tipoActividadId], references: [id], onDelete: Restrict)
-  tecnicos      ActividadTecnico[]
-  pausas        PausaActividad[]
-  materiales    MaterialUtilizado[]
-  evidencias    Evidencia[]
+  sucursal            SucursalCliente               @relation(fields: [sucursalId], references: [id], onDelete: Restrict)
+  orden               OrdenTrabajo?                 @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  tipoActividad       TipoActividad                 @relation(fields: [tipoActividadId], references: [id], onDelete: Restrict)
+  tecnicos            ActividadTecnico[]
+  visibilidadTecnicos ActividadVisibilidadTecnico[]
+  pausas              PausaActividad[]
+  materiales          MaterialUtilizado[]
+  evidencias          Evidencia[]
 
   @@index([sucursalId, status])
   @@index([ordenId])
@@ -510,6 +512,18 @@ model ActividadTecnico {
   @@unique([actividadId, tecnicoId])
   @@index([tecnicoId])
   @@map("actividad_tecnico")
+}
+
+model ActividadVisibilidadTecnico {
+  actividadId String @map("actividad_id") @db.Uuid
+  tecnicoId   String @map("tecnico_id") @db.Uuid
+
+  actividad Actividad @relation(fields: [actividadId], references: [id], onDelete: Cascade)
+  tecnico   Tecnico   @relation(fields: [tecnicoId], references: [id], onDelete: Restrict)
+
+  @@id([actividadId, tecnicoId])
+  @@index([tecnicoId, actividadId], map: "idx_activity_visibility_acl")
+  @@map("actividad_visibilidad_tecnico")
 }
 
 model PausaActividad {

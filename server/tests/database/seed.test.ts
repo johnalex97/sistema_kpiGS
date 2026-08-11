@@ -37,6 +37,7 @@ describe("database seed", () => {
     await seedDatabase(database);
     const first = {
       roles: await database.rol.count(),
+      rolePermissions: await database.rolPermiso.count(),
       technicians: await database.tecnico.count(),
       recurrences: await database.reincidencia.count(),
     };
@@ -44,11 +45,108 @@ describe("database seed", () => {
     await seedDatabase(database);
     const second = {
       roles: await database.rol.count(),
+      rolePermissions: await database.rolPermiso.count(),
       technicians: await database.tecnico.count(),
       recurrences: await database.reincidencia.count(),
     };
 
     expect(second).toEqual(first);
+  });
+
+  it("grants the order permissions after an idempotent second seed", async () => {
+    await seedDatabase(database);
+    await seedDatabase(database);
+    const roles = await database.rol.findMany({
+      where: { code: { in: ["SUPERVISOR", "TECHNICIAN"] } },
+      include: { permissions: { include: { permiso: true } } },
+    });
+    const rolePermissions = Object.fromEntries(
+      roles.map((role) => [
+        role.code,
+        role.permissions.map(({ permiso }) => permiso.code),
+      ]),
+    );
+    const supervisorPermissions = rolePermissions.SUPERVISOR ?? [];
+    const technicianPermissions = rolePermissions.TECHNICIAN ?? [];
+
+    expect(supervisorPermissions).toEqual(
+      expect.arrayContaining(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]),
+    );
+    expect(technicianPermissions).toEqual(
+      expect.arrayContaining(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]),
+    );
+  });
+
+  it("grants activity permissions exactly once after an idempotent second seed", async () => {
+    await seedDatabase(database);
+    await seedDatabase(database);
+    const roles = await database.rol.findMany({
+      where: { code: { in: ["SUPERVISOR", "TECHNICIAN"] } },
+      include: { permissions: { include: { permiso: true } } },
+    });
+    const rolePermissions = Object.fromEntries(
+      roles.map((role) => [
+        role.code,
+        role.permissions.map(({ permiso }) => permiso.code),
+      ]),
+    );
+    const supervisorPermissions = rolePermissions.SUPERVISOR ?? [];
+    const technicianPermissions = rolePermissions.TECHNICIAN ?? [];
+    const activityPermissionCodes = [
+      "ACTIVITIES_VIEW_ALL",
+      "ACTIVITIES_MANAGE",
+      "ACTIVITIES_CREATE_OWN",
+      "ACTIVITIES_OPERATE_OWN",
+    ];
+
+    expect(technicianPermissions).toEqual(
+      expect.arrayContaining([
+        "ACTIVITIES_CREATE_OWN",
+        "ACTIVITIES_OPERATE_OWN",
+      ]),
+    );
+    expect(supervisorPermissions).toEqual(
+      expect.arrayContaining([
+        "ACTIVITIES_VIEW_ALL",
+        "ACTIVITIES_MANAGE",
+      ]),
+    );
+
+    const allPermissionCodes = (
+      await database.permiso.findMany({ select: { code: true } })
+    ).map(({ code }) => code);
+    expect(allPermissionCodes).not.toContain("ACTIVITIES_MANAGE_OWN");
+
+    for (const code of activityPermissionCodes) {
+      expect(await database.permiso.count({ where: { code } })).toBe(1);
+    }
+
+    await expect(database.permiso.findUniqueOrThrow({
+      where: { code: "ACTIVITIES_CREATE_OWN" },
+      select: { description: true },
+    })).resolves.toEqual({ description: "Permiso activities_create_own" });
+
+    expect(
+      await database.rolPermiso.count({
+        where: { permiso: { code: { in: activityPermissionCodes } } },
+      }),
+    ).toBe(8);
+  });
+
+  it("seeds visibility ACL rows for every current activity participant", async () => {
+    await seedDatabase(database);
+    await seedDatabase(database);
+
+    const rows = await database.$queryRaw<Array<{ missing: bigint }>>`
+      SELECT COUNT(*) AS "missing"
+      FROM "actividad_tecnico" AS team
+      LEFT JOIN "actividad_visibilidad_tecnico" AS visibility
+        ON visibility."actividad_id" = team."actividad_id"
+       AND visibility."tecnico_id" = team."tecnico_id"
+      WHERE visibility."actividad_id" IS NULL
+    `;
+
+    expect(Number(rows[0]?.missing ?? -1)).toBe(0);
   });
 
   it("keeps demo users unable to authenticate", async () => {

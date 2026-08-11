@@ -12,10 +12,14 @@ const permissionData = [
   { code: "TECHNICIANS_MANAGE", resource: "technicians", action: "manage" },
   { code: "CLIENTS_VIEW", resource: "clients", action: "view" },
   { code: "CLIENTS_MANAGE", resource: "clients", action: "manage" },
+  { code: "ORDERS_VIEW_ALL", resource: "orders", action: "view_all" },
   { code: "ORDERS_VIEW_OWN", resource: "orders", action: "view_own" },
   { code: "ORDERS_MANAGE", resource: "orders", action: "manage" },
-  { code: "ACTIVITIES_MANAGE_OWN", resource: "activities", action: "manage_own" },
+  { code: "ORDERS_OPERATE_OWN", resource: "orders", action: "operate_own" },
+  { code: "ACTIVITIES_VIEW_ALL", resource: "activities", action: "view_all" },
   { code: "ACTIVITIES_MANAGE", resource: "activities", action: "manage" },
+  { code: "ACTIVITIES_CREATE_OWN", resource: "activities", action: "create_own" },
+  { code: "ACTIVITIES_OPERATE_OWN", resource: "activities", action: "operate_own" },
   { code: "RECURRENCES_REVIEW", resource: "recurrences", action: "review" },
   { code: "KPIS_VIEW_OWN", resource: "kpis", action: "view_own" },
   { code: "KPIS_VIEW_TEAM", resource: "kpis", action: "view_team" },
@@ -87,12 +91,13 @@ export async function seedCatalogs(
 
   const permissions: Record<string, string> = {};
   for (const item of permissionData) {
+    const description = `Permiso ${item.code.toLowerCase()}`;
     const permission = await database.permiso.upsert({
       where: { code: item.code },
-      update: { resource: item.resource, action: item.action },
+      update: { resource: item.resource, action: item.action, description },
       create: {
         ...item,
-        description: `Permiso ${item.code.toLowerCase()}`,
+        description,
       },
     });
     permissions[item.code] = permission.id;
@@ -105,7 +110,9 @@ export async function seedCatalogs(
       "TECHNICIANS_MANAGE",
       "CLIENTS_VIEW",
       "CLIENTS_MANAGE",
+      "ORDERS_VIEW_ALL",
       "ORDERS_MANAGE",
+      "ACTIVITIES_VIEW_ALL",
       "ACTIVITIES_MANAGE",
       "RECURRENCES_REVIEW",
       "KPIS_VIEW_TEAM",
@@ -113,7 +120,9 @@ export async function seedCatalogs(
     TECHNICIAN: [
       "CLIENTS_VIEW",
       "ORDERS_VIEW_OWN",
-      "ACTIVITIES_MANAGE_OWN",
+      "ORDERS_OPERATE_OWN",
+      "ACTIVITIES_CREATE_OWN",
+      "ACTIVITIES_OPERATE_OWN",
       "KPIS_VIEW_OWN",
     ],
   };

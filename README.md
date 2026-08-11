@@ -7,11 +7,13 @@ cumplimiento, eficiencia y calidad.
 ## Estado actual
 
 El repositorio contiene un frontend modular, una API Express independiente,
-persistencia PostgreSQL administrada mediante Prisma y autenticación backend
-con sesiones revocables. El frontend todavía usa datos de demostración porque
+persistencia PostgreSQL administrada mediante Prisma, autenticación backend
+con sesiones revocables y APIs protegidas de técnicos, clientes, órdenes y
+actividades. El frontend todavía usa datos de demostración porque
 la pantalla de acceso y la conexión entre ambas
 aplicaciones corresponden a etapas posteriores. Las actividades creadas desde
-el formulario se conservan únicamente durante la sesión del navegador.
+el formulario visual se conservan únicamente durante la sesión del navegador;
+la API de actividades sí persiste el registro operativo en PostgreSQL.
 
 Consulta:
 
@@ -78,7 +80,16 @@ versionadas. La tercera migración,
 códigos de técnico y la unicidad de correo laboral activo. La cuarta,
 `20260731120000_clients_api_constraints`, agrega versiones para sucursales y
 contactos, la secuencia de clientes y las restricciones de RTN y contactos
-principales.
+principales. La quinta, `20260801170000_orders_api_constraints`, agrega cuatro
+índices para agenda abierta, visibilidad por técnico, trabajo principal activo
+y paginación estable del historial de órdenes. La sexta,
+`20260806150000_activities_api_constraints`, renombra el permiso propio de
+actividades a `ACTIVITIES_CREATE_OWN` y agrega cuatro índices de lectura de
+actividades. La séptima, `20260810203000_activities_history_integrity`, añade la
+ACL histórica de participación, convierte las asignaciones de órdenes en un
+historial append-only con una sola asignación abierta por orden y técnico, y
+corrige la descripción del permiso `ACTIVITIES_CREATE_OWN`. Las siete
+migraciones deben estar aplicadas tanto en `public` como en `test`.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
 apuntarse al esquema `public`.
@@ -129,6 +140,36 @@ POST /api/v1/clients/:clientId/contacts
 PATCH /api/v1/clients/:clientId/contacts/:contactId
 DELETE /api/v1/clients/:clientId/contacts/:contactId
 POST /api/v1/clients/:clientId/contacts/:contactId/reactivate
+GET /api/v1/orders
+GET /api/v1/orders/:orderId
+GET /api/v1/orders/:orderId/history
+POST /api/v1/orders
+PATCH /api/v1/orders/:orderId
+POST /api/v1/orders/:orderId/assignments
+DELETE /api/v1/orders/:orderId/assignments/:technicianId
+POST /api/v1/orders/:orderId/on-route
+POST /api/v1/orders/:orderId/start
+POST /api/v1/orders/:orderId/pause
+POST /api/v1/orders/:orderId/resume
+POST /api/v1/orders/:orderId/complete
+POST /api/v1/orders/:orderId/cancel
+POST /api/v1/orders/:orderId/adjustments
+POST /api/v1/orders/:orderId/materials
+PATCH /api/v1/orders/:orderId/materials/:usageId
+DELETE /api/v1/orders/:orderId/materials/:usageId
+GET /api/v1/activity-types
+GET /api/v1/activities
+POST /api/v1/activities
+POST /api/v1/activities/manual
+GET /api/v1/activities/:activityId
+PATCH /api/v1/activities/:activityId
+PUT /api/v1/activities/:activityId/team
+POST /api/v1/activities/:activityId/start
+POST /api/v1/activities/:activityId/pause
+POST /api/v1/activities/:activityId/resume
+POST /api/v1/activities/:activityId/complete
+POST /api/v1/activities/:activityId/cancel
+POST /api/v1/activities/:activityId/adjustments
 ```
 
 Los endpoints mutables de autenticación requieren un encabezado `Origin`
@@ -152,6 +193,83 @@ trabajo activo, y desactivar un contacto principal no promueve otro. Solo
 puede existir un principal general activo y uno activo por cada sucursal.
 Todas las ediciones y transiciones usan `version` para evitar sobrescrituras.
 El frontend React todavía no consume esta API de clientes.
+
+La API de órdenes usa cuatro permisos. `ORDERS_VIEW_ALL` permite a ADMIN y
+SUPERVISOR consultar todas las órdenes; `ORDERS_VIEW_OWN` limita a TECHNICIAN a
+órdenes donde tiene una asignación actual o histórica. `ORDERS_MANAGE` protege
+creación, edición, asignaciones, cancelación y ajustes cerrados.
+`ORDERS_OPERATE_OWN` permite al técnico principal activo iniciar traslados,
+trabajo, pausas, reanudaciones, finalización y materiales de su propia orden.
+Las rutas de materiales aceptan alternativamente `ORDERS_MANAGE`.
+
+Cada creación recibe un número anual inmutable `GS-AAAA-NNNN`, serializado en
+PostgreSQL para evitar duplicados concurrentes. El flujo operativo es
+`PENDING → ASSIGNED → ON_ROUTE → IN_PROGRESS ⇄ PAUSED → COMPLETED`; el inicio
+directo `ASSIGNED → IN_PROGRESS` cubre soporte remoto y `CANCELLED` puede cerrar
+cualquier estado abierto. Toda mutación envía la `version` devuelta por la
+respuesta anterior; una versión obsoleta devuelve `VERSION_CONFLICT` sin aplicar
+cambios. Las mutaciones requieren además `Origin` permitido, sesión autenticada
+y contraseña definitiva, en ese orden.
+
+Las asignaciones de una orden son intervalos append-only: desasignar fija
+`unassignedAt` y reasignar crea una fila nueva. Un índice único parcial permite
+como máximo una fila abierta para cada pareja orden/técnico, mientras conserva
+todos sus ciclos cerrados para consultas y validaciones históricas.
+
+Las pruebas enfocadas de órdenes se ejecutan desde `server/`:
+
+```powershell
+npm test -- tests/orders
+npm run test:db -- tests/database/orders-read-persistence.test.ts tests/database/orders-mutation-persistence.test.ts tests/database/orders-operation-persistence.test.ts tests/orders/orders-http.test.ts
+```
+
+El frontend React sigue usando `src/mocks/data.ts`; esta entrega no conecta sus
+pantallas con la API de órdenes.
+
+La API de actividades añade 13 endpoints. `ACTIVITIES_VIEW_ALL` permite a ADMIN
+y SUPERVISOR consultar catálogo, lista y detalle; un TECHNICIAN sólo ve sus
+participaciones actuales o históricas. `ACTIVITIES_MANAGE` permite a ADMIN y
+SUPERVISOR crear equipos, editar pendientes, cancelar actividades abiertas,
+ajustar finalizadas e iniciar, pausar, reanudar o completar cronómetros como
+respaldo administrativo. `ACTIVITIES_CREATE_OWN` permite al TECHNICIAN crear
+sólo una actividad pendiente o manual propia al 100.00% y cancelar esa actividad
+propia únicamente mientras permanezca `PENDING`; `ACTIVITIES_OPERATE_OWN` le
+permite iniciar, pausar, reanudar y completar únicamente la actividad donde es
+responsable. Un ID ajeno y uno inexistente producen el mismo 404. Todas las
+mutaciones requieren sesión, contraseña definitiva, `Origin` permitido y
+`version` cuando el comando modifica una actividad existente.
+
+El flujo es `PENDING → IN_PROGRESS ↔ PAUSED → COMPLETED`, con cancelación de
+estados abiertos. La actividad debe tener un responsable y cero o más
+participantes cuya suma decimal sea exactamente `100.00`. El servidor es el
+reloj oficial: sólo admite un cronómetro `IN_PROGRESS` por técnico y calcula
+tiempo productivo restando las pausas. La carga manual termina directamente en
+`COMPLETED`, exige justificación, intervalo no futuro de al menos 1 minuto y de
+máximo 24 horas, y no puede solaparse con segmentos productivos; los intervalos
+consecutivos `[inicio, fin)` sí son válidos. Los equipos de una orden deben
+pertenecer a sus asignaciones activas. Las correcciones de una actividad
+`COMPLETED` sólo corresponden a ADMIN o SUPERVISOR, requieren motivo y quedan
+auditadas junto con el cambio transaccional.
+
+La detección de solapamientos también cubre trabajo abierto: usa `endedAt` para
+actividades cerradas, el inicio de la pausa abierta para `PAUSED` y el reloj
+inyectado para `IN_PROGRESS`, siempre restando pausas cerradas. `START` y
+`RESUME` revalidan recursos y asignaciones vigentes después de adquirir sus
+bloqueos; una invalidación posterior no impide completar o cancelar trabajo ya
+abierto. En ajustes completados, las referencias omitidas se conservan aunque
+hayan quedado inactivas o canceladas; sólo un tipo o equipo enviado de nuevo
+debe estar activo, y los cambios de tiempo o equipo ligados a una orden exigen
+cobertura histórica del intervalo final. Un rango temporal inválido se publica
+como HTTP 400 con código `VALIDATION_ERROR`.
+
+La visibilidad técnica usa el equipo canónico actual o una ACL histórica
+inmutable. Crear una actividad y reemplazar o ajustar su equipo agrega los
+participantes a esa ACL dentro de la misma transacción; retirar a alguien del
+equipo no elimina su acceso histórico.
+
+El listado admite paginación, búsqueda, estado, tipo, cliente, sucursal, orden,
+técnico y rango de inicio; se ordena por `createdAt DESC, id DESC`. No se
+expone OpenAPI/Swagger en esta fase.
 
 Respuesta:
 
@@ -180,8 +298,8 @@ Comandos del backend:
 | `npm run dev` | Ejecuta la API con recarga |
 | `npm run typecheck` | Valida TypeScript sin emitir |
 | `npm run lint` | Ejecuta ESLint |
-| `npm run test` | Ejecuta 95 pruebas unitarias y de contrato |
-| `npm run test:db` | Ejecuta 62 pruebas HTTP y PostgreSQL contra el esquema `test` |
+| `npm run test` | Ejecuta pruebas unitarias y de contrato |
+| `npm run test:db` | Ejecuta pruebas HTTP y PostgreSQL contra el esquema `test` |
 | `npm run build` | Genera `server/dist/` |
 | `npm run start` | Ejecuta el build |
 | `npm run db:format` | Formatea `schema.prisma` |
@@ -258,7 +376,7 @@ explícitamente en `src/mocks/data.ts`.
 
 PostgreSQL posee además un seed independiente con:
 
-- 3 roles y 13 permisos.
+- 3 roles y permisos, incluidos los cuatro de actividades.
 - 3 técnicos, uno vinculado a usuario y dos sin cuenta.
 - 2 clientes y sus sucursales/contactos.
 - 3 órdenes.
@@ -291,8 +409,10 @@ seguros, cierre controlado de Prisma, contraseñas `scrypt`, bloqueo temporal,
 sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 El frontend todavía no muestra login ni consume la base o la API de negocio.
-La autorización por propiedad de órdenes y actividades se incorporará al crear
-esos endpoints. No utilices el sistema para información sensible o datos
+La autorización por propiedad ya se aplica en órdenes y actividades. El
+frontend no integra aún la API de actividades: continúan pendientes la pantalla
+de acceso, evidencias, reincidencias, cálculo/persistencia de KPI, reportes y
+la integración de los mocks con datos reales. No utilices el sistema para información sensible o datos
 personales reales hasta completar las fases funcionales y el despliegue HTTPS.
 
 Los secretos, archivos `.env`, cliente Prisma generado, logs y builds están
