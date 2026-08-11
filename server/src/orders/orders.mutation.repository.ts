@@ -560,13 +560,16 @@ async function assignTechnician(
   const locked = await lockOrder(transaction, id);
   if (!locked) return { kind: "ORDER_NOT_FOUND" } as const;
   if (locked.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
-  const existingAssignment = await transaction.ordenTecnico.findUnique({
-    where: { ordenId_tecnicoId: { ordenId: id, tecnicoId: input.technicianId } },
-    select: { role: true, unassignedAt: true },
+  const existingAssignment = await transaction.ordenTecnico.findFirst({
+    where: {
+      ordenId: id,
+      tecnicoId: input.technicianId,
+      unassignedAt: null,
+    },
+    select: { id: true, role: true },
   });
   const demotingPrimary =
     existingAssignment?.role === "PRIMARY" &&
-    existingAssignment.unassignedAt === null &&
     input.role === "SUPPORT";
   if (closedOrder(locked.status)) return { kind: "ORDER_CLOSED" } as const;
   if (
@@ -605,20 +608,19 @@ async function assignTechnician(
       });
     }
   }
-  await transaction.ordenTecnico.upsert({
-    where: { ordenId_tecnicoId: { ordenId: id, tecnicoId: input.technicianId } },
-    create: {
+  if (existingAssignment !== null) {
+    await transaction.ordenTecnico.update({
+      where: { id: existingAssignment.id },
+      data: { unassignedAt: now },
+    });
+  }
+  await transaction.ordenTecnico.create({
+    data: {
       ordenId: id,
       tecnicoId: input.technicianId,
       role: input.role,
       assignedAt: now,
       assignedById: actor.userId,
-    },
-    update: {
-      role: input.role,
-      assignedAt: now,
-      assignedById: actor.userId,
-      unassignedAt: null,
     },
   });
   const nextStatus =
@@ -679,13 +681,18 @@ async function unassignTechnician(
   if (locked.version !== input.version) return { kind: "VERSION_CONFLICT" } as const;
   if (closedOrder(locked.status)) return { kind: "ORDER_CLOSED" } as const;
 
-  const assignment = await transaction.ordenTecnico.findUnique({
-    where: { ordenId_tecnicoId: { ordenId: id, tecnicoId: technicianId } },
-    select: { role: true, unassignedAt: true },
+  const assignment = await transaction.ordenTecnico.findFirst({
+    where: { ordenId: id, tecnicoId: technicianId, unassignedAt: null },
+    select: { id: true, role: true },
   });
-  if (!assignment) return { kind: "ASSIGNMENT_NOT_FOUND" } as const;
-  if (assignment.unassignedAt !== null) {
-    return { kind: "TECHNICIAN_NOT_ASSIGNED" } as const;
+  if (!assignment) {
+    const historicalAssignment = await transaction.ordenTecnico.findFirst({
+      where: { ordenId: id, tecnicoId: technicianId },
+      select: { id: true },
+    });
+    return historicalAssignment === null
+      ? { kind: "ASSIGNMENT_NOT_FOUND" } as const
+      : { kind: "TECHNICIAN_NOT_ASSIGNED" } as const;
   }
   if (
     assignment.role === "PRIMARY" &&
@@ -697,7 +704,7 @@ async function unassignTechnician(
 
   const before = await loadOrderDetail(transaction, id);
   await transaction.ordenTecnico.update({
-    where: { ordenId_tecnicoId: { ordenId: id, tecnicoId: technicianId } },
+    where: { id: assignment.id },
     data: { unassignedAt: now },
   });
   const nextStatus =

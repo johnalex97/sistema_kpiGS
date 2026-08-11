@@ -392,6 +392,7 @@ describe("activities HTTP", () => {
     const invalidAfter = await captureWriteScope(invalidDescription, [technicianIds.foreign]);
     expect(invalid.status).toBe(400);
     expect(invalid.body.errors[0].code).toBe("VALIDATION_ERROR");
+    expect(invalid.body.message).toBe("Los datos enviados no son válidos");
     expect(invalidAfter).toEqual(invalidBefore);
 
     const participantActivity = await admin.post("/api/v1/activities").set("Origin", allowedOrigin).send(

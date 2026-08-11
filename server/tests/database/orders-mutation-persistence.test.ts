@@ -1341,7 +1341,7 @@ describe("orders mutation repository technician assignments", () => {
     ).resolves.toMatchObject({ kind: "UPDATED", order: { status: "PENDING", version: 5 } });
   });
 
-  it("reactivates a historical row with refreshed role and assignment metadata", async () => {
+  it("appends a new assignment interval without overwriting the historical interval", async () => {
     const repository = createOrdersMutationRepository(database);
     await repository.assignTechnician(
       fixture.orderIds.PENDING,
@@ -1365,22 +1365,27 @@ describe("orders mutation repository technician assignments", () => {
         reassignedAt,
       ),
     ).resolves.toMatchObject({ kind: "UPDATED", order: { status: "ASSIGNED", version: 4 } });
-    expect(
-      await database.ordenTecnico.findUniqueOrThrow({
-        where: {
-          ordenId_tecnicoId: {
-            ordenId: fixture.orderIds.PENDING,
-            tecnicoId: fixture.technicianIds.support,
-          },
-        },
-        select: { role: true, assignedAt: true, assignedById: true, unassignedAt: true },
-      }),
-    ).toEqual({
-      role: "PRIMARY",
-      assignedAt: reassignedAt,
-      assignedById: fixture.parents.actor.userId,
-      unassignedAt: null,
-    });
+    expect(await database.ordenTecnico.findMany({
+      where: {
+        ordenId: fixture.orderIds.PENDING,
+        tecnicoId: fixture.technicianIds.support,
+      },
+      orderBy: [{ assignedAt: "asc" }, { id: "asc" }],
+      select: { role: true, assignedAt: true, assignedById: true, unassignedAt: true },
+    })).toEqual([
+      {
+        role: "SUPPORT",
+        assignedAt: now,
+        assignedById: fixture.parents.actor.userId,
+        unassignedAt: new Date("2026-08-01T13:00:00.000Z"),
+      },
+      {
+        role: "PRIMARY",
+        assignedAt: reassignedAt,
+        assignedById: fixture.parents.actor.userId,
+        unassignedAt: null,
+      },
+    ]);
   });
 
   it("demotes an assigned primary to support with a truthful status and trail", async () => {
@@ -1403,17 +1408,18 @@ describe("orders mutation repository technician assignments", () => {
       kind: "UPDATED",
       order: { status: "PENDING", version: 3 },
     });
-    expect(
-      await database.ordenTecnico.findUniqueOrThrow({
-        where: {
-          ordenId_tecnicoId: {
-            ordenId: fixture.orderIds.PENDING,
-            tecnicoId: fixture.technicianIds.primary,
-          },
-        },
-        select: { role: true, unassignedAt: true },
-      }),
-    ).toEqual({ role: "SUPPORT", unassignedAt: null });
+    const demotionCycles = await database.ordenTecnico.findMany({
+      where: {
+        ordenId: fixture.orderIds.PENDING,
+        tecnicoId: fixture.technicianIds.primary,
+      },
+      select: { role: true, unassignedAt: true },
+    });
+    expect(demotionCycles).toHaveLength(2);
+    expect(demotionCycles).toEqual(expect.arrayContaining([
+      { role: "PRIMARY", unassignedAt: now },
+      { role: "SUPPORT", unassignedAt: null },
+    ]));
     expect(
       await database.historialOrden.findFirstOrThrow({
         where: {
@@ -1475,12 +1481,11 @@ describe("orders mutation repository technician assignments", () => {
         }),
       ).toEqual({ status, version: 1 });
       expect(
-        await database.ordenTecnico.findUniqueOrThrow({
+        await database.ordenTecnico.findFirstOrThrow({
           where: {
-            ordenId_tecnicoId: {
-              ordenId: orderId,
-              tecnicoId: fixture.technicianIds.primary,
-            },
+            ordenId: orderId,
+            tecnicoId: fixture.technicianIds.primary,
+            unassignedAt: null,
           },
           select: { role: true, unassignedAt: true },
         }),

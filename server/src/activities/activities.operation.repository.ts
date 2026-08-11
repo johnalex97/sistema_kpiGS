@@ -12,8 +12,11 @@ import {
   writeActivityAudit,
 } from "./activities.mutation.repository.js";
 import {
+  findProductiveSegments,
+  grantActivityVisibility,
   validateActivityTeam,
   validateCompletedAdjustmentContext,
+  validateOperationalActivityContext,
 } from "./activities.repository.helpers.js";
 import { transitionActivity } from "./activities.state-machine.js";
 import { calculateActivityMinutes, overlapsAny } from "./activities.time.js";
@@ -104,6 +107,8 @@ async function transitionTimer(
   const nextStatus = transitionActivity(activity.status, command);
   if (!nextStatus) return { kind: "INVALID_ACTIVITY_STATE" };
   if (activity.version !== input.version) return { kind: "VERSION_CONFLICT" };
+  const contextFailure = await validateOperationalActivityContext(transaction, activity);
+  if (contextFailure !== null) return contextFailure;
   if (await hasOtherActiveTimer(transaction, id, technicianIds)) return { kind: "ACTIVE_TIMER_EXISTS" };
   if (command === "RESUME") {
     const pauses = await transaction.pausaActividad.findMany({
@@ -314,58 +319,19 @@ async function adjustmentOverlaps(
   activityId: string,
   technicianIds: readonly string[],
   productiveSegments: ReturnType<typeof calculateActivityMinutes>["productiveSegments"],
+  now: Date,
 ): Promise<boolean> {
   for (const technicianId of technicianIds) {
     for (const segment of productiveSegments) {
-      if (overlapsAny(segment, await findOtherProductiveSegments(transaction, technicianId, segment, activityId))) {
+      if (overlapsAny(
+        segment,
+        await findProductiveSegments(transaction, technicianId, segment, now, activityId),
+      )) {
         return true;
       }
     }
   }
   return false;
-}
-
-async function findOtherProductiveSegments(
-  transaction: Prisma.TransactionClient,
-  technicianId: string,
-  range: { startedAt: Date; endedAt: Date },
-  activityId: string,
-): Promise<Array<{ startedAt: Date; endedAt: Date }>> {
-  const memberships = await transaction.actividadTecnico.findMany({
-    where: {
-      tecnicoId: technicianId,
-      actividad: {
-        id: { not: activityId },
-        deletedAt: null,
-        status: { not: "CANCELLED" },
-        startedAt: { lt: range.endedAt },
-        endedAt: { gt: range.startedAt },
-      },
-    },
-    select: {
-      actividad: {
-        select: {
-          startedAt: true,
-          endedAt: true,
-          pausas: {
-            where: { endedAt: { not: null } },
-            select: { startedAt: true, endedAt: true },
-          },
-        },
-      },
-    },
-  });
-  return memberships.flatMap(({ actividad }) => {
-    if (actividad.startedAt === null || actividad.endedAt === null) return [];
-    return calculateActivityMinutes(
-      actividad.startedAt,
-      actividad.endedAt,
-      actividad.pausas.flatMap((pause) => pause.endedAt === null ? [] : [{
-        startedAt: pause.startedAt,
-        endedAt: pause.endedAt,
-      }]),
-    ).productiveSegments;
-  });
 }
 
 async function writeAdjustmentAudit(
@@ -433,7 +399,7 @@ async function adjustCompletedActivity(
     return { kind: "INVALID_TEMPORAL_RANGE" };
   }
   const context = await validateCompletedAdjustmentContext(
-    transaction, beforeActivity, input, actor, startedAt, endedAt,
+    transaction, beforeActivity, input, startedAt, endedAt,
   );
   if ("kind" in context) return context;
   const pauses = await transaction.pausaActividad.findMany({
@@ -456,11 +422,15 @@ async function adjustCompletedActivity(
   } catch {
     return { kind: "INVALID_TEMPORAL_RANGE" };
   }
-  if (await adjustmentOverlaps(
+  const overlapRelevant = input.team !== undefined
+    || input.startedAt !== undefined
+    || input.endedAt !== undefined;
+  if (overlapRelevant && await adjustmentOverlaps(
     transaction,
     id,
     context.team.map(({ technicianId }) => technicianId),
     minutes.productiveSegments,
+    now,
   )) return { kind: "TIME_OVERLAP" };
 
   const changed = await transaction.actividad.updateMany({
@@ -496,6 +466,11 @@ async function adjustCompletedActivity(
   } else {
     await transaction.actividadTecnico.updateMany({ where: { actividadId: id }, data: { startedAt, endedAt } });
   }
+  await grantActivityVisibility(
+    transaction,
+    id,
+    context.team.map(({ technicianId }) => technicianId),
+  );
   const activity = await loadActivity(transaction, id);
   if (!activity) throw new Error("Adjusted activity could not be hydrated");
   const before = adjustmentSnapshot(beforeActivity);

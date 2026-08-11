@@ -144,16 +144,28 @@ export async function seedOperations(
   ] as const;
 
   for (const [ordenId, tecnicoId, role] of assignmentData) {
-    await database.ordenTecnico.upsert({
-      where: { ordenId_tecnicoId: { ordenId, tecnicoId } },
-      update: { role, unassignedAt: null },
-      create: {
-        ordenId,
-        tecnicoId,
-        role,
-        assignedById: identity.supervisorUserId,
-      },
+    const currentAssignment = await database.ordenTecnico.findFirst({
+      where: { ordenId, tecnicoId, unassignedAt: null },
+      select: { id: true },
     });
+    if (currentAssignment === null) {
+      await database.ordenTecnico.create({
+        data: {
+          ordenId,
+          tecnicoId,
+          role,
+          assignedById: identity.supervisorUserId,
+        },
+      });
+    } else {
+      await database.ordenTecnico.update({
+        where: { id: currentAssignment.id },
+        data: {
+          role,
+          assignedById: identity.supervisorUserId,
+        },
+      });
+    }
   }
 
   await database.historialOrden.upsert({
@@ -302,6 +314,11 @@ export async function seedOperations(
       where: { actividadId_tecnicoId: { actividadId, tecnicoId } },
       update: { role, participationPercentage },
       create: { actividadId, tecnicoId, role, participationPercentage },
+    });
+    await database.actividadVisibilidadTecnico.upsert({
+      where: { actividadId_tecnicoId: { actividadId, tecnicoId } },
+      update: {},
+      create: { actividadId, tecnicoId },
     });
   }
 

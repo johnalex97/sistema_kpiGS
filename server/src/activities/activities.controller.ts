@@ -36,7 +36,7 @@ const messages = {
 function validationError(error: ZodError): ApiError {
   return new ApiError(
     400,
-    "Los datos enviados no son vÃ¡lidos",
+    "Los datos enviados no son válidos",
     "VALIDATION_ERROR",
     error.issues.map((issue) => ({
       field: issue.path.join("."),

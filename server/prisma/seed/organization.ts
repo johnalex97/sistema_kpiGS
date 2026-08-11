@@ -185,5 +185,34 @@ export async function seedOrganization(
     },
   });
 
+  await database.$queryRaw`
+    SELECT setval(
+      'tecnico_code_seq',
+      GREATEST(
+        (SELECT last_value FROM tecnico_code_seq),
+        COALESCE((
+          SELECT MAX(SUBSTRING("code" FROM 5)::bigint)
+          FROM "tecnico"
+          WHERE "code" ~ '^TEC-[0-9]+$'
+        ), 1)
+      ),
+      true
+    )
+  `;
+  await database.$queryRaw`
+    SELECT setval(
+      'cliente_code_seq',
+      GREATEST(
+        (SELECT last_value FROM cliente_code_seq),
+        COALESCE((
+          SELECT MAX(SUBSTRING("code" FROM 5)::bigint)
+          FROM "cliente"
+          WHERE "code" ~ '^CLI-[0-9]+$'
+        ), 1)
+      ),
+      true
+    )
+  `;
+
   return { technicianIds, clientIds, branchIds };
 }

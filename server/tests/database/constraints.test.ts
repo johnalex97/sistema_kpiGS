@@ -70,6 +70,62 @@ describe("database constraints", () => {
     ).rejects.toThrow();
   });
 
+  it("keeps closed order-assignment cycles while allowing only one open pair", async () => {
+    const { order, technician, user } = await fixtures();
+    const firstClosedId = randomUUID();
+    const secondClosedId = randomUUID();
+    const openId = randomUUID();
+
+    try {
+      await database.ordenTecnico.createMany({
+        data: [
+          {
+            id: firstClosedId,
+            ordenId: order.id,
+            tecnicoId: technician.id,
+            role: RolOrdenTecnico.SUPPORT,
+            assignedAt: new Date("2026-07-20T08:00:00.000Z"),
+            unassignedAt: new Date("2026-07-20T10:00:00.000Z"),
+            assignedById: user.id,
+          },
+          {
+            id: secondClosedId,
+            ordenId: order.id,
+            tecnicoId: technician.id,
+            role: RolOrdenTecnico.SUPPORT,
+            assignedAt: new Date("2026-07-21T08:00:00.000Z"),
+            unassignedAt: new Date("2026-07-21T10:00:00.000Z"),
+            assignedById: user.id,
+          },
+          {
+            id: openId,
+            ordenId: order.id,
+            tecnicoId: technician.id,
+            role: RolOrdenTecnico.SUPPORT,
+            assignedAt: new Date("2026-07-22T08:00:00.000Z"),
+            assignedById: user.id,
+          },
+        ],
+      });
+
+      expect(await database.ordenTecnico.count({
+        where: { ordenId: order.id, tecnicoId: technician.id },
+      })).toBe(3);
+      await expect(database.ordenTecnico.create({
+        data: {
+          ordenId: order.id,
+          tecnicoId: technician.id,
+          role: RolOrdenTecnico.SUPPORT,
+          assignedById: user.id,
+        },
+      })).rejects.toThrow();
+    } finally {
+      await database.ordenTecnico.deleteMany({
+        where: { id: { in: [firstClosedId, secondClosedId, openId] } },
+      });
+    }
+  });
+
   it("rejects a work order related to itself", async () => {
     const { order } = await fixtures();
 

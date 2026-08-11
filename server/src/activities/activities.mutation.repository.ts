@@ -1,6 +1,10 @@
 import { Prisma } from "../../generated/prisma/client.js";
 import type { PrismaClient } from "../../generated/prisma/client.js";
-import { validateActivityContext } from "./activities.repository.helpers.js";
+import {
+  findProductiveSegments,
+  grantActivityVisibility,
+  validateActivityContext,
+} from "./activities.repository.helpers.js";
 import {
   calculateActivityMinutes,
   overlapsAny,
@@ -112,49 +116,6 @@ export async function lockTechnicians(
   }
 }
 
-async function findProductiveSegments(
-  transaction: Prisma.TransactionClient,
-  technicianId: string,
-  range: { startedAt: Date; endedAt: Date },
-  excludeActivityId?: string,
-): Promise<Array<{ startedAt: Date; endedAt: Date }>> {
-  const memberships = await transaction.actividadTecnico.findMany({
-    where: {
-      tecnicoId: technicianId,
-      actividad: {
-        deletedAt: null,
-        status: { not: "CANCELLED" },
-        startedAt: { lt: range.endedAt },
-        endedAt: { gt: range.startedAt },
-        ...(excludeActivityId !== undefined && { id: { not: excludeActivityId } }),
-      },
-    },
-    select: {
-      actividad: {
-        select: {
-          startedAt: true,
-          endedAt: true,
-          pausas: {
-            where: { endedAt: { not: null } },
-            select: { startedAt: true, endedAt: true },
-          },
-        },
-      },
-    },
-  });
-  return memberships.flatMap(({ actividad }) => {
-    if (actividad.startedAt === null || actividad.endedAt === null) return [];
-    return calculateActivityMinutes(
-      actividad.startedAt,
-      actividad.endedAt,
-      actividad.pausas.flatMap((pause) => pause.endedAt === null ? [] : [{
-        startedAt: pause.startedAt,
-        endedAt: pause.endedAt,
-      }]),
-    ).productiveSegments;
-  });
-}
-
 function validManualRange(input: ManualActivityInput, now: Date): boolean {
   const startedAt = input.startedAt.getTime();
   const endedAt = input.endedAt.getTime();
@@ -190,7 +151,7 @@ async function createManualActivity(
       select: { id: true },
     });
     if (activeTimer) return { kind: "ACTIVE_TIMER_EXISTS" };
-    if (overlapsAny(range, await findProductiveSegments(transaction, technicianId, range))) {
+    if (overlapsAny(range, await findProductiveSegments(transaction, technicianId, range, now))) {
       return { kind: "TIME_OVERLAP" };
     }
   }
@@ -223,6 +184,11 @@ async function createManualActivity(
     },
     select: { id: true },
   });
+  await grantActivityVisibility(
+    transaction,
+    activity.id,
+    context.team.map(({ technicianId }) => technicianId),
+  );
   const detail = await loadActivity(transaction, activity.id);
   if (!detail) throw new Error("Created manual activity could not be hydrated");
   await writeActivityAudit(
@@ -263,6 +229,11 @@ async function createActivity(
     },
     select: { id: true },
   });
+  await grantActivityVisibility(
+    transaction,
+    activity.id,
+    context.team.map(({ technicianId }) => technicianId),
+  );
   const detail = await loadActivity(transaction, activity.id);
   if (!detail) throw new Error("Created activity could not be hydrated");
   await writeActivityAudit(transaction, "ACTIVITY_CREATED", detail, actor, now);
@@ -331,6 +302,11 @@ async function replaceActivityTeam(
       participationPercentage: member.participationPercentage,
     })),
   });
+  await grantActivityVisibility(
+    transaction,
+    id,
+    context.team.map(({ technicianId }) => technicianId),
+  );
   const detail = await loadActivity(transaction, id);
   if (!detail) throw new Error("Updated activity team could not be hydrated");
   await writeActivityAudit(transaction, "ACTIVITY_TEAM_UPDATED", detail, actor, now, before);

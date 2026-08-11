@@ -121,11 +121,32 @@ describe("database seed", () => {
       expect(await database.permiso.count({ where: { code } })).toBe(1);
     }
 
+    await expect(database.permiso.findUniqueOrThrow({
+      where: { code: "ACTIVITIES_CREATE_OWN" },
+      select: { description: true },
+    })).resolves.toEqual({ description: "Permiso activities_create_own" });
+
     expect(
       await database.rolPermiso.count({
         where: { permiso: { code: { in: activityPermissionCodes } } },
       }),
     ).toBe(8);
+  });
+
+  it("seeds visibility ACL rows for every current activity participant", async () => {
+    await seedDatabase(database);
+    await seedDatabase(database);
+
+    const rows = await database.$queryRaw<Array<{ missing: bigint }>>`
+      SELECT COUNT(*) AS "missing"
+      FROM "actividad_tecnico" AS team
+      LEFT JOIN "actividad_visibilidad_tecnico" AS visibility
+        ON visibility."actividad_id" = team."actividad_id"
+       AND visibility."tecnico_id" = team."tecnico_id"
+      WHERE visibility."actividad_id" IS NULL
+    `;
+
+    expect(Number(rows[0]?.missing ?? -1)).toBe(0);
   });
 
   it("keeps demo users unable to authenticate", async () => {

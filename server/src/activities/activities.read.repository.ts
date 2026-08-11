@@ -28,10 +28,15 @@ function visibleActivityWhere(
     deletedAt: null,
     sucursal: { deletedAt: null, cliente: { deletedAt: null } },
     tipoActividad: { deletedAt: null },
-    OR: [{ ordenId: null }, { orden: { deletedAt: null } }],
-    ...(scope.kind === "TECHNICIAN" && {
-      tecnicos: { some: { tecnicoId: scope.technicianId } },
-    }),
+    AND: [
+      { OR: [{ ordenId: null }, { orden: { deletedAt: null } }] },
+      ...(scope.kind === "TECHNICIAN" ? [{
+        OR: [
+          { tecnicos: { some: { tecnicoId: scope.technicianId } } },
+          { visibilidadTecnicos: { some: { tecnicoId: scope.technicianId } } },
+        ],
+      }] : []),
+    ],
   };
 }
 

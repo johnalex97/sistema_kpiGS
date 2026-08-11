@@ -91,12 +91,13 @@ export async function seedCatalogs(
 
   const permissions: Record<string, string> = {};
   for (const item of permissionData) {
+    const description = `Permiso ${item.code.toLowerCase()}`;
     const permission = await database.permiso.upsert({
       where: { code: item.code },
-      update: { resource: item.resource, action: item.action },
+      update: { resource: item.resource, action: item.action, description },
       create: {
         ...item,
-        description: `Permiso ${item.code.toLowerCase()}`,
+        description,
       },
     });
     permissions[item.code] = permission.id;

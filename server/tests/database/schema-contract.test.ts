@@ -23,6 +23,7 @@ const requiredModels = [
   "OrdenRelacionada",
   "Actividad",
   "ActividadTecnico",
+  "ActividadVisibilidadTecnico",
   "PausaActividad",
   "Material",
   "MaterialUtilizado",
@@ -41,6 +42,14 @@ const requiredModels = [
 afterAll(disconnectTestDatabase);
 
 describe("Prisma schema contract", () => {
+  it("executes the database suite in the isolated test schema", async () => {
+    const rows = await database.$queryRaw<Array<{ schema: string }>>`
+      SELECT current_schema() AS "schema"
+    `;
+
+    expect(rows).toEqual([{ schema: "test" }]);
+  });
+
   it("generates a client for every approved relational model", () => {
     for (const model of requiredModels) {
       expect(Object.values(Prisma.ModelName)).toContain(model);
@@ -57,26 +66,39 @@ describe("Prisma schema contract", () => {
   });
 
   it("creates the required order query indexes", async () => {
-    const indexes = await database.$queryRaw<Array<{ indexname: string }>>`
-      SELECT indexname
+    const indexes = await database.$queryRaw<Array<{ indexname: string; indexdef: string }>>`
+      SELECT indexname, indexdef
       FROM pg_indexes
       WHERE schemaname = current_schema()
         AND indexname IN (
           'idx_order_open_schedule',
           'idx_order_technician_visibility',
           'idx_order_active_primary',
-          'idx_order_history_page'
+          'idx_order_history_page',
+          'idx_order_assignment_history',
+          'uq_orden_tecnico_asignacion_abierta',
+          'orden_tecnico_orden_id_tecnico_id_key'
         )
     `;
 
-    expect(indexes.map(({ indexname }) => indexname)).toEqual(
+    const indexNames = indexes.map(({ indexname }) => indexname);
+    expect(indexNames).toEqual(
       expect.arrayContaining([
         "idx_order_open_schedule",
         "idx_order_technician_visibility",
         "idx_order_active_primary",
         "idx_order_history_page",
+        "idx_order_assignment_history",
+        "uq_orden_tecnico_asignacion_abierta",
       ]),
     );
+    expect(indexNames).not.toContain("orden_tecnico_orden_id_tecnico_id_key");
+    const openAssignmentIndex = indexes.find(
+      ({ indexname }) => indexname === "uq_orden_tecnico_asignacion_abierta",
+    )?.indexdef;
+    expect(openAssignmentIndex).toContain("CREATE UNIQUE INDEX");
+    expect(openAssignmentIndex).toContain("(orden_id, tecnico_id)");
+    expect(openAssignmentIndex).toContain("WHERE (unassigned_at IS NULL)");
   });
 
   it("creates the required activity query indexes", async () => {
@@ -88,7 +110,8 @@ describe("Prisma schema contract", () => {
           'idx_activity_page',
           'idx_activity_status_page',
           'idx_activity_order_page',
-          'idx_activity_technician_visibility'
+          'idx_activity_technician_visibility',
+          'idx_activity_visibility_acl'
         )
     `;
 
@@ -100,6 +123,7 @@ describe("Prisma schema contract", () => {
         "idx_activity_status_page",
         "idx_activity_order_page",
         "idx_activity_technician_visibility",
+        "idx_activity_visibility_acl",
       ]),
     );
   });
