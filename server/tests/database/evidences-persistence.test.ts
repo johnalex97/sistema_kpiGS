@@ -293,6 +293,21 @@ describe("evidence mutation repository", () => {
   let fixture: EvidencesReadFixture;
   const createdIds: string[] = [];
   const now = new Date("2026-08-17T15:30:00.000Z");
+  const privateSnapshotFields = [
+    "storageKey",
+    "storedName",
+    "originalName",
+    "mimeType",
+    "fileExtension",
+    "uploadedById",
+  ];
+
+  function expectExactSnapshot(data: unknown, expected: object): void {
+    expect(data).toEqual(expected);
+    for (const field of privateSnapshotFields) {
+      expect(data).not.toHaveProperty(field);
+    }
+  }
 
   beforeAll(async () => {
     fixture = await createEvidencesReadFixture(database);
@@ -381,8 +396,8 @@ describe("evidence mutation repository", () => {
     expect(events).toEqual(["lock", "promote", "metadata", "audit"]);
     expect(result).toMatchObject({ kind: "CREATED", evidence: { storageKey: input.storageKey, version: 1 } });
     const audit = await database.auditoria.findFirstOrThrow({ where: { entityId: result.kind === "CREATED" ? result.evidence.id : "" } });
-    expect(audit).toMatchObject({ action: "EVIDENCE_UPLOADED", entity: "Evidencia", userId: fixture.adminUserId });
-    expect(audit.afterData).toMatchObject({
+    expect(audit).toMatchObject({ action: "EVIDENCE_UPLOADED", entity: "Evidencia", userId: fixture.adminUserId, beforeData: null, reason: null });
+    expectExactSnapshot(audit.afterData, {
       resourceType: "ORDER",
       resourceId: fixture.activeOrderId,
       checksumSha256: input.checksumSha256,
@@ -390,6 +405,7 @@ describe("evidence mutation repository", () => {
       accessLevel: "INTERNAL",
       actorId: fixture.adminUserId,
       version: 1,
+      description: input.description,
     });
   });
 
@@ -481,9 +497,26 @@ describe("evidence mutation repository", () => {
     expect(stale).toEqual({ kind: "VERSION_CONFLICT" });
     const audits = await database.auditoria.findMany({ where: { entityId: id, action: "EVIDENCE_UPDATED" } });
     expect(audits).toHaveLength(1);
-    expect(audits[0]).toMatchObject({
-      beforeData: expect.objectContaining({ description: original.description, accessLevel: original.accessLevel, version: original.version }),
-      afterData: expect.objectContaining({ description: "Management correction", accessLevel: "TECHNICIAN", version: original.version + 1 }),
+    expect(audits[0]).toMatchObject({ reason: null });
+    expectExactSnapshot(audits[0]?.beforeData, {
+      resourceType: "ORDER",
+      resourceId: fixture.activeOrderId,
+      checksumSha256: original.checksumSha256,
+      sizeBytes: Number(original.sizeBytes),
+      accessLevel: original.accessLevel,
+      actorId: fixture.adminUserId,
+      version: original.version,
+      description: original.description,
+    });
+    expectExactSnapshot(audits[0]?.afterData, {
+      resourceType: "ORDER",
+      resourceId: fixture.activeOrderId,
+      checksumSha256: original.checksumSha256,
+      sizeBytes: Number(original.sizeBytes),
+      accessLevel: "TECHNICIAN",
+      actorId: fixture.adminUserId,
+      version: original.version + 1,
+      description: "Management correction",
     });
   });
 
@@ -503,7 +536,28 @@ describe("evidence mutation repository", () => {
     expect(archived.deletedAt).toEqual(now);
     const audit = await database.auditoria.findFirstOrThrow({ where: { entityId: id, action: "EVIDENCE_ARCHIVED" } });
     expect(audit).toMatchObject({ reason: "Superseded by an approved replacement document" });
-    expect(audit.afterData).toMatchObject({ deletedAt: now.toISOString(), deletedById: fixture.adminUserId, deletionReason: "Superseded by an approved replacement document", version: before.version + 1 });
+    expectExactSnapshot(audit.beforeData, {
+      resourceType: "ORDER",
+      resourceId: fixture.activeOrderId,
+      checksumSha256: before.checksumSha256,
+      sizeBytes: Number(before.sizeBytes),
+      accessLevel: before.accessLevel,
+      actorId: fixture.adminUserId,
+      version: before.version,
+    });
+    expectExactSnapshot(audit.afterData, {
+      resourceType: "ORDER",
+      resourceId: fixture.activeOrderId,
+      checksumSha256: before.checksumSha256,
+      sizeBytes: Number(before.sizeBytes),
+      accessLevel: before.accessLevel,
+      actorId: fixture.adminUserId,
+      version: before.version + 1,
+      deletedAt: now.toISOString(),
+      deletedById: fixture.adminUserId,
+      deletionReason: "Superseded by an approved replacement document",
+    });
+    expect(audit.afterData).not.toHaveProperty("description");
   });
 
   it("writes the exact administrative download audit without changing evidence metadata", async () => {
@@ -517,7 +571,15 @@ describe("evidence mutation repository", () => {
     const after = await database.evidencia.findUniqueOrThrow({ where: { id: before.id } });
     const audit = await database.auditoria.findFirstOrThrow({ where: { entityId: before.id, action: "EVIDENCE_DOWNLOADED" } });
     expect(after).toMatchObject({ updatedAt: before.updatedAt, version: before.version });
-    expect(audit).toMatchObject({ entity: "Evidencia", userId: fixture.supervisorUserId, occurredAt: now });
-    expect(audit.afterData).toMatchObject({ resourceType: "ORDER", resourceId: fixture.activeOrderId, actorId: fixture.supervisorUserId, version: before.version });
+    expect(audit).toMatchObject({ entity: "Evidencia", userId: fixture.supervisorUserId, occurredAt: now, beforeData: null, reason: null });
+    expectExactSnapshot(audit.afterData, {
+      resourceType: "ORDER",
+      resourceId: fixture.activeOrderId,
+      checksumSha256: before.checksumSha256,
+      sizeBytes: Number(before.sizeBytes),
+      accessLevel: before.accessLevel,
+      actorId: fixture.supervisorUserId,
+      version: before.version,
+    });
   });
 });

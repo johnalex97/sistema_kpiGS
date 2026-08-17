@@ -167,7 +167,7 @@ async function writeAudit(
   before?: EvidenceRecord,
   reason?: string,
 ): Promise<void> {
-  const includesMutableValues = action === "EVIDENCE_UPDATED";
+  const includesMutableValues = action === "EVIDENCE_UPLOADED" || action === "EVIDENCE_UPDATED";
   const afterData = {
     ...auditSnapshot(evidence, actor, includesMutableValues),
     ...(action === "EVIDENCE_ARCHIVED" && {
