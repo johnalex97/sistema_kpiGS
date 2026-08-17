@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseEnvironment } from "../src/config/env.js";
 
@@ -75,8 +76,12 @@ describe("parseEnvironment", () => {
   });
 
   it("rejects protected evidence paths when started from the repository root", () => {
-    const serverRoot = process.cwd();
-    const repositoryRoot = path.resolve(serverRoot, "..");
+    const serverRoot = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+    );
+    const repositoryRoot = path.dirname(serverRoot);
+    const originalWorkingDirectory = process.cwd();
     const productionBase = {
       ...base,
       NODE_ENV: "production" as const,
@@ -99,7 +104,7 @@ describe("parseEnvironment", () => {
         ).toThrow("EVIDENCE_STORAGE_PATH");
       }
     } finally {
-      process.chdir(serverRoot);
+      process.chdir(originalWorkingDirectory);
     }
   });
 
