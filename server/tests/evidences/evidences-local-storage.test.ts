@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -11,15 +11,20 @@ import {
 import { LocalEvidenceStorage } from "../../src/evidences/evidences.local-storage.js";
 
 let fixtureRoot: string;
+let outsideRoot: string;
 let storage: LocalEvidenceStorage;
 
 beforeEach(async () => {
   fixtureRoot = await mkdtemp(path.join(tmpdir(), "evidences-local-storage-"));
+  outsideRoot = await mkdtemp(path.join(tmpdir(), "evidences-local-storage-outside-"));
   storage = new LocalEvidenceStorage(fixtureRoot);
 });
 
 afterEach(async () => {
-  await rm(fixtureRoot, { recursive: true, force: true });
+  await Promise.all([
+    rm(fixtureRoot, { recursive: true, force: true }),
+    rm(outsideRoot, { recursive: true, force: true }),
+  ]);
 });
 
 async function collect(source: Readable): Promise<Buffer> {
@@ -28,6 +33,19 @@ async function collect(source: Readable): Promise<Buffer> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
+}
+
+async function expectUnavailable(operation: () => Promise<unknown>): Promise<void> {
+  let thrown: unknown;
+  try {
+    await operation();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(EvidenceStorageUnavailableError);
+  expect(thrown).toMatchObject({ message: "Evidence storage is unavailable" });
+  expect(thrown).not.toHaveProperty("path");
+  expect(String(thrown)).not.toContain(fixtureRoot);
 }
 
 describe("LocalEvidenceStorage", () => {
@@ -106,6 +124,23 @@ describe("LocalEvidenceStorage", () => {
     await expect(storage.readHead("files/head.pdf", 4)).resolves.toEqual(Buffer.from("evid"));
   });
 
+  it("redacts filesystem failures while reading a missing or non-readable entry", async () => {
+    await storage.initialize(new Date(), 30);
+    const temporary = await storage.writeTemporary(Readable.from("content"), 100);
+    await writeFile(path.join(fixtureRoot, "files", "not-a-directory.pdf"), "content");
+
+    await expectUnavailable(() => storage.readHead("files/missing.pdf", 4));
+    await expectUnavailable(() => storage.promote(temporary.tempKey, "files/not-a-directory.pdf/child.pdf"));
+  });
+
+  it("redacts filesystem errors emitted by an opened read stream", async () => {
+    await storage.initialize(new Date(), 30);
+    await mkdir(path.join(fixtureRoot, "files", "not-a-file.pdf"));
+    const source = await storage.open("files/not-a-file.pdf");
+
+    await expectUnavailable(() => collect(source));
+  });
+
   it("removes a key idempotently for compensation", async () => {
     await storage.initialize(new Date(), 30);
     const finalKey = "files/2026-08/remove-me.pdf";
@@ -145,6 +180,27 @@ describe("LocalEvidenceStorage", () => {
     expect(keys.sort()).toEqual(["files/2026-08/one.pdf", "files/two.jpg"]);
   });
 
+  it("rejects a symlinked final descendant instead of reading outside the configured root", async (context) => {
+    await storage.initialize(new Date(), 30);
+    await writeFile(path.join(outsideRoot, "secret.pdf"), "outside");
+
+    try {
+      await symlink(
+        outsideRoot,
+        path.join(fixtureRoot, "files", "linked"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch (error: unknown) {
+      if (isSymlinkPermissionError(error)) {
+        context.skip("symlink creation is not permitted on this host");
+        return;
+      }
+      throw error;
+    }
+
+    await expectUnavailable(async () => collect(await storage.open("files/linked/secret.pdf")));
+  });
+
   it.each([
     "/secret.txt",
     "../secret.txt",
@@ -169,3 +225,8 @@ describe("LocalEvidenceStorage", () => {
     );
   });
 });
+
+function isSymlinkPermissionError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error &&
+    (error.code === "EPERM" || error.code === "EACCES");
+}
