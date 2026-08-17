@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seedDatabase } from "../../prisma/seed.js";
@@ -121,35 +125,52 @@ describe("authentication HTTP API", () => {
 
   it("uses a Secure session cookie when production requires it", async () => {
     const password = "GeekSecure-2026!";
-    const admin = await createHttpAdmin(password);
-    const productionEnv = parseEnvironment({
-      NODE_ENV: "production",
-      LOG_LEVEL: "silent",
-      CORS_ORIGIN: allowedOrigin,
-      AUTH_COOKIE_SECURE: "true",
-      DATABASE_URL:
-        "postgresql://user:password@localhost:5432/Sistema_kpiGS?schema=public",
-      DATABASE_TEST_URL:
-        "postgresql://user:password@localhost:5432/Sistema_kpiGS?schema=test",
-      EVIDENCE_STORAGE_PATH: `${process.cwd()}/private-evidences`,
-    });
+    const storageRoot = await mkdtemp(
+      path.join(os.tmpdir(), "auth-http-evidences-"),
+    );
 
     try {
-      const response = await request(
-        createApp({
-          env: productionEnv,
-          logger: silentLogger,
-          database,
-        }),
-      )
-        .post("/api/v1/auth/login")
-        .set("Origin", allowedOrigin)
-        .send({ email: admin.email, password })
-        .expect(200);
+      expect(path.isAbsolute(storageRoot)).toBe(true);
+      const relativeToWorkingDirectory = path.relative(process.cwd(), storageRoot);
+      expect(
+        relativeToWorkingDirectory === "" ||
+          (!relativeToWorkingDirectory.startsWith(`..${path.sep}`) &&
+            relativeToWorkingDirectory !== ".." &&
+            !path.isAbsolute(relativeToWorkingDirectory)),
+      ).toBe(false);
+      const productionEnv = parseEnvironment({
+        NODE_ENV: "production",
+        LOG_LEVEL: "silent",
+        CORS_ORIGIN: allowedOrigin,
+        AUTH_COOKIE_SECURE: "true",
+        DATABASE_URL:
+          "postgresql://user:password@localhost:5432/Sistema_kpiGS?schema=public",
+        DATABASE_TEST_URL:
+          "postgresql://user:password@localhost:5432/Sistema_kpiGS?schema=test",
+        EVIDENCE_STORAGE_PATH: storageRoot,
+      });
+      const admin = await createHttpAdmin(password);
 
-      expect(firstSetCookie(response.headers)).toContain("Secure");
+      try {
+        const response = await request(
+          createApp({
+            env: productionEnv,
+            logger: silentLogger,
+            database,
+          }),
+        )
+          .post("/api/v1/auth/login")
+          .set("Origin", allowedOrigin)
+          .send({ email: admin.email, password })
+          .expect(200);
+
+        expect(firstSetCookie(response.headers)).toContain("Secure");
+        expect(existsSync(path.join(storageRoot, "files"))).toBe(false);
+      } finally {
+        await cleanupHttpUser(admin.id);
+      }
     } finally {
-      await cleanupHttpUser(admin.id);
+      await rm(storageRoot, { recursive: true, force: true });
     }
   });
 
