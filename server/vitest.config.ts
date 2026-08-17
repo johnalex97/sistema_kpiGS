@@ -15,6 +15,7 @@ export default defineConfig({
       "**/tests/clients/clients-http.test.ts",
       "**/tests/orders/orders-http.test.ts",
       "**/tests/activities/activities-http.test.ts",
+      "**/tests/evidences/evidences-http.test.ts",
     ],
     env: {
       DATABASE_URL:

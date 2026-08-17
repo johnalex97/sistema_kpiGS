@@ -131,6 +131,7 @@ describe("authentication HTTP API", () => {
         "postgresql://user:password@localhost:5432/Sistema_kpiGS?schema=public",
       DATABASE_TEST_URL:
         "postgresql://user:password@localhost:5432/Sistema_kpiGS?schema=test",
+      EVIDENCE_STORAGE_PATH: `${process.cwd()}/private-evidences`,
     });
 
     try {
