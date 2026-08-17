@@ -451,9 +451,9 @@ EVIDENCE_TEMP_MAX_AGE_MINUTES=60
 
 La raíz contiene `tmp/` y `files/`; las claves finales son relativas y nunca
 forman parte de una respuesta HTTP. No ubicarla dentro de `public/`, `dist/` ni
-otra ruta servida. El proceso crea directorios con permisos restrictivos; en
-producción, `EVIDENCE_STORAGE_PATH` debe ser absoluta, privada y legible y
-escribible por la identidad que ejecuta la API.
+otra ruta servida. El proceso de la API aprovisiona los directorios con permisos
+restrictivos; en producción, `EVIDENCE_STORAGE_PATH` debe ser absoluta, privada
+y legible y escribible por la identidad que ejecuta la API.
 
 **Regla operativa obligatoria:** el volumen privado debe ser escribible
 exclusivamente por la identidad del proceso o contenedor de la API. No se
@@ -489,12 +489,15 @@ restauración o incidente, ejecuta desde `server/`:
 npm run evidences:verify
 ```
 
-El comando es estrictamente de lectura: consulta todas las claves de metadata,
-incluidas archivadas y las relaciones heredadas de reincidencia, y recorre sólo
-`files/`. No crea, renombra ni elimina archivos, ni limpia `tmp/`. Imprime los
-conteos y las claves relativas ordenadas. Devuelve `0` si no hay diferencias y
-`2` si hay archivos huérfanos o metadata sin archivo; un fallo operativo usa un
-código distinto y debe investigarse antes de tomar cualquier acción manual.
+El comando es estrictamente de lectura: requiere que la raíz y `files/` hayan
+sido aprovisionados previamente por el ciclo normal de la API o el despliegue.
+Consulta todas las claves de metadata, incluidas archivadas y las relaciones
+heredadas de reincidencia, y recorre sólo `files/`. No crea, renombra ni elimina
+archivos, ni limpia `tmp/`. En un volumen vacío preexistente devuelve `0` con
+conteos en cero; devuelve `2` si hay archivos huérfanos o metadata sin archivo.
+Si la raíz o `files/` no existen (por ejemplo, volumen desmontado), devuelve
+`1` con un mensaje operacional redactado y debe investigarse antes de cualquier
+acción manual.
 
 Para un despliegue Docker futuro, el volumen se montará de forma privada. Este
 fragmento es una referencia de configuración futura; no afirma que exista un

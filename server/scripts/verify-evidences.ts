@@ -73,17 +73,38 @@ export function evidenceVerificationExitCode(summary: EvidenceStorageReconciliat
   return summary.orphanFiles.length === 0 && summary.missingFiles.length === 0 ? 0 : 2;
 }
 
-export async function runEvidenceVerification(): Promise<number> {
+export interface EvidenceVerificationExecutionOptions {
+  verify?: (writeStdout: (message: string) => void) => Promise<number>;
+  writeStdout?: (message: string) => void;
+  writeStderr?: (message: string) => void;
+}
+
+export async function runEvidenceVerification(
+  writeStdout: (message: string) => void = (message) => console.log(message),
+): Promise<number> {
   const database = getDatabaseClient(env.DATABASE_URL);
   const storage = new LocalEvidenceStorage(env.EVIDENCE_STORAGE_PATH);
   const repository = createEvidencesReadRepository(database);
 
   try {
     const summary = await verifyEvidenceStorage(storage, repository);
-    printSummary(summary);
+    printSummary(summary, writeStdout);
     return evidenceVerificationExitCode(summary);
   } finally {
     await database.$disconnect();
+  }
+}
+
+export async function executeEvidenceVerification({
+  verify,
+  writeStdout = (message) => console.log(message),
+  writeStderr = (message) => process.stderr.write(message),
+}: EvidenceVerificationExecutionOptions = {}): Promise<number> {
+  try {
+    return await (verify ?? runEvidenceVerification)(writeStdout);
+  } catch {
+    writeStderr("Evidence verification failed due to an operational error.\n");
+    return 1;
   }
 }
 
@@ -99,15 +120,18 @@ function assertSafeFinalKey(key: string): void {
   }
 }
 
-function printSummary(summary: EvidenceStorageReconciliation): void {
-  console.log(`Matched: ${summary.matched}`);
-  console.log(`Orphan files: ${summary.orphanFiles.length}`);
+function printSummary(
+  summary: EvidenceStorageReconciliation,
+  writeStdout: (message: string) => void,
+): void {
+  writeStdout(`Matched: ${summary.matched}`);
+  writeStdout(`Orphan files: ${summary.orphanFiles.length}`);
   for (const key of summary.orphanFiles) {
-    console.log(`  orphan: ${key}`);
+    writeStdout(`  orphan: ${key}`);
   }
-  console.log(`Missing files: ${summary.missingFiles.length}`);
+  writeStdout(`Missing files: ${summary.missingFiles.length}`);
   for (const key of summary.missingFiles) {
-    console.log(`  missing: ${key}`);
+    writeStdout(`  missing: ${key}`);
   }
 }
 
@@ -116,13 +140,7 @@ const isDirectExecution = process.argv[1]
   : false;
 
 if (isDirectExecution) {
-  void runEvidenceVerification().then(
-    (exitCode) => {
-      process.exitCode = exitCode;
-    },
-    (error: unknown) => {
-      console.error(error);
-      process.exitCode = 1;
-    },
-  );
+  void executeEvidenceVerification().then((exitCode) => {
+    process.exitCode = exitCode;
+  });
 }

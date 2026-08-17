@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  executeEvidenceVerification,
   evidenceVerificationExitCode,
   reconcileEvidenceStorage,
   verifyEvidenceStorage,
@@ -85,5 +86,32 @@ describe("evidenceVerificationExitCode", () => {
       orphanFiles: [],
       missingFiles: [],
     })).toBe(0);
+  });
+});
+
+describe("executeEvidenceVerification", () => {
+  it("redacts operational failures from both command output streams and returns exit 1", async () => {
+    let stdout = "";
+    let stderr = "";
+    const secretLikeText = "postgresql://admin:very-secret@db.internal/evidences";
+    const absolutePath = "C:\\private\\evidences\\files\\leak.pdf";
+
+    const exitCode = await executeEvidenceVerification({
+      verify: async () => {
+        throw new Error(`${absolutePath} ${secretLikeText}`);
+      },
+      writeStdout: (message) => {
+        stdout += message;
+      },
+      writeStderr: (message) => {
+        stderr += message;
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toBe("Evidence verification failed due to an operational error.\n");
+    expect(`${stdout}${stderr}`).not.toContain(absolutePath);
+    expect(`${stdout}${stderr}`).not.toContain(secretLikeText);
   });
 });

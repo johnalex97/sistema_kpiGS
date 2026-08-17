@@ -991,7 +991,7 @@ Expected: verification module missing.
 
 - [ ] **Step 3: Implement pure diff and CLI exit contract**
 
-The command initializes storage, queries active and archived metadata keys, scans final keys, prints counts plus relative mismatches, and sets exit code `2` when either mismatch list is non-empty. It performs no deletion. Add:
+The read-only command opens and scans a pre-provisioned storage root, queries active and archived metadata keys, scans final keys, prints counts plus relative mismatches, and sets exit code `2` when either mismatch list is non-empty. It never initializes, creates, renames, or deletes storage; an absent root or `files/` is an operational exit `1`, not an empty set. Add:
 
 ```json
 "evidences:verify": "tsx scripts/verify-evidences.ts"
@@ -1020,7 +1020,7 @@ npm test -- tests/evidences/evidences-reconciliation.test.ts
 npm run evidences:verify
 ```
 
-Expected on the clean local volume: exit `0`, zero orphan files, zero missing files.
+Expected only on a pre-existing empty local volume: exit `0`, zero orphan files, zero missing files. An absent root or `files/` exits `1` with a redacted operational message.
 
 ```bash
 git add server/scripts/verify-evidences.ts server/tests/evidences/evidences-reconciliation.test.ts server/package.json README.md docs/plans/implementation-plan.md docs/architecture/current-state.md
@@ -1052,7 +1052,7 @@ npm run db:migrate:deploy
 npm run db:verify
 ```
 
-Repeat deploy and verify using the test-schema URL. Expected: eight migrations applied, evidence checks/indexes present, and role permissions exact.
+Repeat deploy and verify using the test-schema URL. Expected: nine migrations applied, evidence checks/indexes present, and role permissions exact.
 
 - [ ] **Step 2: Prove seed idempotence in both schemas**
 
