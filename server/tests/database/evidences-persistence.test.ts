@@ -18,8 +18,8 @@ beforeAll(() => seedDatabase(database));
 
 const page: EvidenceListFilters = { page: 1, pageSize: 20 };
 
-function managementActor(userId: string): EvidenceActorContext {
-  return { userId, technicianId: null, permissions: ["EVIDENCES_VIEW"], requestId: "70000000-0000-4000-8000-000000000001" };
+function managementActor(userId: string, technicianId: string | null = null): EvidenceActorContext {
+  return { userId, technicianId, permissions: ["EVIDENCES_VIEW", "EVIDENCES_MANAGE"], requestId: "70000000-0000-4000-8000-000000000001" };
 }
 
 function technicianActor(userId: string, technicianId: string): EvidenceActorContext {
@@ -202,6 +202,45 @@ describe("evidence read repository", () => {
     expect(await repository.findDownloadableEvidence(fixture.orderTechnicianEvidenceId, foreign)).toBeNull();
     expect(await repository.findDownloadableEvidence("00000000-0000-4000-8000-000000000000", assigned)).toBeNull();
     expect(await repository.findDownloadableEvidence(fixture.orderInternalEvidenceId, admin)).toMatchObject({ id: fixture.orderInternalEvidenceId });
+  });
+
+  it("denies an unlinked technician identity instead of promoting it to management access", async () => {
+    const repository = createEvidencesReadRepository(database);
+    const unlinkedTechnician: EvidenceActorContext = {
+      userId: fixture.assignedUserId,
+      technicianId: null,
+      permissions: ["EVIDENCES_VIEW"],
+      requestId: "70000000-0000-4000-8000-000000000003",
+    };
+
+    expect(await repository.listEvidence(
+      { type: "ORDER", id: fixture.activeOrderId }, page, unlinkedTechnician,
+    )).toBeNull();
+    expect(await repository.findDownloadableEvidence(
+      fixture.orderInternalEvidenceId, unlinkedTechnician,
+    )).toBeNull();
+    expect(await repository.findDownloadableEvidence(
+      fixture.cancelledForeignEvidenceId, unlinkedTechnician,
+    )).toBeNull();
+  });
+
+  it("keeps an elevated actor administrative even when it also has a technician profile", async () => {
+    const repository = createEvidencesReadRepository(database);
+    const manager = managementActor(
+      fixture.supervisorUserId,
+      fixture.managerTechnicianId,
+    );
+
+    const pageResult = await repository.listEvidence(
+      { type: "ORDER", id: fixture.activeOrderId }, page, manager,
+    );
+    expect(pageResult?.totalItems).toBe(3);
+    expect(pageResult?.items.map(({ id }) => id)).toContain(
+      fixture.orderInternalEvidenceId,
+    );
+    await expect(repository.findDownloadableEvidence(
+      fixture.orderInternalEvidenceId, manager,
+    )).resolves.toMatchObject({ id: fixture.orderInternalEvidenceId });
   });
 
   it("orders evidence pages by createdAt and id descending, including page boundaries", async () => {

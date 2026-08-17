@@ -11,6 +11,7 @@ const ids = {
   formerTechnician: "61000000-0000-4000-8000-000000000002",
   historicalActivityTechnician: "61000000-0000-4000-8000-000000000003",
   foreignTechnician: "61000000-0000-4000-8000-000000000004",
+  managerTechnician: "61000000-0000-4000-8000-000000000005",
   client: "62000000-0000-4000-8000-000000000001",
   branch: "62000000-0000-4000-8000-000000000002",
   serviceType: "62000000-0000-4000-8000-000000000003",
@@ -44,6 +45,7 @@ export interface EvidencesReadFixture {
   formerTechnicianId: string;
   historicalActivityTechnicianId: string;
   foreignTechnicianId: string;
+  managerTechnicianId: string;
   activeOrderId: string;
   completedOrderId: string;
   cancelledOrderId: string;
@@ -72,6 +74,7 @@ const fixture: EvidencesReadFixture = {
   formerTechnicianId: ids.formerTechnician,
   historicalActivityTechnicianId: ids.historicalActivityTechnician,
   foreignTechnicianId: ids.foreignTechnician,
+  managerTechnicianId: ids.managerTechnician,
   activeOrderId: ids.activeOrder,
   completedOrderId: ids.completedOrder,
   cancelledOrderId: ids.cancelledOrder,
@@ -114,6 +117,7 @@ export async function createEvidencesReadFixture(
       { id: ids.formerTechnician, userId: ids.formerUser, code: "EVD-FORMER", fullName: "Evidence former" },
       { id: ids.historicalActivityTechnician, userId: ids.historicalActivityUser, code: "EVD-HISTORY", fullName: "Evidence history" },
       { id: ids.foreignTechnician, userId: ids.foreignUser, code: "EVD-FOREIGN", fullName: "Evidence foreign" },
+      { id: ids.managerTechnician, userId: ids.supervisorUser, code: "EVD-MANAGER", fullName: "Evidence manager" },
     ],
   });
   await database.cliente.create({ data: { id: ids.client, code: "EVD-CLIENT", tradeName: "Evidence client" } });
@@ -179,7 +183,7 @@ export async function removeEvidencesReadFixture(database: PrismaClient): Promis
   await database.reincidencia.deleteMany({ where: { id: ids.recurrence } });
   await database.causaReincidencia.deleteMany({ where: { id: ids.recurrenceCause } });
   await database.ordenTrabajo.deleteMany({ where: { id: { in: [ids.activeOrder, ids.completedOrder, ids.cancelledOrder] } } });
-  await database.tecnico.deleteMany({ where: { id: { in: [ids.assignedTechnician, ids.formerTechnician, ids.historicalActivityTechnician, ids.foreignTechnician] } } });
+  await database.tecnico.deleteMany({ where: { id: { in: [ids.assignedTechnician, ids.formerTechnician, ids.historicalActivityTechnician, ids.foreignTechnician, ids.managerTechnician] } } });
   await database.tipoActividad.deleteMany({ where: { id: ids.activityType } });
   await database.tipoServicio.deleteMany({ where: { id: ids.serviceType } });
   await database.sucursalCliente.deleteMany({ where: { id: ids.branch } });

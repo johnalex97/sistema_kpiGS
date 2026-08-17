@@ -16,18 +16,25 @@ const consistentReadOptions = {
   isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
 } as const;
 
-function isTechnician(actor: EvidenceActorContext): actor is EvidenceActorContext & { technicianId: string } {
-  return actor.technicianId !== null;
+function hasManagementAccess(actor: EvidenceActorContext): boolean {
+  return actor.permissions.includes("EVIDENCES_MANAGE");
+}
+
+function hasTechnicianAccess(actor: EvidenceActorContext): actor is EvidenceActorContext & { technicianId: string } {
+  return !hasManagementAccess(actor) && actor.technicianId !== null;
 }
 
 function visibleOrderWhere(
   id: string,
   actor: EvidenceActorContext,
 ): Prisma.OrdenTrabajoWhereInput {
+  if (!hasManagementAccess(actor) && !hasTechnicianAccess(actor)) {
+    return { AND: [{ id, deletedAt: null }, { id: { in: [] } }] };
+  }
   return {
     id,
     deletedAt: null,
-    ...(isTechnician(actor) && {
+    ...(hasTechnicianAccess(actor) && {
       tecnicos: { some: { tecnicoId: actor.technicianId } },
     }),
   };
@@ -37,10 +44,13 @@ function visibleActivityWhere(
   id: string,
   actor: EvidenceActorContext,
 ): Prisma.ActividadWhereInput {
+  if (!hasManagementAccess(actor) && !hasTechnicianAccess(actor)) {
+    return { AND: [{ id, deletedAt: null }, { id: { in: [] } }] };
+  }
   return {
     id,
     deletedAt: null,
-    ...(isTechnician(actor) && {
+    ...(hasTechnicianAccess(actor) && {
       OR: [
         { tecnicos: { some: { tecnicoId: actor.technicianId, endedAt: null } } },
         { visibilidadTecnicos: { some: { tecnicoId: actor.technicianId } } },
@@ -52,16 +62,20 @@ function visibleActivityWhere(
 function visibleEvidenceWhere(
   actor: EvidenceActorContext,
 ): Prisma.EvidenciaWhereInput {
-  const orderVisibility = isTechnician(actor)
+  if (!hasManagementAccess(actor) && !hasTechnicianAccess(actor)) {
+    return { deletedAt: null, accessLevel: "TECHNICIAN", id: { in: [] } };
+  }
+
+  const orderVisibility = hasTechnicianAccess(actor)
     ? { orden: visibleOrderWhereForEvidence(actor) }
     : { orden: { deletedAt: null } };
-  const activityVisibility = isTechnician(actor)
+  const activityVisibility = hasTechnicianAccess(actor)
     ? { actividad: visibleActivityWhereForEvidence(actor) }
     : { actividad: { deletedAt: null } };
 
   return {
     deletedAt: null,
-    ...(isTechnician(actor) && { accessLevel: "TECHNICIAN" }),
+    ...(hasTechnicianAccess(actor) && { accessLevel: "TECHNICIAN" }),
     OR: [orderVisibility, activityVisibility],
   };
 }
