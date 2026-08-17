@@ -32,7 +32,8 @@ function success(request: Request, response: Response, status: number, message: 
 function attachmentHeader(originalName: string, extension: "jpg" | "png" | "webp" | "pdf"): string {
   const name = normalizeDownloadName(originalName, extension);
   const fallback = name.replace(/[^\x20-\x7e]/g, "_").replace(/[\\"]/g, "_");
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+  const encoded = encodeURIComponent(name).replace(/['()]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
 export function createEvidencesController(service: EvidenceService, multipart: EvidenceMultipartParser) {

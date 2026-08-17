@@ -24,7 +24,7 @@ function requestForDownload(): Request {
 
 function responseForDownload(headersSent = false) {
   const chunks: Buffer[] = [];
-  const response = new Writable({ write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } }) as unknown as Response & { chunks: Buffer[]; destroy: ReturnType<typeof vi.fn> };
+  const response = new Writable({ write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } }) as unknown as Response & { chunks: Buffer[]; destroy: ReturnType<typeof vi.fn>; set: ReturnType<typeof vi.fn>; status: ReturnType<typeof vi.fn> };
   Object.assign(response, {
     chunks,
     headersSent,
@@ -73,5 +73,23 @@ describe("evidences download controller", () => {
 
     expect(response.destroy).toHaveBeenCalledWith(failure);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it("normalizes legacy hostile names into an injection-safe RFC 5987 attachment header", async () => {
+    const stream = new PassThrough();
+    const hostileEvidence = { ...evidence, originalName: "../quo\"te\\legacy\r\n'().pdf" };
+    const service = { getDownload: vi.fn().mockResolvedValue({ evidence: hostileEvidence, stream }), recordDownload: vi.fn().mockResolvedValue(undefined) } as unknown as EvidenceService;
+    const controller = createEvidencesController(service, { parse: vi.fn() });
+    const response = responseForDownload();
+
+    await controller.download(requestForDownload(), response, vi.fn());
+    stream.end(Buffer.from("bytes"));
+    await flush();
+
+    const contentDisposition = response.set.mock.calls[0]?.[0]["Content-Disposition"] as string;
+    expect(contentDisposition).toBe("attachment; filename=\"..quo_telegacy'().pdf\"; filename*=UTF-8''..quo%22telegacy%27%28%29.pdf");
+    expect(contentDisposition).not.toMatch(/[\r\n]/);
+    expect(contentDisposition).not.toContain("/");
+    expect(contentDisposition).not.toContain("\\");
   });
 });
