@@ -1,4 +1,5 @@
 import "dotenv/config";
+import path from "node:path";
 import { z } from "zod";
 
 const postgresUrl = z
@@ -48,6 +49,19 @@ const environmentSchema = z.object({
     .min(5)
     .max(1440)
     .default(15),
+  EVIDENCE_STORAGE_PATH: z.string().min(1).default("./storage/evidences"),
+  EVIDENCE_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(10_485_760)
+    .default(10_485_760),
+  EVIDENCE_TEMP_MAX_AGE_MINUTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(10_080)
+    .default(60),
 });
 
 export type EnvironmentInput = Record<string, string | undefined>;
@@ -65,6 +79,17 @@ export interface Environment {
   AUTH_COOKIE_SECURE: boolean;
   AUTH_MAX_FAILED_ATTEMPTS: number;
   AUTH_LOCK_MINUTES: number;
+  EVIDENCE_STORAGE_PATH: string;
+  EVIDENCE_MAX_BYTES: number;
+  EVIDENCE_TEMP_MAX_AGE_MINUTES: number;
+}
+
+function isPathInside(pathname: string, parentPath: string): boolean {
+  const relativePath = path.relative(parentPath, pathname);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith(`..${path.sep}`) && relativePath !== ".." && !path.isAbsolute(relativePath))
+  );
 }
 
 export function parseEnvironment(input: EnvironmentInput): Environment {
@@ -117,6 +142,27 @@ export function parseEnvironment(input: EnvironmentInput): Environment {
     );
   }
 
+  const evidenceStoragePath = path.resolve(result.data.EVIDENCE_STORAGE_PATH);
+  if (result.data.NODE_ENV === "production") {
+    const privatePathRequired = !path.isAbsolute(result.data.EVIDENCE_STORAGE_PATH);
+    const unsafeStoragePaths = [
+      path.resolve("public"),
+      path.resolve("dist"),
+      path.resolve("..", "dist"),
+    ];
+
+    if (
+      privatePathRequired ||
+      unsafeStoragePaths.some((unsafePath) =>
+        isPathInside(evidenceStoragePath, unsafePath),
+      )
+    ) {
+      throw new Error(
+        "ConfiguraciÃ³n de entorno invÃ¡lida: EVIDENCE_STORAGE_PATH debe ser una ruta absoluta y privada en producciÃ³n",
+      );
+    }
+  }
+
   return {
     NODE_ENV: result.data.NODE_ENV,
     PORT: result.data.PORT,
@@ -130,6 +176,9 @@ export function parseEnvironment(input: EnvironmentInput): Environment {
     AUTH_COOKIE_SECURE: result.data.AUTH_COOKIE_SECURE,
     AUTH_MAX_FAILED_ATTEMPTS: result.data.AUTH_MAX_FAILED_ATTEMPTS,
     AUTH_LOCK_MINUTES: result.data.AUTH_LOCK_MINUTES,
+    EVIDENCE_STORAGE_PATH: evidenceStoragePath,
+    EVIDENCE_MAX_BYTES: result.data.EVIDENCE_MAX_BYTES,
+    EVIDENCE_TEMP_MAX_AGE_MINUTES: result.data.EVIDENCE_TEMP_MAX_AGE_MINUTES,
   };
 }
 

@@ -5,6 +5,10 @@ const developmentDatabaseUrl =
   "postgresql://user:password@localhost:5432/Sistema_kpiGS?schema=public";
 const testDatabaseUrl =
   "postgresql://user:password@localhost:5432/Sistema_kpiGS?schema=test";
+const base = {
+  DATABASE_URL: developmentDatabaseUrl,
+  DATABASE_TEST_URL: testDatabaseUrl,
+};
 
 describe("parseEnvironment", () => {
   it("requires a PostgreSQL development URL", () => {
@@ -32,7 +36,41 @@ describe("parseEnvironment", () => {
       AUTH_COOKIE_SECURE: false,
       AUTH_MAX_FAILED_ATTEMPTS: 5,
       AUTH_LOCK_MINUTES: 15,
+      EVIDENCE_STORAGE_PATH: expect.any(String),
+      EVIDENCE_MAX_BYTES: 10_485_760,
+      EVIDENCE_TEMP_MAX_AGE_MINUTES: 60,
     });
+  });
+
+  it("applies safe evidence storage defaults", () => {
+    expect(parseEnvironment(base)).toMatchObject({
+      EVIDENCE_STORAGE_PATH: expect.any(String),
+      EVIDENCE_MAX_BYTES: 10_485_760,
+      EVIDENCE_TEMP_MAX_AGE_MINUTES: 60,
+    });
+  });
+
+  it("rejects evidence uploads above the hard size ceiling", () => {
+    expect(() =>
+      parseEnvironment({ ...base, EVIDENCE_MAX_BYTES: "10485761" }),
+    ).toThrow("EVIDENCE_MAX_BYTES");
+  });
+
+  it("requires a positive temporary evidence age", () => {
+    expect(() =>
+      parseEnvironment({ ...base, EVIDENCE_TEMP_MAX_AGE_MINUTES: "0" }),
+    ).toThrow("EVIDENCE_TEMP_MAX_AGE_MINUTES");
+  });
+
+  it("requires an absolute private evidence path in production", () => {
+    expect(() =>
+      parseEnvironment({
+        ...base,
+        NODE_ENV: "production",
+        AUTH_COOKIE_SECURE: "true",
+        EVIDENCE_STORAGE_PATH: "relative",
+      }),
+    ).toThrow("EVIDENCE_STORAGE_PATH");
   });
 
   it("provides safe local authentication defaults", () => {
