@@ -144,7 +144,8 @@ model Usuario {
   historialesOrden       HistorialOrden[]
   relacionesOrdenCreadas OrdenRelacionada[]
   pausasRegistradas      PausaActividad[]
-  evidenciasSubidas      Evidencia[]
+  evidenciasSubidas      Evidencia[]        @relation("EvidenciaSubidaPor")
+  evidenciasArchivadas   Evidencia[]        @relation("EvidenciaArchivadaPor")
   configuracionesKpi     ConfiguracionKPI[]
   metasTecnicoCreadas    MetaTecnico[]
   auditorias             Auditoria[]
@@ -670,6 +671,7 @@ model Evidencia {
   fileExtension  String               @map("file_extension") @db.VarChar(20)
   sizeBytes      BigInt               @map("size_bytes")
   storageKey     String               @unique @map("storage_key") @db.VarChar(500)
+  checksumSha256 String               @map("checksum_sha256") @db.VarChar(64)
   description    String?              @db.VarChar(500)
   accessLevel    NivelAccesoEvidencia @default(INTERNAL) @map("access_level")
   uploadedById   String               @map("uploaded_by_id") @db.Uuid
@@ -679,8 +681,12 @@ model Evidencia {
   createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz(3)
+  deletedById    String?              @map("deleted_by_id") @db.Uuid
+  deletionReason String?              @map("deletion_reason") @db.VarChar(500)
+  version        Int                  @default(1)
 
-  uploadedBy   Usuario       @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadedBy   Usuario       @relation("EvidenciaSubidaPor", fields: [uploadedById], references: [id], onDelete: Restrict)
+  deletedBy    Usuario?      @relation("EvidenciaArchivadaPor", fields: [deletedById], references: [id], onDelete: Restrict)
   orden        OrdenTrabajo? @relation(fields: [ordenId], references: [id], onDelete: Restrict)
   actividad    Actividad?    @relation(fields: [actividadId], references: [id], onDelete: Restrict)
   reincidencia Reincidencia? @relation(fields: [reincidenciaId], references: [id], onDelete: Restrict)

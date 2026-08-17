@@ -33,6 +33,39 @@ describe("database seed", () => {
     expect(rolePermissions.TECHNICIAN).not.toContain("CLIENTS_MANAGE");
   });
 
+  it("assigns evidence viewing and upload to technicians, with management reserved for leaders", async () => {
+    await seedDatabase(database);
+    const roles = await database.rol.findMany({
+      where: { code: { in: ["ADMIN", "SUPERVISOR", "TECHNICIAN"] } },
+      include: { permissions: { include: { permiso: true } } },
+    });
+    const rolePermissions = Object.fromEntries(
+      roles.map((role) => [
+        role.code,
+        role.permissions.map(({ permiso }) => permiso.code),
+      ]),
+    );
+
+    expect(rolePermissions.ADMIN).toEqual(
+      expect.arrayContaining([
+        "EVIDENCES_VIEW",
+        "EVIDENCES_UPLOAD",
+        "EVIDENCES_MANAGE",
+      ]),
+    );
+    expect(rolePermissions.SUPERVISOR).toEqual(
+      expect.arrayContaining([
+        "EVIDENCES_VIEW",
+        "EVIDENCES_UPLOAD",
+        "EVIDENCES_MANAGE",
+      ]),
+    );
+    expect(rolePermissions.TECHNICIAN).toEqual(
+      expect.arrayContaining(["EVIDENCES_VIEW", "EVIDENCES_UPLOAD"]),
+    );
+    expect(rolePermissions.TECHNICIAN).not.toContain("EVIDENCES_MANAGE");
+  });
+
   it("seeds twice without duplicating natural keys", async () => {
     await seedDatabase(database);
     const first = {

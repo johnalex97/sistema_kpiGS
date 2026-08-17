@@ -153,6 +153,7 @@ describe("database constraints", () => {
           fileExtension: "pdf",
           sizeBytes: 100n,
           storageKey: `test/${randomUUID()}`,
+          checksumSha256: "a".repeat(64),
           uploadedById: user.id,
         },
       }),
@@ -167,9 +168,47 @@ describe("database constraints", () => {
           fileExtension: "pdf",
           sizeBytes: 100n,
           storageKey: `test/${randomUUID()}`,
+          checksumSha256: "a".repeat(64),
           uploadedById: user.id,
           ordenId: order.id,
           actividadId: activity.id,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects evidence metadata that violates integrity checks", async () => {
+    const { order, user } = await fixtures();
+    const baseEvidence = {
+      originalName: "evidence.pdf",
+      storedName: `${randomUUID()}.pdf`,
+      mimeType: "application/pdf",
+      fileExtension: "pdf",
+      sizeBytes: 100n,
+      storageKey: `test/${randomUUID()}`,
+      checksumSha256: "a".repeat(64),
+      uploadedById: user.id,
+      ordenId: order.id,
+    };
+
+    await expect(
+      database.evidencia.create({
+        data: { ...baseEvidence, checksumSha256: "A".repeat(64) },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      database.evidencia.create({ data: { ...baseEvidence, version: 0 } }),
+    ).rejects.toThrow();
+    await expect(
+      database.evidencia.create({
+        data: { ...baseEvidence, sizeBytes: 10_485_761n },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      database.evidencia.create({
+        data: {
+          ...baseEvidence,
+          deletedAt: new Date("2026-08-17T12:00:00.000Z"),
         },
       }),
     ).rejects.toThrow();

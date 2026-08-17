@@ -35,6 +35,9 @@ WHERE schemaname = current_schema()
     'idx_activity_order_page',
     'idx_activity_technician_visibility',
     'idx_activity_visibility_acl',
+    'idx_evidence_order_active',
+    'idx_evidence_activity_active',
+    'idx_evidence_archived',
     'uq_actividad_tecnico_responsable',
     'uq_pausa_actividad_abierta'
   )
@@ -66,7 +69,10 @@ BEGIN
     ('ACTIVITIES_VIEW_ALL'),
     ('ACTIVITIES_MANAGE'),
     ('ACTIVITIES_CREATE_OWN'),
-    ('ACTIVITIES_OPERATE_OWN')
+    ('ACTIVITIES_OPERATE_OWN'),
+    ('EVIDENCES_VIEW'),
+    ('EVIDENCES_UPLOAD'),
+    ('EVIDENCES_MANAGE')
   ) AS expected(code)
   LEFT JOIN "permiso" AS permission_data
     ON permission_data."code" = expected.code
@@ -96,7 +102,15 @@ BEGIN
     ('SUPERVISOR', 'ACTIVITIES_VIEW_ALL'),
     ('SUPERVISOR', 'ACTIVITIES_MANAGE'),
     ('TECHNICIAN', 'ACTIVITIES_CREATE_OWN'),
-    ('TECHNICIAN', 'ACTIVITIES_OPERATE_OWN')
+    ('TECHNICIAN', 'ACTIVITIES_OPERATE_OWN'),
+    ('ADMIN', 'EVIDENCES_VIEW'),
+    ('ADMIN', 'EVIDENCES_UPLOAD'),
+    ('ADMIN', 'EVIDENCES_MANAGE'),
+    ('SUPERVISOR', 'EVIDENCES_VIEW'),
+    ('SUPERVISOR', 'EVIDENCES_UPLOAD'),
+    ('SUPERVISOR', 'EVIDENCES_MANAGE'),
+    ('TECHNICIAN', 'EVIDENCES_VIEW'),
+    ('TECHNICIAN', 'EVIDENCES_UPLOAD')
   ) AS expected(role_code, permission_code)
   LEFT JOIN "rol" AS role_data
     ON role_data."code" = expected.role_code
@@ -124,10 +138,13 @@ BEGIN
       'idx_activity_status_page',
       'idx_activity_order_page',
       'idx_activity_technician_visibility',
-      'idx_activity_visibility_acl'
+      'idx_activity_visibility_acl',
+      'idx_evidence_order_active',
+      'idx_evidence_activity_active',
+      'idx_evidence_archived'
     );
-  IF actual_count <> 11 THEN
-    RAISE EXCEPTION 'Se esperaban 11 índices de consulta e integridad de órdenes y actividades y existen %', actual_count;
+  IF actual_count <> 14 THEN
+    RAISE EXCEPTION 'Se esperaban 14 índices de consulta e integridad de órdenes, actividades y evidencias y existen %', actual_count;
   END IF;
 
   SELECT count(*) INTO actual_count
@@ -259,6 +276,73 @@ BEGIN
   IF missing_count <> 0 THEN
     RAISE EXCEPTION 'Faltan restricciones existentes requeridas por órdenes';
   END IF;
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('checksum_sha256'),
+    ('version'),
+    ('deleted_by_id'),
+    ('deletion_reason')
+  ) AS expected(column_name)
+  LEFT JOIN information_schema.columns AS column_data
+    ON column_data.table_schema = current_schema()
+   AND column_data.table_name = 'evidencia'
+   AND column_data.column_name = expected.column_name
+  WHERE column_data.column_name IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan campos del contrato de evidencia';
+  END IF;
+
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('ck_evidencia_destino_exclusivo'),
+    ('ck_evidencia_tamano'),
+    ('ck_evidencia_checksum_sha256'),
+    ('ck_evidencia_version'),
+    ('ck_evidencia_archivado_completo')
+  ) AS expected(constraint_name)
+  LEFT JOIN pg_constraint AS constraint_data
+    JOIN pg_namespace AS namespace_data
+      ON namespace_data.oid = constraint_data.connamespace
+    ON namespace_data.nspname = current_schema()
+   AND constraint_data.conname = expected.constraint_name
+  WHERE constraint_data.oid IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan restricciones de integridad de evidencia';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM pg_indexes
+  WHERE schemaname = current_schema()
+    AND indexname IN (
+      'idx_evidence_order_active',
+      'idx_evidence_activity_active',
+      'idx_evidence_archived'
+    );
+  IF actual_count <> 3 THEN
+    RAISE EXCEPTION 'Faltan índices de evidencia';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM pg_indexes
+  WHERE schemaname = current_schema()
+    AND indexname IN ('idx_evidence_order_active', 'idx_evidence_activity_active')
+    AND indexdef LIKE '%WHERE (deleted_at IS NULL)%';
+  IF actual_count <> 2 THEN
+    RAISE EXCEPTION 'Los índices activos de evidencia no son parciales';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM "rol_permiso" AS role_permission
+  JOIN "permiso" AS permission_data
+    ON permission_data."id" = role_permission."permiso_id"
+  WHERE permission_data."code" IN (
+    'EVIDENCES_VIEW',
+    'EVIDENCES_UPLOAD',
+    'EVIDENCES_MANAGE'
+  );
+  IF actual_count <> 8 THEN
+    RAISE EXCEPTION 'Las asignaciones de permisos de evidencia no son exactas';
+  END IF;
 END
 $verification$;
 
@@ -275,7 +359,10 @@ WHERE permission_data."code" IN (
   'ACTIVITIES_VIEW_ALL',
   'ACTIVITIES_MANAGE',
   'ACTIVITIES_CREATE_OWN',
-  'ACTIVITIES_OPERATE_OWN'
+  'ACTIVITIES_OPERATE_OWN',
+  'EVIDENCES_VIEW',
+  'EVIDENCES_UPLOAD',
+  'EVIDENCES_MANAGE'
 )
 ORDER BY permission_data."code", role_data."code";
 

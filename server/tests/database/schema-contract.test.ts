@@ -65,6 +65,64 @@ describe("Prisma schema contract", () => {
     );
   });
 
+  it("exposes the evidence metadata fields required for integrity and archival", async () => {
+    const evidenceColumns = (
+      await database.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'evidencia'
+      `
+    ).map(({ column_name }) => column_name);
+
+    expect(evidenceColumns).toEqual(
+      expect.arrayContaining([
+        "checksum_sha256",
+        "version",
+        "deleted_by_id",
+        "deletion_reason",
+      ]),
+    );
+    expect(Object.values(Prisma.EvidenciaScalarFieldEnum)).toEqual(
+      expect.arrayContaining([
+        "checksumSha256",
+        "version",
+        "deletedById",
+        "deletionReason",
+      ]),
+    );
+  });
+
+  it("creates the required active-resource and archived-evidence indexes", async () => {
+    const indexes = await database.$queryRaw<
+      Array<{ indexname: string; indexdef: string }>
+    >`
+      SELECT indexname, indexdef
+      FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND indexname IN (
+          'idx_evidence_order_active',
+          'idx_evidence_activity_active',
+          'idx_evidence_archived'
+        )
+    `;
+
+    expect(indexes.map(({ indexname }) => indexname)).toEqual(
+      expect.arrayContaining([
+        "idx_evidence_order_active",
+        "idx_evidence_activity_active",
+        "idx_evidence_archived",
+      ]),
+    );
+    for (const index of indexes.filter(({ indexname }) =>
+      ["idx_evidence_order_active", "idx_evidence_activity_active"].includes(
+        indexname,
+      ),
+    )) {
+      expect(index.indexdef).toContain("WHERE (deleted_at IS NULL)");
+    }
+  });
+
   it("creates the required order query indexes", async () => {
     const indexes = await database.$queryRaw<Array<{ indexname: string; indexdef: string }>>`
       SELECT indexname, indexdef
