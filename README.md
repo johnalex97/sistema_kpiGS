@@ -88,7 +88,10 @@ actividades a `ACTIVITIES_CREATE_OWN` y agrega cuatro índices de lectura de
 actividades. La séptima, `20260810203000_activities_history_integrity`, añade la
 ACL histórica de participación, convierte las asignaciones de órdenes en un
 historial append-only con una sola asignación abierta por orden y técnico, y
-corrige la descripción del permiso `ACTIVITIES_CREATE_OWN`. Las siete
+corrige la descripción del permiso `ACTIVITIES_CREATE_OWN`. La octava,
+`20260817120000_evidences_api_constraints`, incorpora el contrato de metadatos
+de evidencias; la novena, `20260817130000_evidences_phase_9_access_constraints`,
+incorpora los permisos y restricciones de acceso de fase 9. Las nueve
 migraciones deben estar aplicadas tanto en `public` como en `test`.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
@@ -170,6 +173,13 @@ POST /api/v1/activities/:activityId/resume
 POST /api/v1/activities/:activityId/complete
 POST /api/v1/activities/:activityId/cancel
 POST /api/v1/activities/:activityId/adjustments
+POST /api/v1/orders/:orderId/evidences
+GET /api/v1/orders/:orderId/evidences
+POST /api/v1/activities/:activityId/evidences
+GET /api/v1/activities/:activityId/evidences
+GET /api/v1/evidences/:evidenceId/download
+PATCH /api/v1/evidences/:evidenceId
+POST /api/v1/evidences/:evidenceId/archive
 ```
 
 Los endpoints mutables de autenticación requieren un encabezado `Origin`
@@ -417,3 +427,84 @@ personales reales hasta completar las fases funcionales y el despliegue HTTPS.
 
 Los secretos, archivos `.env`, cliente Prisma generado, logs y builds están
 excluidos mediante `.gitignore`.
+
+## Evidencias y volumen privado
+
+La API de evidencias admite una carga por solicitud para órdenes o actividades.
+Acepta exclusivamente JPEG, PNG, WebP y PDF cuando coinciden la extensión
+final, el MIME declarado y la firma del contenido; el límite absoluto es
+`10_485_760` bytes (10 MiB). `EVIDENCE_MAX_BYTES` puede reducirlo, pero no
+aumentarlo. Las rutas de carga requieren `EVIDENCES_UPLOAD`; las lecturas,
+`EVIDENCES_VIEW`; y actualizar o archivar requiere `EVIDENCES_MANAGE`.
+`TECHNICIAN` sólo opera evidencia de su trabajo actual o histórico y nunca
+puede administrar ni consultar `INTERNAL`; ADMIN y SUPERVISOR administran ambos
+niveles. `CLIENT` no está disponible en esta fase.
+
+En desarrollo, configura una raíz local ignorada por Git antes de arrancar el
+backend:
+
+```env
+EVIDENCE_STORAGE_PATH=./storage/evidences
+EVIDENCE_MAX_BYTES=10485760
+EVIDENCE_TEMP_MAX_AGE_MINUTES=60
+```
+
+La raíz contiene `tmp/` y `files/`; las claves finales son relativas y nunca
+forman parte de una respuesta HTTP. No ubicarla dentro de `public/`, `dist/` ni
+otra ruta servida. El proceso crea directorios con permisos restrictivos; en
+producción, `EVIDENCE_STORAGE_PATH` debe ser absoluta, privada y legible y
+escribible por la identidad que ejecuta la API.
+
+**Regla operativa obligatoria:** el volumen privado debe ser escribible
+exclusivamente por la identidad del proceso o contenedor de la API. No se
+permiten escritores externos, volúmenes compartidos entre servicios ni tareas
+manuales que agreguen, cambien o eliminen archivos. Los permisos restrictivos
+reducen exposición y evitan carreras entre la promoción atómica, PostgreSQL y
+la verificación; abrir escritores compartidos aumenta el riesgo de huérfanos o
+metadatos que no correspondan al contenido observado.
+
+Ejemplos con una sesión autorizada (la cookie se omite aquí):
+
+```powershell
+curl.exe -X POST http://localhost:4000/api/v1/orders/ORDER_ID/evidences `
+  -H "Origin: http://localhost:5173" `
+  -F "file=@C:\\evidencia\\foto.jpg;type=image/jpeg" `
+  -F "description=Foto de la reparación" `
+  -F "accessLevel=TECHNICIAN"
+
+curl.exe -OJ http://localhost:4000/api/v1/evidences/EVIDENCE_ID/download
+```
+
+Las descargas siempre son adjuntos privados (`Cache-Control: private, no-store`
+y `X-Content-Type-Options: nosniff`). Archivar exige motivo de 10 a 500
+caracteres, oculta la evidencia de la API y retiene el archivo físico protegido;
+no hay borrado físico ni restauración HTTP en fase 9.
+
+La copia de seguridad debe coordinar PostgreSQL **y** el volumen de evidencias
+en el mismo punto de recuperación. Restaurar sólo la base o sólo el volumen
+puede producir referencias faltantes u archivos huérfanos. Tras una copia,
+restauración o incidente, ejecuta desde `server/`:
+
+```powershell
+npm run evidences:verify
+```
+
+El comando es estrictamente de lectura: consulta todas las claves de metadata,
+incluidas archivadas y las relaciones heredadas de reincidencia, y recorre sólo
+`files/`. No crea, renombra ni elimina archivos, ni limpia `tmp/`. Imprime los
+conteos y las claves relativas ordenadas. Devuelve `0` si no hay diferencias y
+`2` si hay archivos huérfanos o metadata sin archivo; un fallo operativo usa un
+código distinto y debe investigarse antes de tomar cualquier acción manual.
+
+Para un despliegue Docker futuro, el volumen se montará de forma privada. Este
+fragmento es una referencia de configuración futura; no afirma que exista un
+archivo Compose en este repositorio:
+
+```yaml
+volumes:
+  - evidence_data:/data/evidences
+environment:
+  EVIDENCE_STORAGE_PATH: /data/evidences
+```
+
+La integración de estas rutas en el frontend React sigue pendiente.

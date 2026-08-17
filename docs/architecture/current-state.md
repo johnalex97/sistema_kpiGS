@@ -1,13 +1,13 @@
 # Diagnóstico de arquitectura actual
 
-Fecha de actualización: 10 de agosto de 2026.
+Fecha de actualización: 17 de agosto de 2026.
 
 ## Resumen
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express
 independiente, persistencia PostgreSQL mediante Prisma y autenticación backend
-con sesiones opacas y APIs persistentes de técnicos, clientes, órdenes y
-actividades. El diseño es navegable
+con sesiones opacas y APIs persistentes de técnicos, clientes, órdenes,
+actividades y evidencias privadas. El diseño es navegable
 y responsive, pero todavía no existen pantalla de acceso ni conexión del
 frontend con la API.
 
@@ -37,6 +37,7 @@ server/
 │   ├── clients/      # Clientes, sucursales, contactos y reglas de ciclo
 │   ├── config/       # Entorno validado
 │   ├── controllers/  # Controlador de salud
+│   ├── evidences/    # Evidencias privadas, almacenamiento y reglas de acceso
 │   ├── middlewares/  # Correlación, 404 y errores
 │   ├── orders/       # Órdenes, asignaciones, operación, materiales e historial
 │   ├── routes/       # API versionada
@@ -49,7 +50,7 @@ server/
 
 No existen todavía servicios HTTP ni contexto de autenticación en el frontend.
 El backend ya consume persistencia para autenticación, técnicos, clientes,
-sucursales, contactos, órdenes y actividades. El frontend no tiene todavía
+sucursales, contactos, órdenes, actividades y evidencias. El frontend no tiene todavía
 servicios HTTP ni contexto de autenticación.
 
 ## Funcionalidades que operan en el navegador
@@ -99,7 +100,7 @@ al recargar la página.
 5. No hay tratamiento de carga, error de API o reintentos en el frontend.
 6. Los usuarios demo no pueden iniciar sesión; el administrador requiere
    variables privadas de seed.
-7. No existen evidencias, reincidencias operativas ni cálculo de KPI real.
+7. El frontend no integra todavía evidencias; reincidencias operativas y cálculo de KPI real siguen pendientes.
 8. Algunos controles visuales todavía no ejecutan ninguna acción.
 
 ## Validaciones ejecutadas
@@ -119,6 +120,8 @@ Backend, ejecutado desde `server/`:
 | --- | --- |
 | `npm run typecheck` | Correcto |
 | `npm run lint` | Correcto; 0 advertencias |
+| `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 7 pruebas de reconciliación pura |
+| `npm run evidences:verify` | No ejecutable en este worktree sin modificar datos: falta la raíz local `storage/evidences`; el comando terminó con error operativo distinto de `2` y no creó ni eliminó archivos |
 | `npm run test` | Correcto; 239 pruebas unitarias y de contrato |
 | `npm run test:db` | Correcto; 230 pruebas HTTP y PostgreSQL en el esquema `test` aislado (con advertencias deprecadas de `pg`) |
 | `npm run build` | Correcto |
@@ -153,7 +156,7 @@ Backend, ejecutado desde `server/`:
 
 El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
 PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
-`"Sistema_kpiGS"` tiene 32 tablas de dominio, siete migraciones, seed idempotente
+`"Sistema_kpiGS"` tiene 32 tablas de dominio, nueve migraciones, seed idempotente
 y un esquema `test` aislado.
 
 El módulo `clients` sigue la cadena completa route → middleware → controller →
@@ -194,6 +197,15 @@ creaciones y los cambios de equipo agregan participantes atómicamente y una baj
 del equipo canónico no elimina su visibilidad anterior. Los rangos temporales
 inválidos se exponen como HTTP 400 con código `VALIDATION_ERROR`. No hay
 integración de estas rutas en la SPA ni documentación OpenAPI/Swagger.
+
+El módulo `evidences` ofrece siete endpoints protegidos para cargar y listar
+evidencias de órdenes o actividades, descargar, editar y archivar. Mantiene los
+bytes fuera de rutas públicas en un volumen privado; valida JPEG, PNG, WebP y
+PDF hasta 10 MiB y conserva físicamente los archivos archivados. El comando
+`npm run evidences:verify` sólo lee las claves finales y toda la metadata
+(incluidas archivadas y relaciones heredadas de reincidencia), informa claves
+relativas ordenadas y devuelve `2` ante diferencias. La SPA no consume todavía
+estas rutas.
 
 La separación será:
 

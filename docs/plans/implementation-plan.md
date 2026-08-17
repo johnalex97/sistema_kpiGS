@@ -141,7 +141,18 @@ se incorporan OpenAPI/Swagger ni conexión del frontend en esta etapa.
 - Validar MIME, tamaño, extensión y autorización de descarga.
 - Relacionar archivos con órdenes, actividades y reincidencias.
 
-Salida: carga y descarga privada preparada para migrar a nube.
+Estado: implementada la fase 9 para evidencias de órdenes y actividades. La
+API valida JPEG, PNG, WebP y PDF hasta 10 MiB, conserva metadatos y auditoría
+en PostgreSQL, protege carga, consulta, descarga, edición y archivado por
+permisos, y retiene el archivo físico al archivar. El volumen local privado
+usa claves relativas, temporales en el mismo volumen y promoción atómica; la
+verificación `npm run evidences:verify` compara de forma sólo lectura los
+archivos finales con toda la metadata, incluidas filas archivadas y relaciones
+heredadas de reincidencia. El frontend aún no integra estos endpoints y no hay
+endpoints operativos para reincidencias en esta fase.
+
+Salida: carga y descarga privada preparada para migrar a nube, con nueve
+migraciones versionadas en total.
 
 ## 10. Reincidencias
 
