@@ -12,6 +12,13 @@ const cases = [
   ["report.pdf", "application/pdf", Buffer.from("%PDF-1.7\n"), "pdf"],
 ] as const;
 
+const minimumSignatureCases = [
+  ["photo.jpg", "image/jpeg", Buffer.from([0xff, 0xd8, 0xff]), "jpg", 3],
+  ["screen.png", "image/png", Buffer.from("89504e470d0a1a0a", "hex"), "png", 8],
+  ["proof.webp", "image/webp", Buffer.from("524946460400000057454250", "hex"), "webp", 12],
+  ["report.pdf", "application/pdf", Buffer.from("%PDF-"), "pdf", 5],
+] as const;
+
 describe("detectEvidenceFormat", () => {
   it.each(cases)("accepts a valid %s evidence file", (name, mimeType, head, extension) => {
     expect(
@@ -23,6 +30,29 @@ describe("detectEvidenceFormat", () => {
       }),
     ).toEqual({ mimeType, extension });
   });
+
+  it.each(minimumSignatureCases)(
+    "accepts %s at its minimum signature length and rejects a shorter declared size",
+    (name, mimeType, head, extension, minimumSize) => {
+      expect(
+        detectEvidenceFormat({
+          originalName: name,
+          declaredMimeType: mimeType,
+          head,
+          sizeBytes: minimumSize,
+        }),
+      ).toEqual({ mimeType, extension });
+
+      expect(() =>
+        detectEvidenceFormat({
+          originalName: name,
+          declaredMimeType: mimeType,
+          head,
+          sizeBytes: minimumSize - 1,
+        }),
+      ).toThrow(InvalidEvidenceFileError);
+    },
+  );
 
   it("maps the JPEG alias to the canonical jpg extension", () => {
     expect(

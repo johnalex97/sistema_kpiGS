@@ -122,6 +122,10 @@ export function detectEvidenceFormat(input: {
     return invalid("Evidence MIME type and final filename suffix do not agree");
   }
 
+  if (input.sizeBytes < format.signature.length) {
+    return invalid("Evidence file is shorter than its required signature");
+  }
+
   if (!hasSignature(input.head, format.signature)) {
     return invalid("Evidence content signature does not match its declared format");
   }
