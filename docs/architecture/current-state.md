@@ -120,7 +120,7 @@ Backend, ejecutado desde `server/`:
 | --- | --- |
 | `npm run typecheck` | Correcto |
 | `npm run lint` | Correcto; 0 advertencias |
-| `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 7 pruebas de reconciliación pura |
+| `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 8 pruebas de reconciliación pura |
 | `npm run evidences:verify` | No ejecutable en este worktree sin modificar datos: falta la raíz local `storage/evidences`; el comando terminó con error operativo distinto de `2` y no creó ni eliminó archivos |
 | `npm run test` | Correcto; 239 pruebas unitarias y de contrato |
 | `npm run test:db` | Correcto; 230 pruebas HTTP y PostgreSQL en el esquema `test` aislado (con advertencias deprecadas de `pg`) |
