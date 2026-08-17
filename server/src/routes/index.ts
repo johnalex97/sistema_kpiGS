@@ -8,11 +8,14 @@ import { createClientsRouter } from "../clients/clients.routes.js";
 import { createTechniciansRouter } from "../technicians/technicians.routes.js";
 import { createOrdersRouter } from "../orders/orders.routes.js";
 import { createActivitiesRouter } from "../activities/activities.routes.js";
+import { createEvidencesRouter } from "../evidences/evidences.routes.js";
+import type { EvidenceStorage } from "../evidences/evidences.storage.js";
 import { createHealthRouter } from "./health.routes.js";
 
 export function createApiRouter(
   env: Environment,
   database: PrismaClient,
+  evidenceStorage: EvidenceStorage,
 ) {
   const router = Router();
   const authService = createAuthService({
@@ -34,5 +37,6 @@ export function createApiRouter(
   );
   router.use("/orders", createOrdersRouter(env, database, authService));
   router.use(createActivitiesRouter(env, database, authService));
+  router.use(createEvidencesRouter(env, database, authService, evidenceStorage));
   return router;
 }

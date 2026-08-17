@@ -10,13 +10,25 @@ import { createErrorHandler } from "./middlewares/error.middleware.js";
 import { notFoundHandler } from "./middlewares/not-found.middleware.js";
 import { requestContext } from "./middlewares/request-context.middleware.js";
 import { createApiRouter } from "./routes/index.js";
+import { LocalEvidenceStorage } from "./evidences/evidences.local-storage.js";
+import type { EvidenceStorage } from "./evidences/evidences.storage.js";
 import { createLogger } from "./utils/logger.js";
 
 export interface CreateAppOptions {
   env: Environment;
   logger?: Logger;
   database?: PrismaClient;
+  evidenceStorage?: EvidenceStorage;
   registerRoutes?: (app: Express) => void;
+}
+
+let defaultEvidenceStorage: { root: string; storage: LocalEvidenceStorage } | undefined;
+
+function storageForEnvironment(env: Environment): EvidenceStorage {
+  if (defaultEvidenceStorage?.root !== env.EVIDENCE_STORAGE_PATH) {
+    defaultEvidenceStorage = { root: env.EVIDENCE_STORAGE_PATH, storage: new LocalEvidenceStorage(env.EVIDENCE_STORAGE_PATH) };
+  }
+  return defaultEvidenceStorage.storage;
 }
 
 export function createApp(options: CreateAppOptions) {
@@ -29,6 +41,7 @@ export function createApp(options: CreateAppOptions) {
   const app = express();
   const database =
     options.database ?? getDatabaseClient(options.env.DATABASE_URL);
+  const evidenceStorage = options.evidenceStorage ?? storageForEnvironment(options.env);
 
   app.disable("x-powered-by");
   app.use(requestContext);
@@ -65,7 +78,7 @@ export function createApp(options: CreateAppOptions) {
     }),
   );
   app.use(express.json({ limit: options.env.JSON_BODY_LIMIT }));
-  app.use("/api/v1", createApiRouter(options.env, database));
+  app.use("/api/v1", createApiRouter(options.env, database, evidenceStorage));
   options.registerRoutes?.(app);
   app.use(notFoundHandler);
   app.use(createErrorHandler(logger));

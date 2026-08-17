@@ -6,6 +6,7 @@ import { createApp } from "./app.js";
 import { getDatabaseClient } from "./config/database.js";
 import { env } from "./config/env.js";
 import { createLogger } from "./utils/logger.js";
+import { LocalEvidenceStorage } from "./evidences/evidences.local-storage.js";
 
 export function startServer(
   app: Express,
@@ -47,8 +48,11 @@ if (isDirectExecution) {
     env.LOG_LEVEL,
     env.NODE_ENV === "development",
   );
+  void (async () => {
   const database = getDatabaseClient(env.DATABASE_URL);
-  const app = createApp({ env, logger, database });
+  const evidenceStorage = new LocalEvidenceStorage(env.EVIDENCE_STORAGE_PATH);
+  await evidenceStorage.initialize(new Date(), env.EVIDENCE_TEMP_MAX_AGE_MINUTES);
+  const app = createApp({ env, logger, database, evidenceStorage });
   const server = startServer(app, env.PORT, logger);
   const shutdown = createShutdownHandler(
     server,
@@ -64,4 +68,8 @@ if (isDirectExecution) {
       });
     });
   }
+  })().catch((error: unknown) => {
+    logger.error({ err: error }, "Evidence storage initialization failed");
+    process.exitCode = 1;
+  });
 }
