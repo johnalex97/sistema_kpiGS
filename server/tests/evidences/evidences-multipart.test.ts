@@ -14,8 +14,11 @@ interface MultipartPart {
   mimeType?: string;
 }
 
-function multipart(parts: MultipartPart[], close = true): { body: Buffer; contentType: string } {
-  const boundary = "----evidence-test-boundary";
+function multipart(
+  parts: MultipartPart[],
+  close = true,
+  boundary = "----evidence-test-boundary",
+): { body: Buffer; contentType: string } {
   const lines: Buffer[] = [];
 
   for (const part of parts) {
@@ -156,6 +159,39 @@ describe("evidence multipart parser", () => {
       { kind: "field", name: "accessLevel", value: "TECHNICIAN" },
       { kind: "field", name: "description", value: "cuatro" },
     ]))).rejects.toMatchObject({ statusCode: 400, code: "INVALID_EVIDENCE_MULTIPART" });
+  });
+
+  it("rejects and cleans once when a quoted escaped boundary carries a fourth part", async () => {
+    const boundary = "----evidence-\\escaped";
+    const payload = multipart([
+      { kind: "file", name: "file", value: "jpeg" },
+      { kind: "field", name: "description", value: "uno" },
+      { kind: "field", name: "accessLevel", value: "TECHNICIAN" },
+      { kind: "field", name: "unexpected", value: "cuatro" },
+    ], true, boundary);
+    payload.contentType = `multipart/form-data; boundary="${boundary.replace(/\\/g, "\\\\")}"`;
+    const fileStorage = storage({
+      writeTemporary: vi.fn(async (source) => {
+        source.resume();
+        return {
+          tempKey: "tmp/upload.upload",
+          sizeBytes: 4,
+          checksumSha256: "a".repeat(64),
+        };
+      }),
+    });
+
+    const request = requestFor(payload);
+    const operation = parserFor(fileStorage).parse(request);
+    for (let offset = 0; offset < payload.body.length; offset += 7) {
+      request.write(payload.body.subarray(offset, offset + 7));
+    }
+    request.end();
+
+    await expect(operation).rejects
+      .toMatchObject({ statusCode: 400, code: "INVALID_EVIDENCE_MULTIPART" });
+    expect(fileStorage.remove).toHaveBeenCalledTimes(1);
+    expect(fileStorage.remove).toHaveBeenCalledWith("tmp/upload.upload");
   });
 
   it("maps a storage size error to 413", async () => {
