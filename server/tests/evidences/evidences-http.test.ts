@@ -136,11 +136,12 @@ describe("evidences HTTP", () => {
     expect(listed.body).toMatchObject({ success: true, message: "Evidencias consultadas", errors: [], data: { items: [{ id: created.body.data.id }], pagination: { page: 1, pageSize: 1, totalItems: 5, totalPages: 5 } }, meta: { requestId: expect.any(String) } });
     const activityList = await admin.get(`/api/v1/activities/${fixture.currentActivityId}/evidences`).expect(200);
     expect(activityList.body.data).toMatchObject({ items: [{ id: activityUpload.body.data.id, accessLevel: "TECHNICIAN" }, { id: fixture.currentActivityTechnicianEvidenceId, accessLevel: "TECHNICIAN" }], pagination: { page: 1, pageSize: 20, totalItems: 2, totalPages: 1 } });
+    await database.evidencia.update({ where: { id: created.body.data.id }, data: { originalName: "proof ñ.pdf" } });
     const downloaded = await admin.get(`/api/v1/evidences/${created.body.data.id}/download`).buffer(true).parse((res, cb) => { const chunks: Buffer[] = []; res.on("data", (chunk) => chunks.push(Buffer.from(chunk))); res.on("end", () => cb(null, Buffer.concat(chunks))); }).expect(200);
     expect(downloaded.body).toEqual(pdf);
-    expect(downloaded.headers).toMatchObject({ "content-type": "application/pdf", "content-length": String(pdf.length), "x-content-type-options": "nosniff", "cache-control": "private, no-store", "content-disposition": "attachment; filename=\"proof safe.pdf\"; filename*=UTF-8''proof%20safe.pdf" });
+    expect(downloaded.headers).toMatchObject({ "content-type": "application/pdf", "content-length": String(pdf.length), "x-content-type-options": "nosniff", "cache-control": "private, no-store", "content-disposition": "attachment; filename=\"proof _.pdf\"; filename*=UTF-8''proof%20%C3%B1.pdf" });
     const updated = await admin.patch(`/api/v1/evidences/${created.body.data.id}`).set("Origin", allowedOrigin).send({ version: 1, description: "Updated HTTP evidence", accessLevel: "INTERNAL" }).expect(200);
-    expect(updated.body).toMatchObject({ success: true, message: "Evidencia actualizada", errors: [], data: { ...created.body.data, description: "Updated HTTP evidence", accessLevel: "INTERNAL", version: 2, updatedAt: expect.any(String) }, meta: { requestId: expect.any(String) } });
+    expect(updated.body).toMatchObject({ success: true, message: "Evidencia actualizada", errors: [], data: { ...created.body.data, originalName: "proof ñ.pdf", description: "Updated HTTP evidence", accessLevel: "INTERNAL", version: 2, updatedAt: expect.any(String) }, meta: { requestId: expect.any(String) } });
     const archivedResponse = await admin.post(`/api/v1/evidences/${created.body.data.id}/archive`).set("Origin", allowedOrigin).send({ version: 2, reason: "Archive HTTP evidence without deleting its protected file" }).expect(200);
     expect(archivedResponse.body).toMatchObject({ success: true, message: "Evidencia archivada", errors: [], data: { ...updated.body.data, version: 3, updatedAt: expect.any(String) }, meta: { requestId: expect.any(String) } });
     await admin.get(`/api/v1/evidences/${created.body.data.id}/download`).expect(404);
@@ -166,7 +167,13 @@ describe("evidences HTTP", () => {
   it("keeps technician visibility scoped to current and historical work and hides internal/foreign records", async () => {
     const technician = await agentFor(users.technician);
     const current = await technician.get(`/api/v1/orders/${fixture.activeOrderId}/evidences`).expect(200);
-    expect(current.body.data.items.every((item: { accessLevel: string }) => item.accessLevel === "TECHNICIAN")).toBe(true);
+    expect(current.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: fixture.orderTechnicianEvidenceId, accessLevel: "TECHNICIAN" }),
+    ]));
+    const currentActivity = await technician.get(`/api/v1/activities/${fixture.currentActivityId}/evidences`).expect(200);
+    expect(currentActivity.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: fixture.currentActivityTechnicianEvidenceId, accessLevel: "TECHNICIAN" }),
+    ]));
     await technician.get(`/api/v1/orders/${fixture.completedOrderId}/evidences`).expect(404);
     const former = await agentFor({ email: "evidence-former@example.test" });
     const historicalOrder = await former.get(`/api/v1/orders/${fixture.completedOrderId}/evidences`).expect(200);
@@ -178,7 +185,9 @@ describe("evidences HTTP", () => {
     expect(managementList.body.data.items.some((item: { accessLevel: string }) => item.accessLevel === "INTERNAL")).toBe(true);
     const internal = await technician.get(`/api/v1/evidences/${fixture.orderInternalEvidenceId}/download`).expect(404);
     const foreign = await technician.get(`/api/v1/evidences/${fixture.cancelledForeignEvidenceId}/download`).expect(404);
-    expect({ status: internal.status, body: { ...internal.body, meta: { requestId: "" } } }).toEqual({ status: foreign.status, body: { ...foreign.body, meta: { requestId: "" } } });
+    const absent = await technician.get(`/api/v1/evidences/${randomUUID()}/download`).expect(404);
+    expect(internal.body).toMatchObject({ success: false, data: null });
+    expect({ status: foreign.status, body: { ...foreign.body, meta: { requestId: "" } } }).toEqual({ status: absent.status, body: { ...absent.body, meta: { requestId: "" } } });
   });
 
   it("rejects invalid state, origin, body and version without revealing protected resources", async () => {
