@@ -298,7 +298,8 @@ BEGIN
     ('ck_evidencia_tamano'),
     ('ck_evidencia_checksum_sha256'),
     ('ck_evidencia_version'),
-    ('ck_evidencia_archivado_completo')
+    ('ck_evidencia_archivado_completo'),
+    ('ck_evidencia_nivel_acceso_fase_9')
   ) AS expected(constraint_name)
   LEFT JOIN pg_constraint AS constraint_data
     JOIN pg_namespace AS namespace_data

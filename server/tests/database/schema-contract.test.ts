@@ -93,6 +93,36 @@ describe("Prisma schema contract", () => {
     );
   });
 
+  it("enforces all six phase-9 evidence checks", async () => {
+    const checks = await database.$queryRaw<Array<{ conname: string }>>`
+      SELECT constraint_data.conname
+      FROM pg_constraint AS constraint_data
+      JOIN pg_namespace AS namespace_data
+        ON namespace_data.oid = constraint_data.connamespace
+      WHERE namespace_data.nspname = current_schema()
+        AND constraint_data.conname IN (
+          'ck_evidencia_destino_exclusivo',
+          'ck_evidencia_tamano',
+          'ck_evidencia_checksum_sha256',
+          'ck_evidencia_version',
+          'ck_evidencia_archivado_completo',
+          'ck_evidencia_nivel_acceso_fase_9'
+        )
+    `;
+
+    expect(checks.map(({ conname }) => conname)).toEqual(
+      expect.arrayContaining([
+        "ck_evidencia_destino_exclusivo",
+        "ck_evidencia_tamano",
+        "ck_evidencia_checksum_sha256",
+        "ck_evidencia_version",
+        "ck_evidencia_archivado_completo",
+        "ck_evidencia_nivel_acceso_fase_9",
+      ]),
+    );
+    expect(checks).toHaveLength(6);
+  });
+
   it("creates the required active-resource and archived-evidence indexes", async () => {
     const indexes = await database.$queryRaw<
       Array<{ indexname: string; indexdef: string }>

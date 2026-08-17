@@ -82,6 +82,7 @@ enum RolActividadTecnico {
 enum NivelAccesoEvidencia {
   INTERNAL   @map("internal")
   TECHNICIAN @map("technician")
+  /// Reserved for future client visibility; phase 9 rejects persistence at the database boundary.
   CLIENT     @map("client")
 
   @@map("nivel_acceso_evidencia")
