@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { NivelAccesoEvidencia, Prisma } from "../../generated/prisma/client.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createEvidencesReadRepository } from "../../src/evidences/evidences.read.repository.js";
-import type { EvidenceActorContext, EvidenceListFilters } from "../../src/evidences/evidences.types.js";
+import { createEvidencesMutationRepository } from "../../src/evidences/evidences.mutation.repository.js";
+import type {
+  CreateEvidencePersistenceInput,
+  EvidenceActorContext,
+  EvidenceListFilters,
+} from "../../src/evidences/evidences.types.js";
 import { seedDatabase } from "../../prisma/seed.js";
 import {
   database,
@@ -283,3 +288,236 @@ describe("evidence read repository", () => {
 });
 
 afterAll(disconnectTestDatabase);
+
+describe("evidence mutation repository", () => {
+  let fixture: EvidencesReadFixture;
+  const createdIds: string[] = [];
+  const now = new Date("2026-08-17T15:30:00.000Z");
+
+  beforeAll(async () => {
+    fixture = await createEvidencesReadFixture(database);
+  });
+  afterAll(async () => {
+    const created = await database.evidencia.findMany({
+      where: { storageKey: { in: createdIds.map((id) => `files/2026/08/${id}.pdf`) } },
+      select: { id: true },
+    });
+    await database.auditoria.deleteMany({ where: { entityId: { in: created.map(({ id }) => id) } } });
+    await database.evidencia.deleteMany({ where: { id: { in: created.map(({ id }) => id) } } });
+    await removeEvidencesReadFixture(database);
+  });
+
+  function inputFor(resource: CreateEvidencePersistenceInput["resource"]): CreateEvidencePersistenceInput {
+    const id = randomUUID();
+    createdIds.push(id);
+    return {
+      resource,
+      originalName: "field-report.pdf",
+      storedName: `${id}.pdf`,
+      mimeType: "application/pdf",
+      fileExtension: "pdf",
+      sizeBytes: 321,
+      storageKey: `files/2026/08/${id}.pdf`,
+      checksumSha256: "c".repeat(64),
+      description: "Initial report",
+      accessLevel: "INTERNAL",
+    };
+  }
+
+  it("locks a valid target before promotion and atomically persists uploaded metadata and audit", async () => {
+    const events: string[] = [];
+    const transactionDatabase = {
+      $transaction: async <T>(callback: (transaction: unknown) => Promise<T>, options: unknown) => database.$transaction(
+        (transaction) => callback(new Proxy(transaction, {
+          get(target, property, receiver) {
+            if (property === "$queryRaw") {
+              return async (...args: unknown[]) => {
+                events.push("lock");
+                return Reflect.apply(Reflect.get(target, property), target, args);
+              };
+            }
+            if (property === "evidencia") {
+              return new Proxy(Reflect.get(target, property, receiver), {
+                get(delegate, delegateProperty, delegateReceiver) {
+                  if (delegateProperty === "create") {
+                    return async (...args: unknown[]) => {
+                      events.push("metadata");
+                      return Reflect.apply(Reflect.get(delegate, delegateProperty), delegate, args);
+                    };
+                  }
+                  return Reflect.get(delegate, delegateProperty, delegateReceiver);
+                },
+              });
+            }
+            if (property === "auditoria") {
+              return new Proxy(Reflect.get(target, property, receiver), {
+                get(delegate, delegateProperty, delegateReceiver) {
+                  if (delegateProperty === "create") {
+                    return async (...args: unknown[]) => {
+                      events.push("audit");
+                      return Reflect.apply(Reflect.get(delegate, delegateProperty), delegate, args);
+                    };
+                  }
+                  return Reflect.get(delegate, delegateProperty, delegateReceiver);
+                },
+              });
+            }
+            return Reflect.get(target, property, receiver);
+          },
+        }) as unknown),
+        options as never,
+      ) as Promise<T>,
+    };
+    const repository = createEvidencesMutationRepository(transactionDatabase as never);
+    const input = inputFor({ type: "ORDER", id: fixture.activeOrderId });
+
+    const result = await repository.createEvidence(
+      input,
+      managementActor(fixture.adminUserId),
+      now,
+      async () => { events.push("promote"); },
+    );
+
+    expect(events).toEqual(["lock", "promote", "metadata", "audit"]);
+    expect(result).toMatchObject({ kind: "CREATED", evidence: { storageKey: input.storageKey, version: 1 } });
+    const audit = await database.auditoria.findFirstOrThrow({ where: { entityId: result.kind === "CREATED" ? result.evidence.id : "" } });
+    expect(audit).toMatchObject({ action: "EVIDENCE_UPLOADED", entity: "Evidencia", userId: fixture.adminUserId });
+    expect(audit.afterData).toMatchObject({
+      resourceType: "ORDER",
+      resourceId: fixture.activeOrderId,
+      checksumSha256: input.checksumSha256,
+      sizeBytes: input.sizeBytes,
+      accessLevel: "INTERNAL",
+      actorId: fixture.adminUserId,
+      version: 1,
+    });
+  });
+
+  it("rejects deleted or cancelled targets before promotion and accepts completed targets", async () => {
+    const repository = createEvidencesMutationRepository(database);
+    const activeOrder = await database.ordenTrabajo.findUniqueOrThrow({
+      where: { id: fixture.activeOrderId },
+      select: { sucursalId: true, tipoServicioId: true },
+    });
+    const deletedOrder = await database.ordenTrabajo.create({
+      data: {
+        id: randomUUID(),
+        orderNumber: `EVD-DEL-${randomUUID().slice(0, 8)}`,
+        sucursalId: activeOrder.sucursalId,
+        tipoServicioId: activeOrder.tipoServicioId,
+        reportedProblem: "Deleted evidence target",
+        deletedAt: now,
+      },
+    });
+    let deletedPromoted = false;
+    const deleted = await repository.createEvidence(
+      inputFor({ type: "ORDER", id: deletedOrder.id }),
+      managementActor(fixture.adminUserId), now,
+      async () => { deletedPromoted = true; },
+    );
+    let cancelledPromoted = false;
+    const cancelled = await repository.createEvidence(
+      inputFor({ type: "ORDER", id: fixture.cancelledOrderId }),
+      managementActor(fixture.adminUserId), now,
+      async () => { cancelledPromoted = true; },
+    );
+    let completedPromoted = false;
+    const completed = await repository.createEvidence(
+      inputFor({ type: "ORDER", id: fixture.completedOrderId }),
+      managementActor(fixture.adminUserId), now,
+      async () => { completedPromoted = true; },
+    );
+
+    expect(cancelled).toEqual({ kind: "RESOURCE_CANCELLED" });
+    expect(cancelledPromoted).toBe(false);
+    expect(deleted).toEqual({ kind: "RESOURCE_NOT_FOUND" });
+    expect(deletedPromoted).toBe(false);
+    expect(completed).toMatchObject({ kind: "CREATED", evidence: { orden: { id: fixture.completedOrderId } } });
+    expect(completedPromoted).toBe(true);
+    await database.ordenTrabajo.delete({ where: { id: deletedOrder.id } });
+  });
+
+  it("rolls back evidence metadata when uploaded audit creation fails", async () => {
+    const failingAuditDatabase = {
+      $transaction: async <T>(callback: (transaction: unknown) => Promise<T>, options: unknown) => database.$transaction(
+        (transaction) => callback(new Proxy(transaction, {
+          get(target, property, receiver) {
+            if (property === "auditoria") {
+              return new Proxy(Reflect.get(target, property, receiver), {
+                get(delegate, delegateProperty, delegateReceiver) {
+                  if (delegateProperty === "create") return async () => { throw new Error("forced audit failure"); };
+                  return Reflect.get(delegate, delegateProperty, delegateReceiver);
+                },
+              });
+            }
+            return Reflect.get(target, property, receiver);
+          },
+        }) as unknown), options as never,
+      ) as Promise<T>,
+    };
+    const input = inputFor({ type: "ACTIVITY", id: fixture.currentActivityId });
+    let promoted = false;
+
+    await expect(createEvidencesMutationRepository(failingAuditDatabase as never).createEvidence(
+      input, managementActor(fixture.adminUserId), now, async () => { promoted = true; },
+    )).rejects.toThrow("forced audit failure");
+    expect(promoted).toBe(true);
+    await expect(database.evidencia.findUnique({ where: { storageKey: input.storageKey } })).resolves.toBeNull();
+  });
+
+  it("updates once with an exact before/after audit snapshot and rejects stale versions without audit", async () => {
+    const repository = createEvidencesMutationRepository(database);
+    const id = fixture.orderInternalEvidenceId;
+    const original = await database.evidencia.findUniqueOrThrow({ where: { id } });
+
+    const updated = await repository.updateEvidence(id, {
+      description: "Management correction", accessLevel: "TECHNICIAN", version: original.version,
+    }, managementActor(fixture.adminUserId), now);
+    const stale = await repository.updateEvidence(id, {
+      description: "Must not persist", version: original.version,
+    }, managementActor(fixture.adminUserId), now);
+
+    expect(updated).toMatchObject({ kind: "UPDATED", evidence: { version: original.version + 1, description: "Management correction", accessLevel: "TECHNICIAN" } });
+    expect(stale).toEqual({ kind: "VERSION_CONFLICT" });
+    const audits = await database.auditoria.findMany({ where: { entityId: id, action: "EVIDENCE_UPDATED" } });
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      beforeData: expect.objectContaining({ description: original.description, accessLevel: original.accessLevel, version: original.version }),
+      afterData: expect.objectContaining({ description: "Management correction", accessLevel: "TECHNICIAN", version: original.version + 1 }),
+    });
+  });
+
+  it("archives exactly once without a physical callback and records the complete archive triplet", async () => {
+    const repository = createEvidencesMutationRepository(database);
+    const id = fixture.orderTechnicianTieEvidenceId;
+    const before = await database.evidencia.findUniqueOrThrow({ where: { id } });
+    const [first, second] = await Promise.all([
+      repository.archiveEvidence(id, { reason: "Superseded by an approved replacement document", version: before.version }, managementActor(fixture.adminUserId), now),
+      repository.archiveEvidence(id, { reason: "Superseded by an approved replacement document", version: before.version }, managementActor(fixture.adminUserId), now),
+    ]);
+
+    expect([first.kind, second.kind]).toContain("UPDATED");
+    expect([first.kind, second.kind]).toContainEqual(expect.stringMatching(/^(VERSION_CONFLICT|EVIDENCE_NOT_FOUND)$/));
+    const archived = await database.evidencia.findUniqueOrThrow({ where: { id } });
+    expect(archived).toMatchObject({ deletedById: fixture.adminUserId, deletionReason: "Superseded by an approved replacement document", version: before.version + 1 });
+    expect(archived.deletedAt).toEqual(now);
+    const audit = await database.auditoria.findFirstOrThrow({ where: { entityId: id, action: "EVIDENCE_ARCHIVED" } });
+    expect(audit).toMatchObject({ reason: "Superseded by an approved replacement document" });
+    expect(audit.afterData).toMatchObject({ deletedAt: now.toISOString(), deletedById: fixture.adminUserId, deletionReason: "Superseded by an approved replacement document", version: before.version + 1 });
+  });
+
+  it("writes the exact administrative download audit without changing evidence metadata", async () => {
+    const repository = createEvidencesMutationRepository(database);
+    const before = await database.evidencia.findUniqueOrThrow({ where: { id: fixture.orderTechnicianEvidenceId } });
+
+    await repository.recordAdministrativeDownload(
+      before.id, managementActor(fixture.supervisorUserId), now,
+    );
+
+    const after = await database.evidencia.findUniqueOrThrow({ where: { id: before.id } });
+    const audit = await database.auditoria.findFirstOrThrow({ where: { entityId: before.id, action: "EVIDENCE_DOWNLOADED" } });
+    expect(after).toMatchObject({ updatedAt: before.updatedAt, version: before.version });
+    expect(audit).toMatchObject({ entity: "Evidencia", userId: fixture.supervisorUserId, occurredAt: now });
+    expect(audit.afterData).toMatchObject({ resourceType: "ORDER", resourceId: fixture.activeOrderId, actorId: fixture.supervisorUserId, version: before.version });
+  });
+});
