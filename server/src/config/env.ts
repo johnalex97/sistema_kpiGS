@@ -1,5 +1,7 @@
 import "dotenv/config";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const postgresUrl = z
@@ -92,6 +94,29 @@ function isPathInside(pathname: string, parentPath: string): boolean {
   );
 }
 
+function findServerRoot(startPath: string): string {
+  let currentPath = startPath;
+
+  while (!existsSync(path.join(currentPath, "package.json"))) {
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      throw new Error("No se pudo localizar el directorio del servidor");
+    }
+    currentPath = parentPath;
+  }
+
+  return currentPath;
+}
+
+const serverRoot = findServerRoot(
+  path.dirname(fileURLToPath(import.meta.url)),
+);
+const protectedEvidenceStoragePaths = [
+  path.join(serverRoot, "public"),
+  path.join(serverRoot, "dist"),
+  path.resolve(serverRoot, "..", "dist"),
+];
+
 export function parseEnvironment(input: EnvironmentInput): Environment {
   const result = environmentSchema.safeParse(input);
   if (!result.success) {
@@ -145,15 +170,9 @@ export function parseEnvironment(input: EnvironmentInput): Environment {
   const evidenceStoragePath = path.resolve(result.data.EVIDENCE_STORAGE_PATH);
   if (result.data.NODE_ENV === "production") {
     const privatePathRequired = !path.isAbsolute(result.data.EVIDENCE_STORAGE_PATH);
-    const unsafeStoragePaths = [
-      path.resolve("public"),
-      path.resolve("dist"),
-      path.resolve("..", "dist"),
-    ];
-
     if (
       privatePathRequired ||
-      unsafeStoragePaths.some((unsafePath) =>
+      protectedEvidenceStoragePaths.some((unsafePath) =>
         isPathInside(evidenceStoragePath, unsafePath),
       )
     ) {

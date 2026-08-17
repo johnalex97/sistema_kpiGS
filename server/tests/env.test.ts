@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseEnvironment } from "../src/config/env.js";
 
@@ -71,6 +72,35 @@ describe("parseEnvironment", () => {
         EVIDENCE_STORAGE_PATH: "relative",
       }),
     ).toThrow("EVIDENCE_STORAGE_PATH");
+  });
+
+  it("rejects protected evidence paths when started from the repository root", () => {
+    const serverRoot = process.cwd();
+    const repositoryRoot = path.resolve(serverRoot, "..");
+    const productionBase = {
+      ...base,
+      NODE_ENV: "production" as const,
+      AUTH_COOKIE_SECURE: "true",
+    };
+    const protectedPaths = [
+      path.join(serverRoot, "public", "evidences"),
+      path.join(serverRoot, "dist", "evidences"),
+      path.join(repositoryRoot, "dist", "evidences"),
+    ];
+
+    process.chdir(repositoryRoot);
+    try {
+      for (const evidenceStoragePath of protectedPaths) {
+        expect(() =>
+          parseEnvironment({
+            ...productionBase,
+            EVIDENCE_STORAGE_PATH: evidenceStoragePath,
+          }),
+        ).toThrow("EVIDENCE_STORAGE_PATH");
+      }
+    } finally {
+      process.chdir(serverRoot);
+    }
   });
 
   it("provides safe local authentication defaults", () => {
