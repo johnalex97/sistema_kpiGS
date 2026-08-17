@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream, type Stats } from "node:fs";
-import { lstat, mkdir, open as openFile, readdir, rename, rm } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { chmod, lstat, mkdir, open as openFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough, Readable, Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -45,6 +45,11 @@ function isMissing(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
+const privateDirectoryMode = 0o700;
+const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+const readOnlyFlags = constants.O_RDONLY | noFollowFlag;
+const exclusiveWriteFlags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag;
+
 class CountingHashTransform extends Transform {
   readonly #hash = createHash("sha256");
   #sizeBytes = 0;
@@ -77,6 +82,7 @@ export class LocalEvidenceStorage implements EvidenceStorage {
   readonly #root: string;
   readonly #temporaryRoot: string;
   readonly #finalRoot: string;
+  #operationTail: Promise<void> = Promise.resolve();
 
   constructor(root: string) {
     this.#root = path.resolve(root);
@@ -85,7 +91,7 @@ export class LocalEvidenceStorage implements EvidenceStorage {
   }
 
   async initialize(now: Date, tempMaxAgeMinutes: number): Promise<{ removedTemporaries: number }> {
-    return this.#withStorageError(async () => {
+    return this.#runExclusive(() => this.#withStorageError(async () => {
       await this.#ensureRoot();
       await this.#ensureDirectory(this.#temporaryRoot);
       await this.#ensureDirectory(this.#finalRoot);
@@ -108,7 +114,7 @@ export class LocalEvidenceStorage implements EvidenceStorage {
       }
 
       return { removedTemporaries };
-    });
+    }));
   }
 
   async writeTemporary(source: Readable, maxBytes: number): Promise<TemporaryEvidence> {
@@ -122,35 +128,38 @@ export class LocalEvidenceStorage implements EvidenceStorage {
     };
     source.once("error", rememberSourceError);
 
-    try {
-      await this.#assertDirectory(this.#temporaryRoot);
-      const existing = await this.#assertSafePath(temporaryPath, true);
-      if (existing !== undefined) {
-        throw new EvidenceStorageUnavailableError();
+    return this.#runExclusive(async () => {
+      try {
+        await this.#assertDirectory(this.#temporaryRoot);
+        const existing = await this.#assertSafePath(temporaryPath, true);
+        if (existing !== undefined) {
+          throw new EvidenceStorageUnavailableError();
+        }
+        const handle = await openFile(temporaryPath, exclusiveWriteFlags, 0o600);
+        await pipeline(source, counter, handle.createWriteStream());
+        return {
+          tempKey,
+          sizeBytes: counter.sizeBytes,
+          checksumSha256: counter.checksum(),
+        };
+      } catch (error) {
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
+        if (error === sourceError || error instanceof EvidenceSizeLimitError) {
+          throw error;
+        }
+        throw unavailable(error);
+      } finally {
+        source.off("error", rememberSourceError);
       }
-      await pipeline(source, counter, createWriteStream(temporaryPath, { flags: "wx" }));
-      return {
-        tempKey,
-        sizeBytes: counter.sizeBytes,
-        checksumSha256: counter.checksum(),
-      };
-    } catch (error) {
-      await rm(temporaryPath, { force: true }).catch(() => undefined);
-      if (error === sourceError || error instanceof EvidenceSizeLimitError) {
-        throw error;
-      }
-      throw unavailable(error);
-    } finally {
-      source.off("error", rememberSourceError);
-    }
+    });
   }
 
   async readHead(key: string, maxBytes: number): Promise<Buffer> {
     assertMaximum(maxBytes);
     const filePath = resolveKey(this.#root, key);
-    return this.#withStorageError(async () => {
+    return this.#runExclusive(() => this.#withStorageError(async () => {
       const metadata = await this.#assertExistingPath(filePath);
-      const handle = await openFile(filePath, "r");
+      const handle = await openFile(filePath, readOnlyFlags);
       try {
         const head = Buffer.alloc(Math.min(metadata.size, maxBytes));
         const { bytesRead } = await handle.read(head, 0, head.length, 0);
@@ -158,7 +167,7 @@ export class LocalEvidenceStorage implements EvidenceStorage {
       } finally {
         await handle.close();
       }
-    });
+    }));
   }
 
   async promote(tempKey: string, finalKey: string): Promise<void> {
@@ -166,47 +175,53 @@ export class LocalEvidenceStorage implements EvidenceStorage {
     assertNamespace(finalKey, "files");
     const temporaryPath = resolveKey(this.#root, tempKey);
     const finalPath = resolveKey(this.#root, finalKey);
-    await this.#withStorageError(async () => {
+    await this.#runExclusive(() => this.#withStorageError(async () => {
       await this.#assertExistingPath(temporaryPath);
       await this.#ensureFinalParent(finalPath);
       await this.#assertSafePath(finalPath, true);
       await rename(temporaryPath, finalPath);
-    });
+    }));
   }
 
   async open(finalKey: string): Promise<Readable> {
     assertNamespace(finalKey, "files");
     const filePath = resolveKey(this.#root, finalKey);
-    return this.#withStorageError(async () => {
+    return this.#runExclusive(() => this.#withStorageError(async () => {
       await this.#assertExistingPath(filePath);
-      const file = createReadStream(filePath);
+      const handle = await openFile(filePath, readOnlyFlags);
+      const file = handle.createReadStream();
       const output = new PassThrough();
       file.once("error", () => output.destroy(new EvidenceStorageUnavailableError()));
       file.pipe(output);
       return output;
-    });
+    }));
   }
 
   async remove(key: string): Promise<void> {
     const filePath = resolveKey(this.#root, key);
-    await this.#withStorageError(async () => {
+    await this.#runExclusive(() => this.#withStorageError(async () => {
       await this.#assertSafePath(filePath, true);
       await rm(filePath, { force: true });
-    });
+    }));
   }
 
   async exists(key: string): Promise<boolean> {
     const filePath = resolveKey(this.#root, key);
-    return this.#withStorageError(async () => (await this.#assertSafePath(filePath, true)) !== undefined);
+    return this.#runExclusive(() => this.#withStorageError(
+      async () => (await this.#assertSafePath(filePath, true)) !== undefined,
+    ));
   }
 
   async *listFinalKeys(): AsyncIterable<string> {
-    try {
+    const keys = await this.#runExclusive(() => this.#withStorageError(async () => {
       await this.#assertDirectory(this.#finalRoot);
-      yield* this.#listFiles(this.#finalRoot);
-    } catch (error) {
-      throw unavailable(error);
-    }
+      const finalKeys: string[] = [];
+      for await (const key of this.#listFiles(this.#finalRoot)) {
+        finalKeys.push(key);
+      }
+      return finalKeys;
+    }));
+    yield* keys;
   }
 
   async *#listFiles(directory: string): AsyncIterable<string> {
@@ -231,6 +246,15 @@ export class LocalEvidenceStorage implements EvidenceStorage {
     }
   }
 
+  #runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#operationTail.then(operation, operation);
+    this.#operationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
   async #ensureRoot(): Promise<void> {
     try {
       await this.#assertDirectory(this.#root);
@@ -238,9 +262,10 @@ export class LocalEvidenceStorage implements EvidenceStorage {
       if (!isMissing(error)) {
         throw error;
       }
-      await mkdir(this.#root, { recursive: true });
+      await mkdir(this.#root, { recursive: true, mode: privateDirectoryMode });
       await this.#assertDirectory(this.#root);
     }
+    await this.#restrictDirectory(this.#root);
   }
 
   async #ensureDirectory(directory: string): Promise<void> {
@@ -250,9 +275,10 @@ export class LocalEvidenceStorage implements EvidenceStorage {
       if (!isMissing(error)) {
         throw error;
       }
-      await mkdir(directory);
+      await mkdir(directory, { mode: privateDirectoryMode });
       await this.#assertDirectory(directory);
     }
+    await this.#restrictDirectory(directory);
   }
 
   async #ensureFinalParent(finalPath: string): Promise<void> {
@@ -305,6 +331,12 @@ export class LocalEvidenceStorage implements EvidenceStorage {
       throw new EvidenceStorageUnavailableError();
     }
     return metadata;
+  }
+
+  async #restrictDirectory(directory: string): Promise<void> {
+    if (process.platform !== "win32") {
+      await chmod(directory, privateDirectoryMode);
+    }
   }
 }
 

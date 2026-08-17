@@ -3,12 +3,34 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EvidenceSizeLimitError,
   EvidenceStorageUnavailableError,
 } from "../../src/evidences/evidences.storage.js";
 import { LocalEvidenceStorage } from "../../src/evidences/evidences.local-storage.js";
+
+const readdirControl = vi.hoisted(() => ({
+  blockedPath: "",
+  release: undefined as undefined | (() => void),
+  started: undefined as undefined | (() => void),
+  wait: undefined as undefined | Promise<void>,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const originalReaddir = actual.readdir;
+  return {
+    ...actual,
+    readdir: (...args: Parameters<typeof originalReaddir>) => {
+      if (args[0] === readdirControl.blockedPath) {
+        readdirControl.started?.();
+        return readdirControl.wait?.then(() => originalReaddir(...args)) ?? originalReaddir(...args);
+      }
+      return originalReaddir(...args);
+    },
+  };
+});
 
 let fixtureRoot: string;
 let outsideRoot: string;
@@ -69,6 +91,44 @@ describe("LocalEvidenceStorage", () => {
       path.join(fixtureRoot, "tmp"),
     );
     await expect(readFile(path.join(fixtureRoot, ...temporary.tempKey.split("/")))).resolves.toEqual(content);
+  });
+
+  it("serializes concurrent adapter filesystem operations", async () => {
+    await storage.initialize(new Date(), 30);
+    const finalKey = "files/serialized.pdf";
+    await writeFile(path.join(fixtureRoot, "files", "serialized.pdf"), "content");
+    readdirControl.blockedPath = path.join(fixtureRoot, "tmp");
+    readdirControl.wait = new Promise<void>((resolve) => {
+      readdirControl.release = resolve;
+    });
+    const readdirStarted = new Promise<void>((resolve) => {
+      readdirControl.started = resolve;
+    });
+
+    const initializing = storage.initialize(new Date(), 30);
+    await readdirStarted;
+    let removalFinished = false;
+    const removing = storage.remove(finalKey).then(() => {
+      removalFinished = true;
+    });
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      expect(removalFinished).toBe(false);
+    } finally {
+      readdirControl.release?.();
+      await Promise.allSettled([initializing, removing]);
+      readdirControl.blockedPath = "";
+      readdirControl.release = undefined;
+      readdirControl.started = undefined;
+      readdirControl.wait = undefined;
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("sets private POSIX modes on storage directories", async () => {
+    await storage.initialize(new Date(), 30);
+
+    expect((await stat(path.join(fixtureRoot, "tmp"))).mode & 0o777).toBe(0o700);
+    expect((await stat(path.join(fixtureRoot, "files"))).mode & 0o777).toBe(0o700);
   });
 
   it("accepts a temporary upload exactly at the byte limit", async () => {
