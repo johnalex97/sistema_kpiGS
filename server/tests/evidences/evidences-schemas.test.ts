@@ -39,6 +39,8 @@ describe("evidence request schemas", () => {
 
   it("requires a version and one mutable field for evidence updates", () => {
     expect(updateEvidenceSchema.safeParse({ version: 1 }).success).toBe(false);
+    expect(updateEvidenceSchema.safeParse({ version: 1, description: undefined }).success).toBe(false);
+    expect(updateEvidenceSchema.safeParse({ version: 1, accessLevel: undefined }).success).toBe(false);
     expect(updateEvidenceSchema.safeParse({ description: "Cambio" }).success).toBe(false);
     expect(updateEvidenceSchema.parse({ version: 2, description: "  Cambio  " })).toMatchObject({
       version: 2,

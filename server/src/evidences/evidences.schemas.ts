@@ -44,9 +44,12 @@ export const updateEvidenceSchema = z
     accessLevel: evidenceAccessLevelSchema.optional(),
   })
   .strict()
-  .refine((value) => Object.keys(value).some((key) => key !== "version"), {
+  .refine(
+    (value) => value.description !== undefined || value.accessLevel !== undefined,
+    {
     message: "Debe enviar al menos un campo editable",
-  });
+    },
+  );
 
 export const archiveEvidenceSchema = z
   .object({

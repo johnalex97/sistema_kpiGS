@@ -67,4 +67,24 @@ describe("mapEvidence", () => {
       sizeBytes: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
     } as EvidenceRecord)).toThrow(/safe integer/i);
   });
+
+  it("rejects persisted file metadata outside the canonical evidence pairs", () => {
+    expect(() => mapEvidence({
+      ...evidenceRecord(),
+      mimeType: "text/plain",
+      fileExtension: "exe",
+    } as EvidenceRecord)).toThrow(/invariant/i);
+    expect(() => mapEvidence({
+      ...evidenceRecord(),
+      mimeType: "image/jpeg",
+      fileExtension: "png",
+    } as EvidenceRecord)).toThrow(/invariant/i);
+  });
+
+  it("rejects the reserved CLIENT access level from public output", () => {
+    expect(() => mapEvidence({
+      ...evidenceRecord(),
+      accessLevel: "CLIENT",
+    } as EvidenceRecord)).toThrow(/CLIENT access/i);
+  });
 });

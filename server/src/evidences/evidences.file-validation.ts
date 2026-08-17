@@ -76,6 +76,15 @@ function findFormat(mimeType: string, suffix: string): EvidenceFormatDefinition 
   );
 }
 
+export function isCanonicalEvidenceFormat(
+  format: { mimeType: string; extension: string },
+): format is EvidenceFormat {
+  return formats.some(
+    (candidate) =>
+      candidate.mimeType === format.mimeType && candidate.extension === format.extension,
+  );
+}
+
 function stripUnsafeCharacters(name: string): string {
   return Array.from(name)
     .filter((character) => character !== "\\" && character !== "/" && !isControlCharacter(character))

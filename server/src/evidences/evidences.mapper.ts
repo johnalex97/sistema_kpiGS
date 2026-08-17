@@ -1,3 +1,4 @@
+import { isCanonicalEvidenceFormat } from "./evidences.file-validation.js";
 import type { EvidencePublic } from "./evidences.types.js";
 import type { EvidenceRecord } from "./evidences.repository.types.js";
 
@@ -28,6 +29,14 @@ function mapSizeBytes(sizeBytes: bigint): number {
   return Number(sizeBytes);
 }
 
+function mapFormat(record: EvidenceRecord): Pick<EvidencePublic, "mimeType" | "fileExtension"> {
+  const format = { mimeType: record.mimeType, extension: record.fileExtension };
+  if (!isCanonicalEvidenceFormat(format)) {
+    return invariant("file metadata is not a canonical evidence format");
+  }
+  return { mimeType: format.mimeType, fileExtension: format.extension };
+}
+
 function mapAccessLevel(accessLevel: EvidenceRecord["accessLevel"]): EvidencePublic["accessLevel"] {
   if (accessLevel === "INTERNAL" || accessLevel === "TECHNICIAN") return accessLevel;
   return invariant("CLIENT access is not public in phase 9");
@@ -37,8 +46,7 @@ export function mapEvidence(record: EvidenceRecord): EvidencePublic {
   return {
     id: record.id,
     originalName: record.originalName,
-    mimeType: record.mimeType as EvidencePublic["mimeType"],
-    fileExtension: record.fileExtension as EvidencePublic["fileExtension"],
+    ...mapFormat(record),
     sizeBytes: mapSizeBytes(record.sizeBytes),
     description: record.description,
     accessLevel: mapAccessLevel(record.accessLevel),
