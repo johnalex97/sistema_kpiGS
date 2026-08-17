@@ -140,10 +140,13 @@ describe("evidence service permissions", () => {
   });
 
   it("does not let a technician profile restrict a management actor", async () => {
-    const service = serviceWith();
-    const result = await service.createEvidence(order, { ...upload(), accessLevel: "INTERNAL" }, manager());
+    const mutation = mutationRepository();
+    await serviceWith({ mutation }).createEvidence(order, { ...upload(), accessLevel: "INTERNAL" }, manager());
 
-    expect(result.accessLevel).toBe("TECHNICIAN");
+    expect(mutation.createEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ accessLevel: "INTERNAL" }),
+      expect.anything(), expect.any(Date), expect.any(Function),
+    );
   });
 
   it("forces a technician upload to TECHNICIAN", async () => {
@@ -257,6 +260,31 @@ describe("evidence service lifecycle", () => {
     expect(logOperationalError).toHaveBeenCalledWith("EVIDENCE_STORAGE_CLEANUP_FAILED", manager().requestId);
     expect(JSON.stringify(logOperationalError.mock.calls)).not.toContain(tempKey);
     expect(JSON.stringify(logOperationalError.mock.calls)).not.toContain(finalKey);
+  });
+
+  it("preserves the public storage failure and cleans both keys when the cleanup logger fails", async () => {
+    const logOperationalError = vi.fn(() => {
+      throw new Error("logger leaked C:/private/evidences/files/secret.jpg");
+    });
+    const fileStorage = storage({
+      remove: vi.fn(async () => {
+        throw new Error("remove leaked C:/private/evidences/files/secret.jpg");
+      }),
+    });
+    const mutation = mutationRepository({
+      createEvidence: async (_input, _actor, _now, promote) => {
+        await promote();
+        throw new Error("database audit failed");
+      },
+    });
+
+    await expect(serviceWith({ fileStorage, mutation, logOperationalError }).createEvidence(order, upload(), manager()))
+      .rejects.toMatchObject({ statusCode: 503, code: "EVIDENCE_STORAGE_UNAVAILABLE" });
+    expect(fileStorage.remove).toHaveBeenNthCalledWith(1, finalKey);
+    expect(fileStorage.remove).toHaveBeenNthCalledWith(2, tempKey);
+    expect(logOperationalError).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(logOperationalError.mock.calls)).not.toContain(finalKey);
+    expect(JSON.stringify(logOperationalError.mock.calls)).not.toContain(tempKey);
   });
 
   it("authorizes metadata before opening and maps a missing physical file to 503", async () => {

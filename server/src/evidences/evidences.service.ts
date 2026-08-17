@@ -142,11 +142,19 @@ export function createEvidencesService({
   createId = randomUUID,
   logOperationalError,
 }: EvidencesServiceDependencies): EvidenceService {
+  function safelyLogCleanupFailure(actor: EvidenceActorContext): void {
+    try {
+      logOperationalError?.("EVIDENCE_STORAGE_CLEANUP_FAILED", actor.requestId);
+    } catch {
+      // Logging is observational: it must never alter evidence cleanup or the public error.
+    }
+  }
+
   async function safelyRemove(key: string, actor: EvidenceActorContext): Promise<void> {
     try {
       await storage.remove(key);
     } catch {
-      logOperationalError?.("EVIDENCE_STORAGE_CLEANUP_FAILED", actor.requestId);
+      safelyLogCleanupFailure(actor);
     }
   }
 
