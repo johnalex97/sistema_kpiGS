@@ -4,6 +4,16 @@ import type { TemporaryEvidence } from "./evidences.storage.js";
 
 type EvidenceAccessLevel = Exclude<NivelAccesoEvidencia, "CLIENT">;
 
+export type EvidenceOperationalEvent =
+  | "EVIDENCE_DOWNLOAD_AUDIT_FAILED"
+  | "EVIDENCE_STORAGE_CLEANUP_FAILED"
+  | "EVIDENCE_STORAGE_UNAVAILABLE";
+
+export type EvidenceOperationalLogger = (
+  event: EvidenceOperationalEvent,
+  requestId: string,
+) => void;
+
 export type EvidenceResource =
   | { type: "ORDER"; id: string }
   | { type: "ACTIVITY"; id: string };

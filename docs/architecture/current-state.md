@@ -121,14 +121,15 @@ Backend, ejecutado desde `server/`:
 | `npm run typecheck` | Correcto |
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 8 pruebas de reconciliación pura |
-| `npm run evidences:verify` | No ejecutable en este worktree sin modificar datos: falta la raíz local `storage/evidences`; el comando terminó con error operativo distinto de `2` y no creó ni eliminó archivos |
-| `npm run test` | Correcto; 239 pruebas unitarias y de contrato |
-| `npm run test:db` | Correcto; 230 pruebas HTTP y PostgreSQL en el esquema `test` aislado (con advertencias deprecadas de `pg`) |
+| `npm run evidences:verify` | Correcto con una raíz preaprovisionada: `Matched 0`, `Orphan files 0`, `Missing files 0`; una raíz explícita ausente terminó con código `1`, mensaje operacional redactado y sin crearla |
+| `npm run test` | Correcto; 362 pruebas superadas y 1 omitida en 32 archivos |
+| `npm run test:db` | Correcto; 261 pruebas HTTP y PostgreSQL en 21 archivos sobre el esquema `test` aislado (con advertencias deprecadas de `pg`) |
 | `npm run build` | Correcto |
 | `npm run db:format`, `db:validate`, `db:generate` | Correctos; schema válido y cliente regenerado |
-| Seed | El `db:seed` literal requiere una contraseña administrativa local válida; el seed sin cuenta administrativa se repitió con conteos idénticos `3/3/2/3/2/2` (roles/técnicos/clientes/órdenes/actividades/reincidencias) |
-| `npm run db:verify` | 32 tablas de dominio, 33 checks, 18 índices y 2 secuencias verificados |
-| `npx prisma migrate status` | Correcto; siete migraciones aplicadas |
+| Seed | El seed sin cuenta administrativa se ejecutó dos veces en `public` y dos en `test`, con conteos idénticos: 3 roles, 20 permisos, 41 asignaciones rol-permiso, 3 técnicos, 2 clientes, 3 órdenes, 2 actividades y 2 reincidencias |
+| `npm run db:verify` | 32 tablas de dominio, 37 checks, 21 índices y 2 secuencias verificados |
+| `npx prisma migrate status` | Correcto; nueve migraciones aplicadas en `public` y `test` |
+| Smoke compilado de evidencias | Carga 201; descarga 200; archivado 200; exceso 413; contenido disfrazado 422; técnico ajeno 404; archivo físico ausente 503; sin exponer claves ni raíces privadas |
 | Smoke compilado de actividades | Health 200; catálogo 200; pendiente 201; iniciar/pausar/reanudar/completar 200; manual 201; solapamiento 409; participante 403; ajuste y detalle 200; versiones `1→2→3→4→5` |
 | Flujo auth compilado | Login 200, me 200 y logout 204 |
 | API de técnicos | 7 endpoints con ciclo completo |

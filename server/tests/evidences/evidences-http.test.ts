@@ -2,6 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { Writable } from "node:stream";
+import pino from "pino";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seedDatabase } from "../../prisma/seed.js";
@@ -9,6 +11,7 @@ import { createApp } from "../../src/app.js";
 import { hashPassword } from "../../src/auth/password.js";
 import { parseEnvironment } from "../../src/config/env.js";
 import { LocalEvidenceStorage } from "../../src/evidences/evidences.local-storage.js";
+import type { EvidenceStorage } from "../../src/evidences/evidences.storage.js";
 import { silentLogger } from "../../src/utils/logger.js";
 import { createEvidencesReadFixture, removeEvidencesReadFixture, type EvidencesReadFixture } from "../database/evidences-test-data.js";
 import { database, disconnectTestDatabase } from "../database/database-test-context.js";
@@ -205,5 +208,62 @@ describe("evidences HTTP", () => {
     const absent = await admin.get(`/api/v1/evidences/${randomUUID()}/download`).expect(404);
     const archived = await admin.get(`/api/v1/evidences/${fixture.orderArchivedEvidenceId}/download`).expect(404);
     expect({ status: absent.status, body: { ...absent.body, meta: { requestId: "" } } }).toEqual({ status: archived.status, body: { ...archived.body, meta: { requestId: "" } } });
+  });
+
+  it("correlates a cleanup failure after validation without mutating the public response or logging storage details", async () => {
+    const logLines: string[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, callback) {
+        logLines.push(String(chunk));
+        callback();
+      },
+    });
+    const logger = pino({ level: "error", base: null, timestamp: false }, destination);
+    const temporaryKey = "tmp/secret-upload.upload";
+    const cleanupStorage: EvidenceStorage = {
+      initialize: async () => ({ removedTemporaries: 0 }),
+      writeTemporary: async (source) => {
+        for await (const chunk of source) {
+          void chunk;
+        }
+        return { tempKey: temporaryKey, sizeBytes: disguised.length, checksumSha256: "a".repeat(64) };
+      },
+      readHead: async () => disguised,
+      promote: async () => undefined,
+      open: async () => { throw new Error("not used"); },
+      remove: async () => { throw new Error(`cannot remove C:/private/evidences/${temporaryKey}`); },
+      exists: async () => false,
+      async *listFinalKeys() {},
+    };
+    const loggingApp = createApp({ env: envFor(storageRoot), logger, database, evidenceStorage: cleanupStorage });
+    const admin = await agentFor(users.admin, loggingApp);
+    const requestId = "70000000-0000-4000-8000-000000000099";
+
+    const response = await admin
+      .post(`/api/v1/orders/${fixture.activeOrderId}/evidences`)
+      .set("Origin", allowedOrigin)
+      .set("X-Request-Id", requestId)
+      .attach("file", disguised, { filename: "disguised.pdf", contentType: "application/pdf" })
+      .expect(422);
+
+    expect(response.body).toMatchObject({
+      success: false,
+      errors: [{ code: "INVALID_EVIDENCE_FILE" }],
+      meta: { requestId },
+    });
+    const operationalLog = logLines
+      .flatMap((line) => line.trim().split("\n"))
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.code === "EVIDENCE_STORAGE_CLEANUP_FAILED");
+    expect(operationalLog).toMatchObject({
+      event: "EVIDENCE_STORAGE_CLEANUP_FAILED",
+      code: "EVIDENCE_STORAGE_CLEANUP_FAILED",
+      requestId,
+    });
+    expect(operationalLog).not.toHaveProperty("err");
+    expect(operationalLog).not.toHaveProperty("cause");
+    expect(JSON.stringify(operationalLog)).not.toContain(temporaryKey);
+    expect(JSON.stringify(operationalLog)).not.toContain("C:/private/evidences");
   });
 });

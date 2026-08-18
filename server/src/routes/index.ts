@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { Logger } from "pino";
 import { createAuthRouter } from "../auth/auth.routes.js";
 import { createAuthRepository } from "../auth/auth.repository.js";
 import { createAuthService } from "../auth/auth.service.js";
@@ -16,6 +17,7 @@ export function createApiRouter(
   env: Environment,
   database: PrismaClient,
   evidenceStorage: EvidenceStorage,
+  logger: Logger,
 ) {
   const router = Router();
   const authService = createAuthService({
@@ -37,6 +39,6 @@ export function createApiRouter(
   );
   router.use("/orders", createOrdersRouter(env, database, authService));
   router.use(createActivitiesRouter(env, database, authService));
-  router.use(createEvidencesRouter(env, database, authService, evidenceStorage));
+  router.use(createEvidencesRouter(env, database, authService, evidenceStorage, logger));
   return router;
 }

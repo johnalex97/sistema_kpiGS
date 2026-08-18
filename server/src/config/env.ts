@@ -177,7 +177,7 @@ export function parseEnvironment(input: EnvironmentInput): Environment {
       )
     ) {
       throw new Error(
-        "ConfiguraciÃ³n de entorno invÃ¡lida: EVIDENCE_STORAGE_PATH debe ser una ruta absoluta y privada en producciÃ³n",
+        "Configuración de entorno inválida: EVIDENCE_STORAGE_PATH debe ser una ruta absoluta y privada en producción",
       );
     }
   }

@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
-import { InvalidEvidenceFileError, detectEvidenceFormat } from "./evidences.file-validation.js";
+import {
+  InvalidEvidenceFileError,
+  detectEvidenceFormat,
+  normalizeDownloadName,
+} from "./evidences.file-validation.js";
 import { mapEvidence } from "./evidences.mapper.js";
 import type {
   EvidenceFailureKind,
@@ -16,6 +20,8 @@ import type {
   ArchiveEvidenceInput,
   EvidenceActorContext,
   EvidenceListFilters,
+  EvidenceOperationalEvent,
+  EvidenceOperationalLogger,
   EvidencePublic,
   EvidenceResource,
   IncomingEvidenceUpload,
@@ -40,7 +46,7 @@ export interface EvidencesServiceDependencies {
   storage: EvidenceStorage;
   now?: () => Date;
   createId?: () => string;
-  logOperationalError?: (event: "EVIDENCE_STORAGE_CLEANUP_FAILED", requestId: string) => void;
+  logOperationalError?: EvidenceOperationalLogger;
 }
 
 const statusByKind: Record<EvidenceFailureKind, number> = {
@@ -142,9 +148,12 @@ export function createEvidencesService({
   createId = randomUUID,
   logOperationalError,
 }: EvidencesServiceDependencies): EvidenceService {
-  function safelyLogCleanupFailure(actor: EvidenceActorContext): void {
+  function safelyLogOperationalError(
+    event: EvidenceOperationalEvent,
+    actor: EvidenceActorContext,
+  ): void {
     try {
-      logOperationalError?.("EVIDENCE_STORAGE_CLEANUP_FAILED", actor.requestId);
+      logOperationalError?.(event, actor.requestId);
     } catch {
       // Logging is observational: it must never alter evidence cleanup or the public error.
     }
@@ -154,7 +163,7 @@ export function createEvidencesService({
     try {
       await storage.remove(key);
     } catch {
-      safelyLogCleanupFailure(actor);
+      safelyLogOperationalError("EVIDENCE_STORAGE_CLEANUP_FAILED", actor);
     }
   }
 
@@ -184,12 +193,16 @@ export function createEvidencesService({
           head,
           sizeBytes: upload.file.sizeBytes,
         });
+        const normalizedOriginalName = normalizeDownloadName(
+          upload.file.originalName,
+          format.extension,
+        );
         const timestamp = now();
         const storedName = `${createId()}.${format.extension}`;
         finalKey = `files/${timestamp.getUTCFullYear()}/${String(timestamp.getUTCMonth() + 1).padStart(2, "0")}/${storedName}`;
         const result = await mutationRepository.createEvidence({
           resource,
-          originalName: upload.file.originalName,
+          originalName: normalizedOriginalName,
           storedName,
           mimeType: format.mimeType,
           fileExtension: format.extension,
@@ -206,7 +219,11 @@ export function createEvidencesService({
         persisted = true;
         return mapEvidence(result.evidence);
       } catch (error) {
-        throw mapStorageOrValidationError(error);
+        const publicError = mapStorageOrValidationError(error);
+        if (publicError.code === "EVIDENCE_STORAGE_UNAVAILABLE") {
+          safelyLogOperationalError("EVIDENCE_STORAGE_UNAVAILABLE", actor);
+        }
+        throw publicError;
       } finally {
         if (promoted && !persisted && finalKey !== null) {
           await safelyRemove(finalKey, actor);
@@ -232,7 +249,11 @@ export function createEvidencesService({
       try {
         return { evidence: mapEvidence(record), stream: await storage.open(record.storageKey) };
       } catch (error) {
-        throw mapStorageOrValidationError(error);
+        const publicError = mapStorageOrValidationError(error);
+        if (publicError.code === "EVIDENCE_STORAGE_UNAVAILABLE") {
+          safelyLogOperationalError("EVIDENCE_STORAGE_UNAVAILABLE", actor);
+        }
+        throw publicError;
       }
     },
 

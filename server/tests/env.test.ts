@@ -72,7 +72,9 @@ describe("parseEnvironment", () => {
         AUTH_COOKIE_SECURE: "true",
         EVIDENCE_STORAGE_PATH: "relative",
       }),
-    ).toThrow("EVIDENCE_STORAGE_PATH");
+    ).toThrow(
+      "Configuración de entorno inválida: EVIDENCE_STORAGE_PATH debe ser una ruta absoluta y privada en producción",
+    );
   });
 
   it("rejects protected evidence paths when started from the repository root", () => {

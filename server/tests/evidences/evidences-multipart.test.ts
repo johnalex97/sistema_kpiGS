@@ -3,6 +3,7 @@ import type { Request } from "express";
 import { describe, expect, it, vi } from "vitest";
 import { createEvidenceMultipartParser } from "../../src/evidences/evidences.multipart.js";
 import { EvidenceSizeLimitError, type EvidenceStorage } from "../../src/evidences/evidences.storage.js";
+import type { EvidenceOperationalLogger } from "../../src/evidences/evidences.types.js";
 
 const maxBytes = 10;
 
@@ -36,9 +37,12 @@ function multipart(
   return { body: Buffer.concat(lines), contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
-function requestFor(payload: { body: Buffer; contentType: string }): PassThrough & Request {
+function requestFor(
+  payload: { body: Buffer; contentType: string },
+  requestId = "request-9",
+): PassThrough & Request {
   const request = new PassThrough() as PassThrough & Request;
-  Object.assign(request, { headers: { "content-type": payload.contentType } });
+  Object.assign(request, { headers: { "content-type": payload.contentType }, requestId });
   return request;
 }
 
@@ -60,11 +64,10 @@ function storage(overrides: Partial<EvidenceStorage> = {}): EvidenceStorage {
   };
 }
 
-function parserFor(fileStorage: EvidenceStorage, logOperationalError?: (event: "EVIDENCE_STORAGE_CLEANUP_FAILED", requestId: string) => void) {
+function parserFor(fileStorage: EvidenceStorage, logOperationalError?: EvidenceOperationalLogger) {
   return createEvidenceMultipartParser({
     storage: fileStorage,
     maxBytes,
-    requestId: "request-9",
     ...(logOperationalError === undefined ? {} : { logOperationalError }),
   });
 }
@@ -134,10 +137,46 @@ describe("evidence multipart parser", () => {
   });
 
   it("maps Busboy's file-size limit to 413 and cleans the temporary upload", async () => {
-    const fileStorage = storage();
+    const fileStorage = storage({
+      writeTemporary: vi.fn(async (source) => {
+        source.resume();
+        return {
+          tempKey: "tmp/upload.upload",
+          sizeBytes: maxBytes + 1,
+          checksumSha256: "a".repeat(64),
+        };
+      }),
+    });
 
     await expect(parsePayload(fileStorage, multipart([{ kind: "file", name: "file", value: Buffer.alloc(maxBytes + 1) }]))).rejects
-      .toMatchObject({ statusCode: 413, code: "EVIDENCE_TOO_LARGE" });
+      .toMatchObject({
+        statusCode: 413,
+        code: "EVIDENCE_TOO_LARGE",
+        message: "El archivo de evidencia excede el tamaño permitido",
+      });
+    expect(fileStorage.remove).toHaveBeenCalledTimes(1);
+    expect(fileStorage.remove).toHaveBeenCalledWith("tmp/upload.upload");
+  });
+
+  it("accepts a file exactly at the storage byte limit without truncating it", async () => {
+    const fileStorage = storage();
+
+    await expect(parsePayload(fileStorage, multipart([
+      { kind: "file", name: "file", value: Buffer.alloc(maxBytes), filename: "exact.jpg" },
+    ]))).resolves.toMatchObject({
+      file: { originalName: "exact.jpg", sizeBytes: maxBytes },
+    });
+    expect(fileStorage.remove).not.toHaveBeenCalled();
+  });
+
+  it("decodes a real UTF-8 multipart filename without mojibake", async () => {
+    const fileStorage = storage();
+
+    await expect(parsePayload(fileStorage, multipart([
+      { kind: "file", name: "file", value: "jpeg", filename: "evidencia-niño.jpg" },
+    ]))).resolves.toMatchObject({
+      file: { originalName: "evidencia-niño.jpg" },
+    });
   });
 
   it("rejects Busboy's fields limit", async () => {
@@ -181,7 +220,7 @@ describe("evidence multipart parser", () => {
       }),
     });
 
-    const request = requestFor(payload);
+    const request = requestFor(payload, "request-real");
     const operation = parserFor(fileStorage).parse(request);
     for (let offset = 0; offset < payload.body.length; offset += 7) {
       request.write(payload.body.subarray(offset, offset + 7));
@@ -204,6 +243,22 @@ describe("evidence multipart parser", () => {
     await expect(parsePayload(fileStorage, multipart([{ kind: "file", name: "file", value: "jpeg" }]))).rejects
       .toMatchObject({ statusCode: 413, code: "EVIDENCE_TOO_LARGE" });
     expect(fileStorage.remove).not.toHaveBeenCalled();
+  });
+
+  it("returns a valid UTF-8 public message when evidence storage is unavailable", async () => {
+    const fileStorage = storage({
+      writeTemporary: vi.fn(async () => {
+        throw new Error("C:/private/evidences is unavailable");
+      }),
+    });
+
+    await expect(parsePayload(fileStorage, multipart([
+      { kind: "file", name: "file", value: "jpeg" },
+    ]))).rejects.toMatchObject({
+      statusCode: 503,
+      code: "EVIDENCE_STORAGE_UNAVAILABLE",
+      message: "El almacenamiento de evidencias no está disponible",
+    });
   });
 
   it("rejects a client abort, destroys the in-flight parser, and cleans exactly once after storage resolves", async () => {
@@ -257,7 +312,7 @@ describe("evidence multipart parser", () => {
     ]);
     const marker = Buffer.from('Content-Disposition: form-data; name="unexpected"');
     const secondHeader = payload.body.indexOf(marker);
-    const request = requestFor(payload);
+    const request = requestFor(payload, "request-real");
     const operation = parserFor(fileStorage, logOperationalError).parse(request);
 
     request.write(payload.body.subarray(0, secondHeader));
@@ -265,8 +320,12 @@ describe("evidence multipart parser", () => {
     request.end(payload.body.subarray(secondHeader));
 
     await expect(operation).rejects
-      .toMatchObject({ statusCode: 400, code: "INVALID_EVIDENCE_MULTIPART" });
-    expect(logOperationalError).toHaveBeenCalledWith("EVIDENCE_STORAGE_CLEANUP_FAILED", "request-9");
+      .toMatchObject({
+        statusCode: 400,
+        code: "INVALID_EVIDENCE_MULTIPART",
+        message: "La carga multipart no es válida",
+      });
+    expect(logOperationalError).toHaveBeenCalledWith("EVIDENCE_STORAGE_CLEANUP_FAILED", "request-real");
     expect(JSON.stringify(logOperationalError.mock.calls)).not.toContain("tmp/upload.upload");
   });
 });

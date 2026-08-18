@@ -5,7 +5,12 @@ import { normalizeDownloadName } from "./evidences.file-validation.js";
 import { archiveEvidenceSchema, evidenceIdSchema, evidenceListQuerySchema, evidenceResourceParamsSchema, updateEvidenceSchema } from "./evidences.schemas.js";
 import type { EvidenceService } from "./evidences.service.js";
 import type { EvidenceMultipartParser } from "./evidences.multipart.js";
-import type { EvidenceActorContext, EvidenceResource } from "./evidences.types.js";
+import type {
+  EvidenceActorContext,
+  EvidenceOperationalEvent,
+  EvidenceOperationalLogger,
+  EvidenceResource,
+} from "./evidences.types.js";
 
 function validationError(error: ZodError): ApiError {
   return new ApiError(400, "Los datos enviados no son válidos", "VALIDATION_ERROR", error.issues.map((issue) => ({ field: issue.path.join("."), code: "VALIDATION_ERROR", message: issue.message })));
@@ -29,14 +34,49 @@ function success(request: Request, response: Response, status: number, message: 
   response.status(status).json({ success: true, message, data, errors: [], meta: { requestId: request.requestId } });
 }
 
+const evidenceDownloadHeaders = [
+  "Content-Type",
+  "Content-Length",
+  "Content-Disposition",
+  "X-Content-Type-Options",
+  "Cache-Control",
+] as const;
+
+function downloadStorageUnavailable(): ApiError {
+  return new ApiError(
+    503,
+    "El almacenamiento de evidencias no está disponible",
+    "EVIDENCE_STORAGE_UNAVAILABLE",
+  );
+}
+
 function attachmentHeader(originalName: string, extension: "jpg" | "png" | "webp" | "pdf"): string {
-  const name = normalizeDownloadName(originalName, extension);
+  let name: string;
+  try {
+    name = normalizeDownloadName(originalName, extension);
+  } catch {
+    name = `evidence.${extension}`;
+  }
   const fallback = name.replace(/[^\x20-\x7e]/g, "_").replace(/[\\"]/g, "_");
-  const encoded = encodeURIComponent(name).replace(/['()]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
-export function createEvidencesController(service: EvidenceService, multipart: EvidenceMultipartParser) {
+export function createEvidencesController(
+  service: EvidenceService,
+  multipart: EvidenceMultipartParser,
+  logOperationalError?: EvidenceOperationalLogger,
+) {
+  const safelyLogOperationalError = (
+    event: EvidenceOperationalEvent,
+    requestId: string,
+  ): void => {
+    try {
+      logOperationalError?.(event, requestId);
+    } catch {
+      // Observational logging must never alter the HTTP response.
+    }
+  };
   const upload = (type: "ORDER" | "ACTIVITY") => async (req: Request, res: Response, next: NextFunction) => {
     try {
       const target = resource(req, type);
@@ -73,13 +113,20 @@ export function createEvidencesController(service: EvidenceService, multipart: E
           "Cache-Control": "private, no-store",
         });
         stream.once("error", (error) => {
-          if (res.headersSent) res.destroy(error);
-          else next(error);
+          safelyLogOperationalError("EVIDENCE_STORAGE_UNAVAILABLE", req.requestId);
+          if (res.headersSent) {
+            res.destroy(error);
+            return;
+          }
+          for (const header of evidenceDownloadHeaders) {
+            res.removeHeader(header);
+          }
+          next(downloadStorageUnavailable());
         });
         stream.pipe(res);
         if (context.permissions.includes("EVIDENCES_MANAGE")) {
           void service.recordDownload(evidenceId, context).catch(() => {
-            try { req.log?.error({ requestId: req.requestId }, "Evidence download audit failed"); } catch { /* operational logging cannot corrupt a transfer */ }
+            safelyLogOperationalError("EVIDENCE_DOWNLOAD_AUDIT_FAILED", req.requestId);
           });
         }
       } catch (error) { next(error); }

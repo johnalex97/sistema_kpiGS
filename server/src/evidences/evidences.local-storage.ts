@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, type Stats } from "node:fs";
-import { chmod, lstat, mkdir, open as openFile, readdir, rename, rm } from "node:fs/promises";
+import { accessSync, constants, lstatSync, type Stats } from "node:fs";
+import { access, chmod, lstat, mkdir, open as openFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough, Readable, Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -45,6 +45,21 @@ function isMissing(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
+function assertPreprovisionedRoot(root: string): void {
+  try {
+    const metadata = lstatSync(root);
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      throw new EvidenceStorageUnavailableError();
+    }
+    accessSync(root, constants.R_OK | constants.W_OK);
+    if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
+      throw new EvidenceStorageUnavailableError();
+    }
+  } catch {
+    throw new EvidenceStorageUnavailableError();
+  }
+}
+
 const privateDirectoryMode = 0o700;
 const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
 const readOnlyFlags = constants.O_RDONLY | noFollowFlag;
@@ -84,10 +99,16 @@ export class LocalEvidenceStorage implements EvidenceStorage {
   readonly #finalRoot: string;
   #operationTail: Promise<void> = Promise.resolve();
 
-  constructor(root: string) {
+  constructor(
+    root: string,
+    private readonly options: { requireExistingRoot?: boolean } = {},
+  ) {
     this.#root = path.resolve(root);
     this.#temporaryRoot = path.join(this.#root, "tmp");
     this.#finalRoot = path.join(this.#root, "files");
+    if (options.requireExistingRoot === true) {
+      assertPreprovisionedRoot(this.#root);
+    }
   }
 
   async initialize(now: Date, tempMaxAgeMinutes: number): Promise<{ removedTemporaries: number }> {
@@ -256,6 +277,15 @@ export class LocalEvidenceStorage implements EvidenceStorage {
   }
 
   async #ensureRoot(): Promise<void> {
+    if (this.options.requireExistingRoot === true) {
+      const metadata = await this.#assertDirectory(this.#root);
+      await access(this.#root, constants.R_OK | constants.W_OK);
+      if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
+        throw new EvidenceStorageUnavailableError();
+      }
+      return;
+    }
+
     try {
       await this.#assertDirectory(this.#root);
     } catch (error) {

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { Logger } from "pino";
 import type { AuthService } from "../auth/auth.service.js";
 import type { Environment } from "../config/env.js";
 import { createAuthenticationMiddleware } from "../middlewares/authentication.middleware.js";
@@ -11,11 +12,36 @@ import { createEvidencesMutationRepository } from "./evidences.mutation.reposito
 import { createEvidencesReadRepository } from "./evidences.read.repository.js";
 import { createEvidencesService } from "./evidences.service.js";
 import type { EvidenceStorage } from "./evidences.storage.js";
+import type { EvidenceOperationalLogger } from "./evidences.types.js";
 
-export function createEvidencesRouter(env: Environment, database: PrismaClient, authService: AuthService, storage: EvidenceStorage) {
+export function createEvidencesRouter(
+  env: Environment,
+  database: PrismaClient,
+  authService: AuthService,
+  storage: EvidenceStorage,
+  logger: Logger,
+) {
   const router = Router();
   const authentication = createAuthenticationMiddleware(authService);
-  const controller = createEvidencesController(createEvidencesService({ readRepository: createEvidencesReadRepository(database), mutationRepository: createEvidencesMutationRepository(database), storage }), createEvidenceMultipartParser({ storage, maxBytes: env.EVIDENCE_MAX_BYTES, requestId: "evidence-multipart" }));
+  const logOperationalError: EvidenceOperationalLogger = (event, requestId) => {
+    try {
+      logger.error({ event, code: event, requestId }, "Evidence operational failure");
+    } catch {
+      // Logging is observational and must never alter evidence handling.
+    }
+  };
+  const service = createEvidencesService({
+    readRepository: createEvidencesReadRepository(database),
+    mutationRepository: createEvidencesMutationRepository(database),
+    storage,
+    logOperationalError,
+  });
+  const multipart = createEvidenceMultipartParser({
+    storage,
+    maxBytes: env.EVIDENCE_MAX_BYTES,
+    logOperationalError,
+  });
+  const controller = createEvidencesController(service, multipart, logOperationalError);
   const read = [authentication, requirePasswordChanged, requirePermission("EVIDENCES_VIEW")] as const;
   const upload = [authentication, requirePasswordChanged, requireAllowedOrigin(env.CORS_ORIGINS), requirePermission("EVIDENCES_UPLOAD")] as const;
   const manage = [authentication, requirePasswordChanged, requireAllowedOrigin(env.CORS_ORIGINS), requirePermission("EVIDENCES_MANAGE")] as const;

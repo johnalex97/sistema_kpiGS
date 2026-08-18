@@ -6,7 +6,11 @@ import {
 import { EvidenceSizeLimitError, EvidenceStorageUnavailableError } from "../../src/evidences/evidences.storage.js";
 import type { EvidenceMutationRepository, EvidenceReadRepository, EvidenceRecord } from "../../src/evidences/evidences.repository.types.js";
 import type { EvidenceStorage } from "../../src/evidences/evidences.storage.js";
-import type { EvidenceActorContext, IncomingEvidenceUpload } from "../../src/evidences/evidences.types.js";
+import type {
+  EvidenceActorContext,
+  EvidenceOperationalLogger,
+  IncomingEvidenceUpload,
+} from "../../src/evidences/evidences.types.js";
 
 const fixedNow = new Date("2026-08-17T12:00:00.000Z");
 const order = { type: "ORDER" as const, id: "10000000-0000-4000-8000-000000000001" };
@@ -103,7 +107,7 @@ function serviceWith(options: {
   read?: EvidenceReadRepository;
   mutation?: EvidenceMutationRepository;
   fileStorage?: EvidenceStorage;
-  logOperationalError?: (event: "EVIDENCE_STORAGE_CLEANUP_FAILED", requestId: string) => void;
+  logOperationalError?: EvidenceOperationalLogger;
 } = {}) {
   return createEvidencesService({
     readRepository: options.read ?? readRepository(),
@@ -201,9 +205,68 @@ describe("evidence service lifecycle", () => {
 
     expect(fileStorage.promote).toHaveBeenCalledWith(tempKey, finalKey);
     expect(mutation.createEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({ storageKey: finalKey, storedName: "40000000-0000-4000-8000-000000000001.jpg", mimeType: "image/jpeg", fileExtension: "jpg" }),
+      expect.objectContaining({ originalName: "photo.jpg", storageKey: finalKey, storedName: "40000000-0000-4000-8000-000000000001.jpg", mimeType: "image/jpeg", fileExtension: "jpg" }),
       expect.anything(), fixedNow, expect.any(Function),
     );
+  });
+
+  it("persists and returns the canonical normalized original filename", async () => {
+    const mutation = mutationRepository({
+      createEvidence: vi.fn(async (input, _actor, _now, promote) => {
+        await promote();
+        return { kind: "CREATED" as const, evidence: { ...record(), originalName: input.originalName } };
+      }),
+    });
+
+    const created = await serviceWith({ mutation }).createEvidence(order, upload(), manager());
+
+    expect(created.originalName).toBe("photo.jpg");
+    expect(mutation.createEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ originalName: "photo.jpg" }),
+      expect.anything(), fixedNow, expect.any(Function),
+    );
+  });
+
+  it("rejects a filename with no stem before promotion or persistence", async () => {
+    const fileStorage = storage({ readHead: vi.fn(async () => Buffer.from("%PDF-1.7\n")) });
+    const mutation = mutationRepository();
+    const invalidUpload: IncomingEvidenceUpload = {
+      ...upload(),
+      file: {
+        ...upload().file,
+        originalName: ".pdf",
+        declaredMimeType: "application/pdf",
+        sizeBytes: 9,
+      },
+    };
+
+    await expect(serviceWith({ fileStorage, mutation }).createEvidence(order, invalidUpload, manager()))
+      .rejects.toMatchObject({ statusCode: 422, code: "INVALID_EVIDENCE_FILE" });
+    expect(fileStorage.promote).not.toHaveBeenCalled();
+    expect(mutation.createEvidence).not.toHaveBeenCalled();
+    expect(fileStorage.remove).toHaveBeenCalledTimes(1);
+    expect(fileStorage.remove).toHaveBeenCalledWith(tempKey);
+  });
+
+  it("normalizes an overlong UTF-8 filename before the database boundary", async () => {
+    const mutation = mutationRepository({
+      createEvidence: vi.fn(async (input, _actor, _now, promote) => {
+        if (Buffer.byteLength(input.originalName, "utf8") > 255) {
+          throw new Error("database original_name length violation");
+        }
+        await promote();
+        return { kind: "CREATED" as const, evidence: { ...record(), originalName: input.originalName } };
+      }),
+    });
+    const longUpload: IncomingEvidenceUpload = {
+      ...upload(),
+      file: { ...upload().file, originalName: `${"á".repeat(200)}.jpeg` },
+    };
+
+    const created = await serviceWith({ mutation }).createEvidence(order, longUpload, manager());
+
+    expect(Buffer.byteLength(created.originalName, "utf8")).toBeLessThanOrEqual(255);
+    expect(created.originalName.endsWith(".jpg")).toBe(true);
   });
 
   it("rejects invalid content before promotion and always cleans its temporary file", async () => {
@@ -282,15 +345,24 @@ describe("evidence service lifecycle", () => {
       .rejects.toMatchObject({ statusCode: 503, code: "EVIDENCE_STORAGE_UNAVAILABLE" });
     expect(fileStorage.remove).toHaveBeenNthCalledWith(1, finalKey);
     expect(fileStorage.remove).toHaveBeenNthCalledWith(2, tempKey);
-    expect(logOperationalError).toHaveBeenCalledTimes(2);
+    expect(logOperationalError).toHaveBeenCalledTimes(3);
+    expect(logOperationalError).toHaveBeenCalledWith(
+      "EVIDENCE_STORAGE_UNAVAILABLE",
+      manager().requestId,
+    );
     expect(JSON.stringify(logOperationalError.mock.calls)).not.toContain(finalKey);
     expect(JSON.stringify(logOperationalError.mock.calls)).not.toContain(tempKey);
   });
 
   it("authorizes metadata before opening and maps a missing physical file to 503", async () => {
     const fileStorage = storage({ open: vi.fn(async () => { throw new EvidenceStorageUnavailableError(); }) });
-    await expect(serviceWith({ fileStorage }).getDownload(evidenceId, manager()))
+    const logOperationalError = vi.fn();
+    await expect(serviceWith({ fileStorage, logOperationalError }).getDownload(evidenceId, manager()))
       .rejects.toMatchObject({ statusCode: 503, code: "EVIDENCE_STORAGE_UNAVAILABLE" });
+    expect(logOperationalError).toHaveBeenCalledWith(
+      "EVIDENCE_STORAGE_UNAVAILABLE",
+      manager().requestId,
+    );
   });
 
   it("does not open a file when downloadable metadata is absent or foreign", async () => {

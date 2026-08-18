@@ -86,14 +86,23 @@ class LazyEvidenceStorage implements EvidenceStorage {
 
 const defaultEvidenceStorages = new Map<string, LazyEvidenceStorage>();
 
+export function createEvidenceStorageForEnvironment(
+  env: Environment,
+): LocalEvidenceStorage {
+  return new LocalEvidenceStorage(env.EVIDENCE_STORAGE_PATH, {
+    requireExistingRoot: env.NODE_ENV === "production",
+  });
+}
+
 function storageForEnvironment(env: Environment): EvidenceStorage {
-  let storage = defaultEvidenceStorages.get(env.EVIDENCE_STORAGE_PATH);
+  const storageKey = `${env.NODE_ENV}:${env.EVIDENCE_STORAGE_PATH}`;
+  let storage = defaultEvidenceStorages.get(storageKey);
   if (storage === undefined) {
     storage = new LazyEvidenceStorage(
-      new LocalEvidenceStorage(env.EVIDENCE_STORAGE_PATH),
+      createEvidenceStorageForEnvironment(env),
       env.EVIDENCE_TEMP_MAX_AGE_MINUTES,
     );
-    defaultEvidenceStorages.set(env.EVIDENCE_STORAGE_PATH, storage);
+    defaultEvidenceStorages.set(storageKey, storage);
   }
   return storage;
 }
@@ -145,7 +154,7 @@ export function createApp(options: CreateAppOptions) {
     }),
   );
   app.use(express.json({ limit: options.env.JSON_BODY_LIMIT }));
-  app.use("/api/v1", createApiRouter(options.env, database, evidenceStorage));
+  app.use("/api/v1", createApiRouter(options.env, database, evidenceStorage, logger));
   options.registerRoutes?.(app);
   app.use(notFoundHandler);
   app.use(createErrorHandler(logger));

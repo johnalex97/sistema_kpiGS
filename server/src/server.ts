@@ -2,11 +2,10 @@ import type { Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import type { Express } from "express";
 import type { Logger } from "pino";
-import { createApp } from "./app.js";
+import { createApp, createEvidenceStorageForEnvironment } from "./app.js";
 import { getDatabaseClient } from "./config/database.js";
 import { env } from "./config/env.js";
 import { createLogger } from "./utils/logger.js";
-import { LocalEvidenceStorage } from "./evidences/evidences.local-storage.js";
 
 export function startServer(
   app: Express,
@@ -49,27 +48,36 @@ if (isDirectExecution) {
     env.NODE_ENV === "development",
   );
   void (async () => {
-  const database = getDatabaseClient(env.DATABASE_URL);
-  const evidenceStorage = new LocalEvidenceStorage(env.EVIDENCE_STORAGE_PATH);
-  await evidenceStorage.initialize(new Date(), env.EVIDENCE_TEMP_MAX_AGE_MINUTES);
-  const app = createApp({ env, logger, database, evidenceStorage });
-  const server = startServer(app, env.PORT, logger);
-  const shutdown = createShutdownHandler(
-    server,
-    () => database.$disconnect(),
-    logger,
-  );
+    const database = getDatabaseClient(env.DATABASE_URL);
+    const evidenceStorage = createEvidenceStorageForEnvironment(env);
+    await evidenceStorage.initialize(
+      new Date(),
+      env.EVIDENCE_TEMP_MAX_AGE_MINUTES,
+    );
+    const app = createApp({ env, logger, database, evidenceStorage });
+    const server = startServer(app, env.PORT, logger);
+    const shutdown = createShutdownHandler(
+      server,
+      () => database.$disconnect(),
+      logger,
+    );
 
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.once(signal, () => {
-      void shutdown(signal).catch((error: unknown) => {
-        logger.error({ err: error, signal }, "API shutdown failed");
-        process.exitCode = 1;
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+      process.once(signal, () => {
+        void shutdown(signal).catch((error: unknown) => {
+          logger.error({ err: error, signal }, "API shutdown failed");
+          process.exitCode = 1;
+        });
       });
-    });
-  }
-  })().catch((error: unknown) => {
-    logger.error({ err: error }, "Evidence storage initialization failed");
+    }
+  })().catch(() => {
+    logger.error(
+      {
+        event: "EVIDENCE_STORAGE_UNAVAILABLE",
+        code: "EVIDENCE_STORAGE_UNAVAILABLE",
+      },
+      "Evidence storage initialization failed",
+    );
     process.exitCode = 1;
   });
 }

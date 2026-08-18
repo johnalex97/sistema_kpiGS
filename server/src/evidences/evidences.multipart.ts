@@ -7,7 +7,10 @@ import {
   type EvidenceStorage,
   type TemporaryEvidence,
 } from "./evidences.storage.js";
-import type { IncomingEvidenceUpload } from "./evidences.types.js";
+import type {
+  EvidenceOperationalLogger,
+  IncomingEvidenceUpload,
+} from "./evidences.types.js";
 import { ApiError } from "../utils/api-error.js";
 
 export interface ParsedEvidenceUpload {
@@ -23,12 +26,11 @@ export interface EvidenceMultipartParser {
 export interface EvidenceMultipartParserDependencies {
   storage: EvidenceStorage;
   maxBytes: number;
-  requestId: string;
-  logOperationalError?: (event: "EVIDENCE_STORAGE_CLEANUP_FAILED", requestId: string) => void;
+  logOperationalError?: EvidenceOperationalLogger;
 }
 
 function invalidMultipart(): ApiError {
-  return new ApiError(400, "La carga multipart no es vÃ¡lida", "INVALID_EVIDENCE_MULTIPART");
+  return new ApiError(400, "La carga multipart no es válida", "INVALID_EVIDENCE_MULTIPART");
 }
 
 function requestAborted(): ApiError {
@@ -36,11 +38,11 @@ function requestAborted(): ApiError {
 }
 
 function fileTooLarge(): ApiError {
-  return new ApiError(413, "El archivo de evidencia excede el tamaÃ±o permitido", "EVIDENCE_TOO_LARGE");
+  return new ApiError(413, "El archivo de evidencia excede el tamaño permitido", "EVIDENCE_TOO_LARGE");
 }
 
 function storageUnavailable(): ApiError {
-  return new ApiError(503, "El almacenamiento de evidencias no estÃ¡ disponible", "EVIDENCE_STORAGE_UNAVAILABLE");
+  return new ApiError(503, "El almacenamiento de evidencias no está disponible", "EVIDENCE_STORAGE_UNAVAILABLE");
 }
 
 function mapStorageError(error: unknown): ApiError {
@@ -51,7 +53,6 @@ function mapStorageError(error: unknown): ApiError {
 export function createEvidenceMultipartParser({
   storage,
   maxBytes,
-  requestId,
   logOperationalError,
 }: EvidenceMultipartParserDependencies): EvidenceMultipartParser {
   return {
@@ -73,7 +74,7 @@ export function createEvidenceMultipartParser({
 
         const safelyLogCleanupFailure = (): void => {
           try {
-            logOperationalError?.("EVIDENCE_STORAGE_CLEANUP_FAILED", requestId);
+            logOperationalError?.("EVIDENCE_STORAGE_CLEANUP_FAILED", request.requestId);
           } catch {
             // Observational logging must not affect the parser result.
           }
@@ -109,7 +110,15 @@ export function createEvidenceMultipartParser({
             if (settled) return;
             settled = true;
             cleanupListeners();
-            reject(failure ?? storageUnavailable());
+            const publicError = failure ?? storageUnavailable();
+            if (publicError.code === "EVIDENCE_STORAGE_UNAVAILABLE") {
+              try {
+                logOperationalError?.("EVIDENCE_STORAGE_UNAVAILABLE", request.requestId);
+              } catch {
+                // Observational logging must not affect the parser result.
+              }
+            }
+            reject(publicError);
           })();
         };
 
@@ -133,7 +142,8 @@ export function createEvidenceMultipartParser({
         try {
           parser = Busboy({
             headers: request.headers,
-            limits: { files: 1, fields: 2, fileSize: maxBytes, parts: 4 },
+            defParamCharset: "utf8",
+            limits: { files: 1, fields: 2, fileSize: maxBytes + 1, parts: 4 },
           });
         } catch {
           reject(invalidMultipart());
