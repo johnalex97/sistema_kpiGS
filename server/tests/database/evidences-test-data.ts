@@ -154,7 +154,7 @@ export async function createEvidencesReadFixture(
     data: { actividadId: ids.historicalActivity, tecnicoId: ids.historicalActivityTechnician },
   });
   await database.causaReincidencia.create({ data: { id: ids.recurrenceCause, code: "EVD-CAUSE", name: "Evidence cause" } });
-  await database.reincidencia.create({ data: { id: ids.recurrence, originalOrderId: ids.activeOrder, causeId: ids.recurrenceCause, detectedProblem: "Legacy evidence retention" } });
+  await database.reincidencia.create({ data: { id: ids.recurrence, recurrenceNumber: "RI-2026-9001", originalOrderId: ids.activeOrder, causeId: ids.recurrenceCause, detectedProblem: "Legacy evidence retention" } });
 
   const createdAt = new Date("2026-08-17T12:00:00.000Z");
   await database.evidencia.createMany({

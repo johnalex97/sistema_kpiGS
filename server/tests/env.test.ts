@@ -41,6 +41,7 @@ describe("parseEnvironment", () => {
       EVIDENCE_STORAGE_PATH: expect.any(String),
       EVIDENCE_MAX_BYTES: 10_485_760,
       EVIDENCE_TEMP_MAX_AGE_MINUTES: 60,
+      RECURRENCE_WARNING_DAYS: 30,
     });
   });
 
@@ -51,6 +52,27 @@ describe("parseEnvironment", () => {
       EVIDENCE_TEMP_MAX_AGE_MINUTES: 60,
     });
   });
+
+  it("defaults recurrence warning days and accepts its inclusive bounds", () => {
+    expect(parseEnvironment(base).RECURRENCE_WARNING_DAYS).toBe(30);
+    expect(
+      parseEnvironment({ ...base, RECURRENCE_WARNING_DAYS: "1" })
+        .RECURRENCE_WARNING_DAYS,
+    ).toBe(1);
+    expect(
+      parseEnvironment({ ...base, RECURRENCE_WARNING_DAYS: "365" })
+        .RECURRENCE_WARNING_DAYS,
+    ).toBe(365);
+  });
+
+  it.each(["0", "366", "30.5", "not-a-number"])(
+    "rejects invalid recurrence warning days: %s",
+    (RECURRENCE_WARNING_DAYS) => {
+      expect(() =>
+        parseEnvironment({ ...base, RECURRENCE_WARNING_DAYS }),
+      ).toThrow("RECURRENCE_WARNING_DAYS");
+    },
+  );
 
   it("rejects evidence uploads above the hard size ceiling", () => {
     expect(() =>

@@ -64,6 +64,7 @@ const environmentSchema = z.object({
     .positive()
     .max(10_080)
     .default(60),
+  RECURRENCE_WARNING_DAYS: z.coerce.number().int().min(1).max(365).default(30),
 });
 
 export type EnvironmentInput = Record<string, string | undefined>;
@@ -84,6 +85,7 @@ export interface Environment {
   EVIDENCE_STORAGE_PATH: string;
   EVIDENCE_MAX_BYTES: number;
   EVIDENCE_TEMP_MAX_AGE_MINUTES: number;
+  RECURRENCE_WARNING_DAYS: number;
 }
 
 function isPathInside(pathname: string, parentPath: string): boolean {
@@ -198,6 +200,7 @@ export function parseEnvironment(input: EnvironmentInput): Environment {
     EVIDENCE_STORAGE_PATH: evidenceStoragePath,
     EVIDENCE_MAX_BYTES: result.data.EVIDENCE_MAX_BYTES,
     EVIDENCE_TEMP_MAX_AGE_MINUTES: result.data.EVIDENCE_TEMP_MAX_AGE_MINUTES,
+    RECURRENCE_WARNING_DAYS: result.data.RECURRENCE_WARNING_DAYS,
   };
 }
 

@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { Prisma } from "../../generated/prisma/client.js";
+import {
+  EstadoReincidencia,
+  Prisma,
+} from "../../generated/prisma/client.js";
 import {
   database,
   disconnectTestDatabase,
@@ -31,6 +34,8 @@ const requiredModels = [
   "Reincidencia",
   "ReincidenciaOrden",
   "ReincidenciaTecnico",
+  "SecuenciaReincidencia",
+  "ReincidenciaNota",
   "Evidencia",
   "ConfiguracionKPI",
   "MetaTecnico",
@@ -62,6 +67,27 @@ describe("Prisma schema contract", () => {
     );
     expect(Object.values(Prisma.ContactoClienteScalarFieldEnum)).toContain(
       "version",
+    );
+  });
+
+  it("exposes the reviewed recurrence workflow contract", () => {
+    expect(Object.values(EstadoReincidencia)).toContain("DISMISSED");
+    expect(Object.values(Prisma.ReincidenciaScalarFieldEnum)).toEqual(
+      expect.arrayContaining([
+        "recurrenceNumber",
+        "reportedById",
+        "reviewedById",
+        "reviewedAt",
+        "ageOverrideReason",
+        "closedById",
+        "dismissedById",
+        "dismissedAt",
+        "dismissalReason",
+        "version",
+      ]),
+    );
+    expect(Object.values(Prisma.ModelName)).toEqual(
+      expect.arrayContaining(["SecuenciaReincidencia", "ReincidenciaNota"]),
     );
   });
 
@@ -121,6 +147,42 @@ describe("Prisma schema contract", () => {
       ]),
     );
     expect(checks).toHaveLength(6);
+  });
+
+  it("creates the nine recurrence row-level checks", async () => {
+    const checks = await database.$queryRaw<Array<{ conname: string }>>`
+      SELECT constraint_data.conname
+      FROM pg_constraint AS constraint_data
+      JOIN pg_namespace AS namespace_data
+        ON namespace_data.oid = constraint_data.connamespace
+      WHERE namespace_data.nspname = current_schema()
+        AND constraint_data.conname IN (
+          'ck_reincidencia_minutos_adicionales',
+          'ck_reincidencia_costo_estimado',
+          'ck_reincidencia_numero',
+          'ck_reincidencia_version',
+          'ck_reincidencia_cierre',
+          'ck_reincidencia_descarte',
+          'ck_reincidencia_fecha_terminal',
+          'ck_reincidencia_tecnico_calidad',
+          'ck_reincidencia_orden_minutos_adicionales'
+        )
+    `;
+
+    expect(checks.map(({ conname }) => conname)).toEqual(
+      expect.arrayContaining([
+        "ck_reincidencia_minutos_adicionales",
+        "ck_reincidencia_costo_estimado",
+        "ck_reincidencia_numero",
+        "ck_reincidencia_version",
+        "ck_reincidencia_cierre",
+        "ck_reincidencia_descarte",
+        "ck_reincidencia_fecha_terminal",
+        "ck_reincidencia_tecnico_calidad",
+        "ck_reincidencia_orden_minutos_adicionales",
+      ]),
+    );
+    expect(checks).toHaveLength(9);
   });
 
   it("creates the required active-resource and archived-evidence indexes", async () => {

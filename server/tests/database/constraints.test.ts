@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   EstadoActividad,
   EstadoOrden,
+  EstadoReincidencia,
   ParticipacionReincidencia,
   PrioridadOrden,
   RolOrdenTecnico,
@@ -39,6 +40,130 @@ async function fixtures() {
 }
 
 describe("database constraints", () => {
+  it.each([
+    ["negative recurrence minutes", { additionalMinutes: -1 }],
+    ["negative recurrence cost", { estimatedCost: "-0.01" }],
+  ])("rejects %s", async (_label, invalidValues) => {
+    const { order, user } = await fixtures();
+
+    await expect(
+      database.reincidencia.create({
+        data: {
+          originalOrderId: order.id,
+          causeId: null,
+          status: EstadoReincidencia.OPEN,
+          detectedProblem: "Reincidencia invÃ¡lida de prueba",
+          recurrenceNumber: "RI-2026-9999",
+          reportedById: user.id,
+          detectedAt: new Date("2026-08-01T12:00:00.000Z"),
+          ...invalidValues,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects negative recurrence visit minutes", async () => {
+    const { order } = await fixtures();
+
+    await expect(
+      database.reincidenciaOrden.create({
+        data: {
+          reincidenciaId: "60000000-0000-4000-8000-000000000001",
+          ordenId: order.id,
+          visitNumber: 99_001,
+          additionalMinutes: -1,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it.each([
+    [
+      "a partial closure",
+      {
+        status: EstadoReincidencia.OPEN,
+        closedAt: new Date("2026-08-01T12:30:00.000Z"),
+      },
+    ],
+    [
+      "a partial dismissal",
+      {
+        status: "DISMISSED" as const,
+        dismissedAt: new Date("2026-08-01T12:30:00.000Z"),
+        dismissalReason: "Prueba de descarte incompleta",
+      },
+    ],
+    [
+      "a closed status without its closing actor",
+      {
+        status: EstadoReincidencia.CLOSED,
+        closedAt: new Date("2026-08-01T12:30:00.000Z"),
+      },
+    ],
+  ])("rejects %s", async (_label, invalidValues) => {
+    const { order, user } = await fixtures();
+
+    try {
+      await expect(
+        database.reincidencia.create({
+          data: {
+            originalOrderId: order.id,
+            causeId: null,
+            detectedProblem: "Reincidencia con cierre incompleto",
+            recurrenceNumber: "RI-2026-9999",
+            reportedById: user.id,
+            detectedAt: new Date("2026-08-01T12:00:00.000Z"),
+            ...invalidValues,
+          },
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await database.reincidencia.deleteMany({
+        where: { recurrenceNumber: "RI-2026-9999" },
+      });
+    }
+  });
+
+  it.each(["", "RI-26-0001", "RI-2026-001", "RI-2026-00001"])(
+    "rejects a malformed recurrence number: %s",
+    async (recurrenceNumber) => {
+      const { order, user } = await fixtures();
+
+      await expect(
+        database.reincidencia.create({
+          data: {
+            originalOrderId: order.id,
+            causeId: null,
+            status: EstadoReincidencia.OPEN,
+            detectedProblem: "Reincidencia con nÃºmero invÃ¡lido",
+            recurrenceNumber,
+            reportedById: user.id,
+          },
+        }),
+      ).rejects.toThrow();
+    },
+  );
+
+  it("rejects a terminal recurrence date before detection", async () => {
+    const { order, user } = await fixtures();
+
+    await expect(
+      database.reincidencia.create({
+        data: {
+          originalOrderId: order.id,
+          causeId: null,
+          status: EstadoReincidencia.CLOSED,
+          detectedProblem: "Reincidencia cerrada antes de detectarse",
+          recurrenceNumber: "RI-2026-9999",
+          reportedById: user.id,
+          detectedAt: new Date("2026-08-02T12:00:00.000Z"),
+          closedAt: new Date("2026-08-01T12:00:00.000Z"),
+          closedById: user.id,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
   it("rejects a duplicate work order number", async () => {
     const { order } = await fixtures();
 
@@ -315,6 +440,32 @@ describe("database constraints", () => {
         },
       }),
     ).rejects.toThrow();
+  });
+
+  it("rejects quality attribution for a non-original recurrence participant", async () => {
+    const { technician } = await fixtures();
+
+    try {
+      await expect(
+        database.reincidenciaTecnico.create({
+          data: {
+            reincidenciaId: "60000000-0000-4000-8000-000000000001",
+            tecnicoId: technician.id,
+            participation: ParticipacionReincidencia.CORRECTION_PARTICIPANT,
+            affectsQuality: true,
+            justification: "No puede atribuirse a una participaciÃ³n de correcciÃ³n",
+          },
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await database.reincidenciaTecnico.deleteMany({
+        where: {
+          reincidenciaId: "60000000-0000-4000-8000-000000000001",
+          tecnicoId: technician.id,
+          participation: ParticipacionReincidencia.CORRECTION_PARTICIPANT,
+        },
+      });
+    }
   });
 
   it("rejects activity completion before its start", async () => {

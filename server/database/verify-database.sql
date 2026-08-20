@@ -40,6 +40,12 @@ WHERE schemaname = current_schema()
     'idx_evidence_archived',
     'uq_actividad_tecnico_responsable',
     'uq_pausa_actividad_abierta'
+    ,'reincidencia_recurrence_number_key'
+    ,'reincidencia_reported_by_id_idx'
+    ,'reincidencia_reviewed_by_id_idx'
+    ,'reincidencia_closed_by_id_idx'
+    ,'reincidencia_dismissed_by_id_idx'
+    ,'reincidencia_nota_reincidencia_id_created_at_id_idx'
   )
 ORDER BY indexname;
 
@@ -62,6 +68,144 @@ DECLARE
   missing_count integer;
   actual_count integer;
 BEGIN
+  SELECT count(*) INTO actual_count
+  FROM "_prisma_migrations"
+  WHERE migration_name = '20260820120000_recurrences_workflow_api'
+    AND finished_at IS NOT NULL
+    AND rolled_back_at IS NULL;
+  IF actual_count <> 1 THEN
+    RAISE EXCEPTION 'La dÃ©cima migraciÃ³n de reincidencias no estÃ¡ aplicada';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM information_schema.tables
+  WHERE table_schema = current_schema()
+    AND table_name IN ('secuencia_reincidencia', 'reincidencia_nota');
+  IF actual_count <> 2 THEN
+    RAISE EXCEPTION 'Faltan tablas del flujo revisado de reincidencias';
+  END IF;
+
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('recurrence_number'),
+    ('reported_by_id'),
+    ('reviewed_by_id'),
+    ('reviewed_at'),
+    ('age_override_reason'),
+    ('closed_by_id'),
+    ('dismissed_by_id'),
+    ('dismissed_at'),
+    ('dismissal_reason'),
+    ('version')
+  ) AS expected(column_name)
+  LEFT JOIN information_schema.columns AS column_data
+    ON column_data.table_schema = current_schema()
+   AND column_data.table_name = 'reincidencia'
+   AND column_data.column_name = expected.column_name
+  WHERE column_data.column_name IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan campos del contrato de reincidencias';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM pg_enum AS enum_data
+  JOIN pg_type AS type_data ON type_data.oid = enum_data.enumtypid
+  JOIN pg_namespace AS namespace_data ON namespace_data.oid = type_data.typnamespace
+  WHERE namespace_data.nspname = current_schema()
+    AND type_data.typname = 'estado_reincidencia'
+    AND enum_data.enumlabel = 'dismissed';
+  IF actual_count <> 1 THEN
+    RAISE EXCEPTION 'Falta el estado dismissed de reincidencia';
+  END IF;
+
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('ck_reincidencia_minutos_adicionales'),
+    ('ck_reincidencia_costo_estimado'),
+    ('ck_reincidencia_numero'),
+    ('ck_reincidencia_version'),
+    ('ck_reincidencia_cierre'),
+    ('ck_reincidencia_descarte'),
+    ('ck_reincidencia_fecha_terminal'),
+    ('ck_reincidencia_tecnico_calidad'),
+    ('ck_reincidencia_orden_minutos_adicionales')
+  ) AS expected(constraint_name)
+  LEFT JOIN pg_constraint AS constraint_data
+  JOIN pg_namespace AS namespace_data
+    ON namespace_data.oid = constraint_data.connamespace
+    ON namespace_data.nspname = current_schema()
+   AND constraint_data.conname = expected.constraint_name
+  WHERE constraint_data.oid IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan checks del flujo revisado de reincidencias';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM pg_indexes
+  WHERE schemaname = current_schema()
+    AND indexname IN (
+      'reincidencia_recurrence_number_key',
+      'reincidencia_reported_by_id_idx',
+      'reincidencia_reviewed_by_id_idx',
+      'reincidencia_closed_by_id_idx',
+      'reincidencia_dismissed_by_id_idx',
+      'reincidencia_nota_reincidencia_id_created_at_id_idx'
+    );
+  IF actual_count <> 6 THEN
+    RAISE EXCEPTION 'Faltan Ã­ndices del flujo revisado de reincidencias';
+  END IF;
+
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('RECURRENCES_VIEW_ALL'),
+    ('RECURRENCES_VIEW_OWN'),
+    ('RECURRENCES_REPORT_OWN'),
+    ('RECURRENCES_REVIEW')
+  ) AS expected(code)
+  LEFT JOIN "permiso" AS permission_data
+    ON permission_data."code" = expected.code
+  WHERE permission_data."id" IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan permisos del flujo revisado de reincidencias';
+  END IF;
+
+  SELECT count(*) INTO missing_count
+  FROM (VALUES
+    ('ADMIN', 'RECURRENCES_VIEW_ALL'),
+    ('ADMIN', 'RECURRENCES_VIEW_OWN'),
+    ('ADMIN', 'RECURRENCES_REPORT_OWN'),
+    ('ADMIN', 'RECURRENCES_REVIEW'),
+    ('SUPERVISOR', 'RECURRENCES_VIEW_ALL'),
+    ('SUPERVISOR', 'RECURRENCES_REVIEW'),
+    ('TECHNICIAN', 'RECURRENCES_VIEW_OWN'),
+    ('TECHNICIAN', 'RECURRENCES_REPORT_OWN')
+  ) AS expected(role_code, permission_code)
+  LEFT JOIN "rol" AS role_data
+    ON role_data."code" = expected.role_code
+  LEFT JOIN "permiso" AS permission_data
+    ON permission_data."code" = expected.permission_code
+  LEFT JOIN "rol_permiso" AS role_permission
+    ON role_permission."rol_id" = role_data."id"
+   AND role_permission."permiso_id" = permission_data."id"
+  WHERE role_permission."rol_id" IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Faltan grants exactos de reincidencias';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM "rol_permiso" AS role_permission
+  JOIN "permiso" AS permission_data
+    ON permission_data."id" = role_permission."permiso_id"
+  WHERE permission_data."code" IN (
+    'RECURRENCES_VIEW_ALL',
+    'RECURRENCES_VIEW_OWN',
+    'RECURRENCES_REPORT_OWN',
+    'RECURRENCES_REVIEW'
+  );
+  IF actual_count <> 8 THEN
+    RAISE EXCEPTION 'Los grants de reincidencias no son exactos';
+  END IF;
+
   SELECT count(*) INTO missing_count
   FROM (VALUES
     ('ORDERS_VIEW_ALL'),

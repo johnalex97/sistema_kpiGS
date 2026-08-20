@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { seedDatabase } from "../../prisma/seed.js";
+import { seedIds } from "../../prisma/seed/constants.js";
 import { verifyPassword } from "../../src/auth/password.js";
 import {
   database,
@@ -180,6 +181,81 @@ describe("database seed", () => {
     `;
 
     expect(Number(rows[0]?.missing ?? -1)).toBe(0);
+  });
+
+  it("grants the exact reviewed recurrence permissions after an idempotent second seed", async () => {
+    await seedDatabase(database);
+    await seedDatabase(database);
+    const roles = await database.rol.findMany({
+      where: { code: { in: ["SUPERVISOR", "TECHNICIAN"] } },
+      include: { permissions: { include: { permiso: true } } },
+    });
+    const rolePermissions = Object.fromEntries(
+      roles.map((role) => [
+        role.code,
+        role.permissions.map(({ permiso }) => permiso.code),
+      ]),
+    );
+    const supervisorPermissions = rolePermissions.SUPERVISOR ?? [];
+    const technicianPermissions = rolePermissions.TECHNICIAN ?? [];
+
+    expect(supervisorPermissions).toEqual(
+      expect.arrayContaining(["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"]),
+    );
+    expect(technicianPermissions).toEqual(
+      expect.arrayContaining(["RECURRENCES_VIEW_OWN", "RECURRENCES_REPORT_OWN"]),
+    );
+    expect(technicianPermissions).not.toContain("RECURRENCES_REVIEW");
+
+    const recurrencePermissionCodes = [
+      "RECURRENCES_VIEW_ALL",
+      "RECURRENCES_VIEW_OWN",
+      "RECURRENCES_REPORT_OWN",
+      "RECURRENCES_REVIEW",
+    ];
+    for (const code of recurrencePermissionCodes) {
+      expect(await database.permiso.count({ where: { code } })).toBe(1);
+    }
+  });
+
+  it("upserts stable recurrence numbers and workflow actors", async () => {
+    await seedDatabase(database);
+    await seedDatabase(database);
+    const [technician, supervisor, recurrences] = await Promise.all([
+      database.usuario.findUniqueOrThrow({
+        where: { email: "tecnico.demo@geeksolution.example.test" },
+      }),
+      database.usuario.findUniqueOrThrow({
+        where: { email: "supervision.demo@geeksolution.example.test" },
+      }),
+      database.reincidencia.findMany({
+        where: {
+          id: { in: [seedIds.recurrences.technical, seedIds.recurrences.equipment] },
+        },
+        orderBy: { recurrenceNumber: "asc" },
+        select: {
+          recurrenceNumber: true,
+          reportedById: true,
+          reviewedById: true,
+          reviewedAt: true,
+        },
+      }),
+    ]);
+
+    expect(recurrences).toEqual([
+      {
+        recurrenceNumber: "RI-2026-0001",
+        reportedById: technician.id,
+        reviewedById: supervisor.id,
+        reviewedAt: new Date("2026-07-28T16:00:00.000Z"),
+      },
+      {
+        recurrenceNumber: "RI-2026-0002",
+        reportedById: technician.id,
+        reviewedById: supervisor.id,
+        reviewedAt: new Date("2026-07-29T15:00:00.000Z"),
+      },
+    ]);
   });
 
   it("keeps demo users unable to authenticate", async () => {

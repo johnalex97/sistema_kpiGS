@@ -93,6 +93,7 @@ enum EstadoReincidencia {
   ANALYSIS   @map("analysis")
   CORRECTION @map("correction")
   CLOSED     @map("closed")
+  DISMISSED  @map("dismissed")
 
   @@map("estado_reincidencia")
 }
@@ -139,19 +140,24 @@ model Usuario {
   deletedAt           DateTime?     @map("deleted_at") @db.Timestamptz(3)
   version             Int           @default(1)
 
-  roles                  UsuarioRol[]
-  tecnico                Tecnico?
-  asignacionesRealizadas OrdenTecnico[]     @relation("OrdenAsignadaPor")
-  historialesOrden       HistorialOrden[]
-  relacionesOrdenCreadas OrdenRelacionada[]
-  pausasRegistradas      PausaActividad[]
-  evidenciasSubidas      Evidencia[]        @relation("EvidenciaSubidaPor")
-  evidenciasArchivadas   Evidencia[]        @relation("EvidenciaArchivadaPor")
-  configuracionesKpi     ConfiguracionKPI[]
-  metasTecnicoCreadas    MetaTecnico[]
-  auditorias             Auditoria[]
-  notificaciones         Notificacion[]
-  sesiones               Sesion[]
+  roles                    UsuarioRol[]
+  tecnico                  Tecnico?
+  asignacionesRealizadas   OrdenTecnico[]     @relation("OrdenAsignadaPor")
+  historialesOrden         HistorialOrden[]
+  relacionesOrdenCreadas   OrdenRelacionada[]
+  pausasRegistradas        PausaActividad[]
+  evidenciasSubidas        Evidencia[]        @relation("EvidenciaSubidaPor")
+  evidenciasArchivadas     Evidencia[]        @relation("EvidenciaArchivadaPor")
+  configuracionesKpi       ConfiguracionKPI[]
+  metasTecnicoCreadas      MetaTecnico[]
+  auditorias               Auditoria[]
+  notificaciones           Notificacion[]
+  sesiones                 Sesion[]
+  reincidenciasReportadas  Reincidencia[]     @relation("ReincidenciaReportadaPor")
+  reincidenciasRevisadas   Reincidencia[]     @relation("ReincidenciaRevisadaPor")
+  reincidenciasCerradas    Reincidencia[]     @relation("ReincidenciaCerradaPor")
+  reincidenciasDescartadas Reincidencia[]     @relation("ReincidenciaDescartadaPor")
+  notasReincidencia        ReincidenciaNota[]
 
   @@index([status, deletedAt])
   @@map("usuario")
@@ -601,8 +607,17 @@ model CausaReincidencia {
 
 model Reincidencia {
   id                String                      @id @default(uuid()) @db.Uuid
+  recurrenceNumber  String                      @unique @map("recurrence_number") @db.VarChar(20)
   originalOrderId   String                      @map("original_order_id") @db.Uuid
-  causeId           String                      @map("cause_id") @db.Uuid
+  causeId           String?                     @map("cause_id") @db.Uuid
+  reportedById      String?                     @map("reported_by_id") @db.Uuid
+  reviewedById      String?                     @map("reviewed_by_id") @db.Uuid
+  reviewedAt        DateTime?                   @map("reviewed_at") @db.Timestamptz(3)
+  ageOverrideReason String?                     @map("age_override_reason") @db.Text
+  closedById        String?                     @map("closed_by_id") @db.Uuid
+  dismissedById     String?                     @map("dismissed_by_id") @db.Uuid
+  dismissedAt       DateTime?                   @map("dismissed_at") @db.Timestamptz(3)
+  dismissalReason   String?                     @map("dismissal_reason") @db.Text
   status            EstadoReincidencia          @default(OPEN)
   impact            ImpactoReincidencia         @default(MEDIUM)
   responsibility    ResponsabilidadReincidencia @default(UNDETERMINED)
@@ -620,15 +635,45 @@ model Reincidencia {
   version           Int                         @default(1)
 
   ordenOriginal OrdenTrabajo          @relation(fields: [originalOrderId], references: [id], onDelete: Restrict)
-  causa         CausaReincidencia     @relation(fields: [causeId], references: [id], onDelete: Restrict)
+  causa         CausaReincidencia?    @relation(fields: [causeId], references: [id], onDelete: Restrict)
+  reportedBy    Usuario?              @relation("ReincidenciaReportadaPor", fields: [reportedById], references: [id], onDelete: Restrict)
+  reviewedBy    Usuario?              @relation("ReincidenciaRevisadaPor", fields: [reviewedById], references: [id], onDelete: Restrict)
+  closedBy      Usuario?              @relation("ReincidenciaCerradaPor", fields: [closedById], references: [id], onDelete: Restrict)
+  dismissedBy   Usuario?              @relation("ReincidenciaDescartadaPor", fields: [dismissedById], references: [id], onDelete: Restrict)
   ordenes       ReincidenciaOrden[]
   tecnicos      ReincidenciaTecnico[]
+  notas         ReincidenciaNota[]
   evidencias    Evidencia[]
 
   @@index([originalOrderId])
   @@index([causeId])
   @@index([status, detectedAt])
+  @@index([reportedById])
+  @@index([reviewedById])
+  @@index([closedById])
+  @@index([dismissedById])
   @@map("reincidencia")
+}
+
+model SecuenciaReincidencia {
+  year       Int @id
+  lastNumber Int @default(0) @map("last_number")
+
+  @@map("secuencia_reincidencia")
+}
+
+model ReincidenciaNota {
+  id             String   @id @default(uuid()) @db.Uuid
+  reincidenciaId String   @map("reincidencia_id") @db.Uuid
+  authorId       String   @map("author_id") @db.Uuid
+  content        String   @db.Text
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  reincidencia Reincidencia @relation(fields: [reincidenciaId], references: [id], onDelete: Restrict)
+  author       Usuario      @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([reincidenciaId, createdAt, id])
+  @@map("reincidencia_nota")
 }
 
 model ReincidenciaOrden {
