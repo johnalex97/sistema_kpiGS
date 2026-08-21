@@ -1205,9 +1205,8 @@ async function adjustInTransaction(
   const beforeVisitMinutes = storedVisitMinutes(record.ordenes);
   const visitMinutes = derivedVisitMinutes(record.ordenes, activities);
   const additionalMinutes = sumUniqueProductiveMinutes(activities);
-  const costReason = input.estimatedCost === undefined
-    ? undefined
-    : normalizedOptional(input.costReason)!;
+  const estimatedCostChanged = !nextEstimatedCost.equals(record.estimatedCost);
+  const costReason = estimatedCostChanged ? normalizedOptional(input.costReason) ?? undefined : undefined;
   const beforeData = adjustmentSnapshot(record, originals, beforeVisitMinutes);
   const decisionsById = new Map(decisions.map((decision) => [decision.technicianId, decision]));
   for (const original of originals) {

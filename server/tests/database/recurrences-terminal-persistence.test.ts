@@ -600,6 +600,25 @@ describe("closed recurrence adjustment persistence", () => {
     expect(audit.afterData).not.toHaveProperty("costReason");
   });
 
+  // Mutation caught: ADJUST treats a canonically equal submitted decimal as a real cost change.
+  it("ADJUST omits costReason when the submitted estimated cost equals the persisted decimal", async () => {
+    await closeFixture();
+    const result = await createRecurrencesWorkflowRepository(database).adjustClosedRecurrence(ids.recurrence, {
+      version: 4,
+      reason: "Confirm the unchanged final estimate.",
+      estimatedCost: "150.0",
+      costReason: "Submitted estimate is canonically unchanged.",
+    }, actor, now);
+    expect(result).toMatchObject({ kind: "UPDATED", recurrence: { status: "CLOSED", version: 5, estimatedCost: new Prisma.Decimal("150.00") } });
+    const audit = await database.auditoria.findFirstOrThrow({
+      where: { entityId: ids.recurrence, action: "RECURRENCE_ADJUSTED" },
+      select: { beforeData: true, afterData: true, reason: true },
+    });
+    expect(audit.reason).toBe("Confirm the unchanged final estimate.");
+    expect(audit.beforeData).not.toHaveProperty("costReason");
+    expect(audit.afterData).not.toHaveProperty("costReason");
+  });
+
   // Mutation caught: ADJUST validates costReason but drops it instead of preserving it separately from the general reason.
   it("ADJUST audits costReason separately while retaining the general adjustment reason", async () => {
     await closeFixture();
