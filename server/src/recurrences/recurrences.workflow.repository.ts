@@ -4,7 +4,11 @@ import type {
   ParticipacionReincidencia,
   PrismaClient,
 } from "../../generated/prisma/client.js";
-import { validateQualityDecisions } from "./recurrences.calculations.js";
+import {
+  requiresPreventiveAction,
+  sumUniqueProductiveMinutes,
+  validateQualityDecisions,
+} from "./recurrences.calculations.js";
 import {
   lockOrdersInOrder,
   lockRecurrence,
@@ -19,15 +23,24 @@ import {
 import type {
   AddRecurrenceNoteInput,
   AddRecurrenceVisitInput,
+  AdjustRecurrenceInput,
   AnalyzeRecurrenceInput,
+  CloseRecurrenceInput,
   CorrectRecurrenceInput,
+  DismissRecurrenceInput,
   QualityDecisionInput,
   RecurrenceActorContext,
 } from "./recurrences.types.js";
 
 type RecurrencesWorkflowRepository = Pick<
   RecurrencesRepository,
-  "analyzeRecurrence" | "correctRecurrence" | "addVisit" | "addNote"
+  | "analyzeRecurrence"
+  | "correctRecurrence"
+  | "addVisit"
+  | "addNote"
+  | "dismissRecurrence"
+  | "closeRecurrence"
+  | "adjustClosedRecurrence"
 >;
 
 interface VisitRelationHookContext {
@@ -37,9 +50,15 @@ interface VisitRelationHookContext {
   proposedOrderId: string;
 }
 
+interface TerminalRelationHookContext {
+  recurrenceId: string;
+  orderIds: readonly string[];
+}
+
 export interface RecurrencesWorkflowRepositoryOptions {
   hooks?: {
     afterVisitRelationsRead?: (context: VisitRelationHookContext) => Promise<void>;
+    afterCloseRelationsRead?: (context: TerminalRelationHookContext) => Promise<void>;
   };
 }
 
@@ -67,6 +86,23 @@ interface PreliminaryVisitRelations {
   orderIds: string[];
 }
 
+interface PreliminaryTerminalRelations {
+  orderIds: string[];
+}
+
+interface LockedActivity {
+  id: string;
+  orderId: string;
+  productiveMinutes: number;
+}
+
+interface QualitySnapshot {
+  technicianId: string;
+  participation: ParticipacionReincidencia;
+  affectsQuality: boolean;
+  justification: string | null;
+}
+
 const mutableStatuses = ["OPEN", "ANALYSIS", "CORRECTION"] as const;
 const maximumRelationAttempts = 3;
 
@@ -77,6 +113,7 @@ class RejectedRecurrenceWorkflow extends Error {
 }
 
 class VisitRelationsChanged extends Error {}
+class TerminalRelationsChanged extends Error {}
 
 function reject(kind: RecurrenceFailureKind): never {
   throw new RejectedRecurrenceWorkflow(kind);
@@ -105,6 +142,16 @@ function asJson(value: object): Prisma.InputJsonValue {
 function normalizedOptional(value: string | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function normalizedNullable(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function validReason(value: string): string | null {
+  const reason = value.trim();
+  return reason.length >= 10 && reason.length <= 500 ? reason : null;
 }
 
 function pairedCostIsInvalid(input: { estimatedCost?: string; costReason?: string }): boolean {
@@ -272,6 +319,81 @@ function originalSnapshots(
     .sort((left, right) =>
       left.technicianId.localeCompare(right.technicianId)
       || left.participation.localeCompare(right.participation));
+}
+
+function qualitySnapshots(rows: readonly QualitySnapshot[]): QualitySnapshot[] {
+  return rows.map((row) => ({
+    technicianId: row.technicianId,
+    participation: row.participation,
+    affectsQuality: row.affectsQuality,
+    justification: row.justification,
+  })).sort((left, right) =>
+    left.technicianId.localeCompare(right.technicianId)
+    || left.participation.localeCompare(right.participation));
+}
+
+async function lockActiveRecurrenceEvidence(
+  transaction: Prisma.TransactionClient,
+  recurrenceId: string,
+): Promise<string[]> {
+  const rows = await transaction.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "evidencia"
+    WHERE "reincidencia_id" = ${recurrenceId}::uuid
+      AND "deleted_at" IS NULL
+    ORDER BY "id" ASC
+    FOR UPDATE
+  `;
+  return rows.map(({ id }) => id);
+}
+
+async function lockCompletedActivities(
+  transaction: Prisma.TransactionClient,
+  orderIds: readonly string[],
+): Promise<LockedActivity[]> {
+  const activities: LockedActivity[] = [];
+  for (const orderId of canonicalIds(orderIds)) {
+    const rows = await transaction.$queryRaw<LockedActivity[]>`
+      SELECT
+        "id",
+        "orden_id" AS "orderId",
+        "productive_minutes" AS "productiveMinutes"
+      FROM "actividad"
+      WHERE "orden_id" = ${orderId}::uuid
+        AND UPPER("status"::text) = 'COMPLETED'
+        AND "deleted_at" IS NULL
+      ORDER BY "id" ASC
+      FOR UPDATE
+    `;
+    activities.push(...rows);
+  }
+  return activities;
+}
+
+function derivedVisitMinutes(
+  orderIds: readonly string[],
+  activities: readonly LockedActivity[],
+): Array<{ orderId: string; additionalMinutes: number }> {
+  return canonicalIds(orderIds).map((orderId) => ({
+    orderId,
+    additionalMinutes: sumUniqueProductiveMinutes(
+      activities.filter((activity) => activity.orderId === orderId),
+    ),
+  }));
+}
+
+async function writeVisitMinutes(
+  transaction: Prisma.TransactionClient,
+  recurrenceId: string,
+  visitMinutes: readonly { orderId: string; additionalMinutes: number }[],
+): Promise<void> {
+  for (const visit of visitMinutes) {
+    const updated = await transaction.reincidenciaOrden.updateMany({
+      where: { reincidenciaId: recurrenceId, ordenId: visit.orderId },
+      data: { additionalMinutes: visit.additionalMinutes },
+    });
+    if (updated.count !== 1) throw new TerminalRelationsChanged();
+  }
 }
 
 function canonicalQualityDecisions(
@@ -710,6 +832,390 @@ async function addNoteInTransaction(
   return loadDetail(transaction, recurrenceId);
 }
 
+function dismissalSnapshot(record: {
+  status: EstadoReincidencia;
+  version: number;
+  dismissalReason: string | null;
+  dismissedById: string | null;
+  dismissedAt: Date | null;
+}, technicians: readonly QualitySnapshot[]): object {
+  return {
+    status: record.status,
+    version: record.version,
+    dismissalReason: record.dismissalReason,
+    dismissedById: record.dismissedById,
+    dismissedAt: record.dismissedAt?.toISOString() ?? null,
+    qualityDecisions: qualitySnapshots(technicians),
+  };
+}
+
+async function dismissInTransaction(
+  transaction: Prisma.TransactionClient,
+  recurrenceId: string,
+  input: DismissRecurrenceInput,
+  actor: RecurrenceActorContext,
+  now: Date,
+): Promise<RecurrenceDetailRecord> {
+  const locked = await lockRecurrence(transaction, recurrenceId);
+  if (locked === null) reject("RECURRENCE_NOT_FOUND");
+  const actorUser = await lockUser(transaction, actor.userId);
+  if (!userIsActive(actorUser)) reject("RECURRENCE_NOT_FOUND");
+  const record = await transaction.reincidencia.findUnique({
+    where: { id: recurrenceId },
+    select: {
+      status: true,
+      version: true,
+      dismissalReason: true,
+      dismissedById: true,
+      dismissedAt: true,
+      tecnicos: { select: { tecnicoId: true, participation: true, affectsQuality: true, justification: true } },
+    },
+  });
+  if (record === null) reject("RECURRENCE_NOT_FOUND");
+  if (record.version !== input.version || locked.version !== input.version) reject("VERSION_CONFLICT");
+  if (record.status !== "OPEN" && record.status !== "ANALYSIS") reject("INVALID_RECURRENCE_TRANSITION");
+  const reason = validReason(input.reason);
+  if (reason === null) reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
+  const technicians = record.tecnicos.map(({ tecnicoId, ...technician }) => ({
+    ...technician,
+    technicianId: tecnicoId,
+  }));
+  const beforeData = dismissalSnapshot(record, technicians);
+  await transaction.reincidenciaTecnico.updateMany({
+    where: { reincidenciaId: recurrenceId },
+    data: { affectsQuality: false, justification: null },
+  });
+  const updated = await transaction.reincidencia.updateMany({
+    where: { id: recurrenceId, version: input.version, status: { in: ["OPEN", "ANALYSIS"] } },
+    data: {
+      status: "DISMISSED",
+      dismissalReason: reason,
+      dismissedById: actorUser.id,
+      dismissedAt: now,
+      updatedAt: now,
+      version: { increment: 1 },
+    },
+  });
+  if (updated.count !== 1) reject("VERSION_CONFLICT");
+  const afterTechnicians = technicians.map((technician) => ({
+    ...technician,
+    affectsQuality: false,
+    justification: null,
+  }));
+  await transaction.auditoria.create({ data: {
+    userId: actorUser.id,
+    action: "RECURRENCE_DISMISSED",
+    entity: "Reincidencia",
+    entityId: recurrenceId,
+    beforeData: asJson(beforeData),
+    afterData: asJson(dismissalSnapshot({
+      status: "DISMISSED",
+      version: input.version + 1,
+      dismissalReason: reason,
+      dismissedById: actorUser.id,
+      dismissedAt: now,
+    }, afterTechnicians)),
+    reason,
+    occurredAt: now,
+    requestId: actor.requestId,
+  } });
+  return loadDetail(transaction, recurrenceId);
+}
+
+async function readTerminalRelations(
+  database: PrismaClient,
+  recurrenceId: string,
+): Promise<PreliminaryTerminalRelations | null> {
+  const record = await database.reincidencia.findUnique({
+    where: { id: recurrenceId },
+    select: { ordenes: { select: { ordenId: true } } },
+  });
+  return record === null
+    ? null
+    : { orderIds: canonicalIds(record.ordenes.map(({ ordenId }) => ordenId)) };
+}
+
+function terminalRelationsAreCurrent(
+  preliminary: PreliminaryTerminalRelations,
+  orderIds: readonly string[],
+): boolean {
+  return sameIds(preliminary.orderIds, orderIds);
+}
+
+function closureSnapshot(record: {
+  status: EstadoReincidencia;
+  version: number;
+  additionalMinutes: number;
+  closedById: string | null;
+  closedAt: Date | null;
+}, visitMinutes: readonly { orderId: string; additionalMinutes: number }[]): object {
+  return {
+    status: record.status,
+    version: record.version,
+    additionalMinutes: record.additionalMinutes,
+    closedById: record.closedById,
+    closedAt: record.closedAt?.toISOString() ?? null,
+    visitMinutes,
+  };
+}
+
+async function closeInTransaction(
+  transaction: Prisma.TransactionClient,
+  recurrenceId: string,
+  preliminary: PreliminaryTerminalRelations,
+  input: CloseRecurrenceInput,
+  actor: RecurrenceActorContext,
+  now: Date,
+): Promise<RecurrenceDetailRecord> {
+  const lockedOrders = await lockOrdersInOrder(transaction, preliminary.orderIds);
+  const locked = await lockRecurrence(transaction, recurrenceId);
+  if (locked === null) reject("RECURRENCE_NOT_FOUND");
+  const record = await transaction.reincidencia.findUnique({
+    where: { id: recurrenceId },
+    select: {
+      status: true,
+      version: true,
+      causeId: true,
+      impact: true,
+      responsibility: true,
+      analysis: true,
+      correctiveAction: true,
+      preventiveAction: true,
+      additionalMinutes: true,
+      closedById: true,
+      closedAt: true,
+      ordenes: { select: { ordenId: true, additionalMinutes: true } },
+      tecnicos: { select: { tecnicoId: true, participation: true, affectsQuality: true, justification: true } },
+    },
+  });
+  if (record === null) reject("RECURRENCE_NOT_FOUND");
+  const currentOrderIds = canonicalIds(record.ordenes.map(({ ordenId }) => ordenId));
+  if (!terminalRelationsAreCurrent(preliminary, currentOrderIds)) throw new TerminalRelationsChanged();
+  if (record.version !== input.version || locked.version !== input.version) reject("VERSION_CONFLICT");
+  if (record.status !== "CORRECTION") reject("INVALID_RECURRENCE_TRANSITION");
+  const cause = record.causeId === null ? null : await lockCause(transaction, record.causeId);
+  const evidenceIds = await lockActiveRecurrenceEvidence(transaction, recurrenceId);
+  const activities = await lockCompletedActivities(transaction, currentOrderIds);
+  const actorUser = await lockUser(transaction, actor.userId);
+  if (!userIsActive(actorUser)) reject("RECURRENCE_NOT_FOUND");
+  if (cause === null || !cause.isActive || cause.deletedAt !== null) reject("RECURRENCE_CAUSE_NOT_FOUND");
+  if (record.responsibility === "UNDETERMINED") reject("RECURRENCE_QUALITY_INVALID");
+  if (!record.analysis?.trim() || !record.correctiveAction?.trim()) reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
+  if (requiresPreventiveAction(record.impact, record.responsibility) && !record.preventiveAction?.trim()) {
+    reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
+  }
+  const originals = originalSnapshots(record.tecnicos);
+  const decisions = originals.map(({ technicianId, affectsQuality, justification }) => ({
+    technicianId,
+    affectsQuality,
+    ...(justification === null ? {} : { justification }),
+  }));
+  if (!qualityDecisionSetIsComplete(originals, decisions)
+    || !validateQualityDecisions(record.responsibility, originals.map(({ technicianId }) => technicianId), decisions).valid) {
+    reject("RECURRENCE_QUALITY_INVALID");
+  }
+  if (evidenceIds.length === 0) reject("RECURRENCE_EVIDENCE_REQUIRED");
+  if (lockedOrders.length !== currentOrderIds.length
+    || lockedOrders.some((order) => order.deletedAt !== null || order.status !== "COMPLETED" || order.endedAt === null)) {
+    reject("RECURRENCE_ORDER_MISMATCH");
+  }
+  const beforeVisitMinutes = canonicalIds(currentOrderIds).map((orderId) => ({
+    orderId,
+    additionalMinutes: record.ordenes.find((visit) => visit.ordenId === orderId)!.additionalMinutes,
+  }));
+  const visitMinutes = derivedVisitMinutes(currentOrderIds, activities);
+  const additionalMinutes = sumUniqueProductiveMinutes(activities);
+  const beforeData = closureSnapshot(record, beforeVisitMinutes);
+  await writeVisitMinutes(transaction, recurrenceId, visitMinutes);
+  const updated = await transaction.reincidencia.updateMany({
+    where: { id: recurrenceId, version: input.version, status: "CORRECTION" },
+    data: {
+      status: "CLOSED",
+      additionalMinutes,
+      closedById: actorUser.id,
+      closedAt: now,
+      updatedAt: now,
+      version: { increment: 1 },
+    },
+  });
+  if (updated.count !== 1) reject("VERSION_CONFLICT");
+  await transaction.auditoria.create({ data: {
+    userId: actorUser.id,
+    action: "RECURRENCE_CLOSED",
+    entity: "Reincidencia",
+    entityId: recurrenceId,
+    beforeData: asJson(beforeData),
+    afterData: asJson(closureSnapshot({
+      status: "CLOSED",
+      version: input.version + 1,
+      additionalMinutes,
+      closedById: actorUser.id,
+      closedAt: now,
+    }, visitMinutes)),
+    occurredAt: now,
+    requestId: actor.requestId,
+  } });
+  return loadDetail(transaction, recurrenceId);
+}
+
+function adjustmentSnapshot(record: {
+  status: EstadoReincidencia;
+  version: number;
+  causeId: string | null;
+  impact: string;
+  responsibility: string;
+  analysis: string | null;
+  correctiveAction: string | null;
+  preventiveAction: string | null;
+  observations: string | null;
+  estimatedCost: { toFixed(fractionDigits: number): string };
+  additionalMinutes: number;
+}, qualityDecisions: readonly OriginalSnapshot[]): object {
+  return {
+    status: record.status,
+    version: record.version,
+    causeId: record.causeId,
+    impact: record.impact,
+    responsibility: record.responsibility,
+    analysis: record.analysis,
+    correctiveAction: record.correctiveAction,
+    preventiveAction: record.preventiveAction,
+    observations: record.observations,
+    estimatedCost: record.estimatedCost.toFixed(2),
+    additionalMinutes: record.additionalMinutes,
+    qualityDecisions,
+  };
+}
+
+async function adjustInTransaction(
+  transaction: Prisma.TransactionClient,
+  recurrenceId: string,
+  preliminary: PreliminaryTerminalRelations,
+  input: AdjustRecurrenceInput,
+  actor: RecurrenceActorContext,
+  now: Date,
+): Promise<RecurrenceDetailRecord> {
+  await lockOrdersInOrder(transaction, preliminary.orderIds);
+  const locked = await lockRecurrence(transaction, recurrenceId);
+  if (locked === null) reject("RECURRENCE_NOT_FOUND");
+  const record = await transaction.reincidencia.findUnique({ where: { id: recurrenceId }, select: {
+    status: true,
+    version: true,
+    causeId: true,
+    impact: true,
+    responsibility: true,
+    analysis: true,
+    correctiveAction: true,
+    preventiveAction: true,
+    observations: true,
+    estimatedCost: true,
+    additionalMinutes: true,
+    ordenes: { select: { ordenId: true, additionalMinutes: true } },
+    tecnicos: { select: { tecnicoId: true, participation: true, affectsQuality: true, justification: true } },
+  } });
+  if (record === null) reject("RECURRENCE_NOT_FOUND");
+  const currentOrderIds = canonicalIds(record.ordenes.map(({ ordenId }) => ordenId));
+  if (!terminalRelationsAreCurrent(preliminary, currentOrderIds)) throw new TerminalRelationsChanged();
+  if (record.version !== input.version || locked.version !== input.version) reject("VERSION_CONFLICT");
+  if (record.status !== "CLOSED") reject("INVALID_RECURRENCE_TRANSITION");
+  const nextCauseId = input.causeId === undefined ? record.causeId : canonicalUuid(input.causeId);
+  const cause = nextCauseId === null ? null : await lockCause(transaction, nextCauseId);
+  const activities = await lockCompletedActivities(transaction, currentOrderIds);
+  const actorUser = await lockUser(transaction, actor.userId);
+  if (!userIsActive(actorUser)) reject("RECURRENCE_NOT_FOUND");
+  const reason = validReason(input.reason);
+  if (reason === null) reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
+  if (cause === null || !cause.isActive || cause.deletedAt !== null) reject("RECURRENCE_CAUSE_NOT_FOUND");
+  if (pairedCostIsInvalid(input) || (input.estimatedCost !== undefined && !isValidCost(input.estimatedCost))) {
+    reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
+  }
+  const nextResponsibility = input.responsibility ?? record.responsibility;
+  if (nextResponsibility === "UNDETERMINED") reject("RECURRENCE_QUALITY_INVALID");
+  const nextImpact = input.impact ?? record.impact;
+  const nextAnalysis = input.analysis === undefined ? record.analysis : input.analysis.trim();
+  const nextCorrectiveAction = input.correctiveAction === undefined ? record.correctiveAction : input.correctiveAction.trim();
+  const nextPreventiveAction = input.preventiveAction === undefined ? record.preventiveAction : normalizedNullable(input.preventiveAction);
+  const nextObservations = input.observations === undefined ? record.observations : normalizedNullable(input.observations);
+  if (!nextAnalysis?.trim() || !nextCorrectiveAction?.trim()) reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
+  if (requiresPreventiveAction(nextImpact, nextResponsibility) && !nextPreventiveAction?.trim()) {
+    reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
+  }
+  const originals = originalSnapshots(record.tecnicos);
+  const decisions = input.qualityDecisions === undefined
+    ? originals.map(({ technicianId, affectsQuality, justification }) => ({ technicianId, affectsQuality, ...(justification === null ? {} : { justification }) }))
+    : canonicalQualityDecisions(input.qualityDecisions);
+  if (!qualityDecisionSetIsComplete(originals, decisions)
+    || !validateQualityDecisions(nextResponsibility, originals.map(({ technicianId }) => technicianId), decisions).valid) {
+    reject("RECURRENCE_QUALITY_INVALID");
+  }
+  const nextEstimatedCost = input.estimatedCost === undefined
+    ? record.estimatedCost
+    : new Prisma.Decimal(input.estimatedCost.trim());
+  const visitMinutes = derivedVisitMinutes(currentOrderIds, activities);
+  const additionalMinutes = sumUniqueProductiveMinutes(activities);
+  const beforeData = adjustmentSnapshot(record, originals);
+  const decisionsById = new Map(decisions.map((decision) => [decision.technicianId, decision]));
+  for (const original of originals) {
+    const decision = decisionsById.get(original.technicianId)!;
+    const updated = await transaction.reincidenciaTecnico.updateMany({
+      where: { reincidenciaId: recurrenceId, tecnicoId: original.technicianId, participation: original.participation },
+      data: { affectsQuality: decision.affectsQuality, justification: decision.affectsQuality ? normalizedOptional(decision.justification) : null },
+    });
+    if (updated.count !== 1) reject("RECURRENCE_QUALITY_INVALID");
+  }
+  await writeVisitMinutes(transaction, recurrenceId, visitMinutes);
+  const updated = await transaction.reincidencia.updateMany({
+    where: { id: recurrenceId, version: input.version, status: "CLOSED" },
+    data: {
+      causeId: cause.id,
+      impact: nextImpact,
+      responsibility: nextResponsibility,
+      analysis: nextAnalysis.trim(),
+      correctiveAction: nextCorrectiveAction.trim(),
+      preventiveAction: nextPreventiveAction,
+      observations: nextObservations,
+      estimatedCost: nextEstimatedCost,
+      additionalMinutes,
+      updatedAt: now,
+      version: { increment: 1 },
+    },
+  });
+  if (updated.count !== 1) reject("VERSION_CONFLICT");
+  const afterDecisions = originals.map((original) => {
+    const decision = decisionsById.get(original.technicianId)!;
+    return {
+      technicianId: original.technicianId,
+      participation: original.participation,
+      affectsQuality: decision.affectsQuality,
+      justification: decision.affectsQuality ? normalizedOptional(decision.justification) : null,
+    };
+  });
+  await transaction.auditoria.create({ data: {
+    userId: actorUser.id,
+    action: "RECURRENCE_ADJUSTED",
+    entity: "Reincidencia",
+    entityId: recurrenceId,
+    beforeData: asJson(beforeData),
+    afterData: asJson(adjustmentSnapshot({
+      status: "CLOSED",
+      version: input.version + 1,
+      causeId: cause.id,
+      impact: nextImpact,
+      responsibility: nextResponsibility,
+      analysis: nextAnalysis.trim(),
+      correctiveAction: nextCorrectiveAction.trim(),
+      preventiveAction: nextPreventiveAction,
+      observations: nextObservations,
+      estimatedCost: nextEstimatedCost,
+      additionalMinutes,
+    }, afterDecisions)),
+    reason,
+    occurredAt: now,
+    requestId: actor.requestId,
+  } });
+  return loadDetail(transaction, recurrenceId);
+}
+
 export function createRecurrencesWorkflowRepository(
   database: PrismaClient,
   options: RecurrencesWorkflowRepositoryOptions = {},
@@ -793,6 +1299,67 @@ export function createRecurrencesWorkflowRepository(
         if (error instanceof RejectedRecurrenceWorkflow) return { kind: error.kind };
         throw error;
       }
+    },
+
+    async dismissRecurrence(id, input, actor, now) {
+      if (!canReview(actor)) return { kind: "RECURRENCE_NOT_FOUND" };
+      try {
+        const recurrence = await runRecurrenceSerializableTransaction(database, (transaction) =>
+          dismissInTransaction(transaction, canonicalUuid(id), input, actor, now));
+        return { kind: "UPDATED", recurrence } satisfies RecurrenceMutationResult;
+      } catch (error) {
+        if (error instanceof RejectedRecurrenceWorkflow) return { kind: error.kind };
+        throw error;
+      }
+    },
+
+    async closeRecurrence(id, input, actor, now) {
+      if (!canReview(actor)) return { kind: "RECURRENCE_NOT_FOUND" };
+      const recurrenceId = canonicalUuid(id);
+      for (let attempt = 1; attempt <= maximumRelationAttempts; attempt += 1) {
+        const preliminary = await readTerminalRelations(database, recurrenceId);
+        await options.hooks?.afterCloseRelationsRead?.({
+          recurrenceId,
+          orderIds: preliminary?.orderIds ?? [],
+        });
+        if (preliminary === null) return { kind: "RECURRENCE_NOT_FOUND" };
+        try {
+          const recurrence = await runRecurrenceSerializableTransaction(database, (transaction) =>
+            closeInTransaction(transaction, recurrenceId, preliminary, input, actor, now));
+          return { kind: "UPDATED", recurrence } satisfies RecurrenceMutationResult;
+        } catch (error) {
+          if (error instanceof TerminalRelationsChanged && attempt < maximumRelationAttempts) continue;
+          if (error instanceof RejectedRecurrenceWorkflow) return { kind: error.kind };
+          throw error;
+        }
+      }
+      throw new Error("Unreachable recurrence closure relationship retry state");
+    },
+
+    async adjustClosedRecurrence(id, input, actor, now) {
+      if (!canReview(actor)) return { kind: "RECURRENCE_NOT_FOUND" };
+      const recurrenceId = canonicalUuid(id);
+      const canonicalInput = {
+        ...input,
+        ...(input.causeId === undefined ? {} : { causeId: canonicalUuid(input.causeId) }),
+        ...(input.qualityDecisions === undefined
+          ? {}
+          : { qualityDecisions: canonicalQualityDecisions(input.qualityDecisions) }),
+      };
+      for (let attempt = 1; attempt <= maximumRelationAttempts; attempt += 1) {
+        const preliminary = await readTerminalRelations(database, recurrenceId);
+        if (preliminary === null) return { kind: "RECURRENCE_NOT_FOUND" };
+        try {
+          const recurrence = await runRecurrenceSerializableTransaction(database, (transaction) =>
+            adjustInTransaction(transaction, recurrenceId, preliminary, canonicalInput, actor, now));
+          return { kind: "UPDATED", recurrence } satisfies RecurrenceMutationResult;
+        } catch (error) {
+          if (error instanceof TerminalRelationsChanged && attempt < maximumRelationAttempts) continue;
+          if (error instanceof RejectedRecurrenceWorkflow) return { kind: error.kind };
+          throw error;
+        }
+      }
+      throw new Error("Unreachable closed recurrence adjustment relationship retry state");
     },
   };
 }
