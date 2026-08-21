@@ -11,6 +11,7 @@ import { createOrdersRouter } from "../orders/orders.routes.js";
 import { createActivitiesRouter } from "../activities/activities.routes.js";
 import { createEvidencesRouter } from "../evidences/evidences.routes.js";
 import type { EvidenceStorage } from "../evidences/evidences.storage.js";
+import { createRecurrencesRouter } from "../recurrences/recurrences.routes.js";
 import { createHealthRouter } from "./health.routes.js";
 
 export function createApiRouter(
@@ -39,6 +40,7 @@ export function createApiRouter(
   );
   router.use("/orders", createOrdersRouter(env, database, authService));
   router.use(createActivitiesRouter(env, database, authService));
+  router.use("/recurrences", createRecurrencesRouter(env, database, authService));
   router.use(createEvidencesRouter(env, database, authService, evidenceStorage, logger));
   return router;
 }

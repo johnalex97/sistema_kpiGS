@@ -13,6 +13,7 @@ export default defineConfig({
       "tests/orders/orders-http.test.ts",
       "tests/activities/activities-http.test.ts",
       "tests/evidences/evidences-http.test.ts",
+      "tests/recurrences/recurrences-http.test.ts",
     ],
     fileParallelism: false,
     sequence: { concurrent: false },
