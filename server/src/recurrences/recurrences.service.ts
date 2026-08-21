@@ -131,8 +131,8 @@ async function publicOperation<T>(operation: () => Promise<T>): Promise<T> {
 
 export function createRecurrenceService(
   repository: RecurrencesRepository,
-  now: () => Date = () => new Date(),
-  warningDays = 30,
+  now: () => Date,
+  warningDays: number,
 ): RecurrenceService {
   async function mutate(
     operation: (timestamp: Date) => Promise<RecurrenceMutationResult>,

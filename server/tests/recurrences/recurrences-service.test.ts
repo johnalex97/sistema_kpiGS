@@ -24,6 +24,8 @@ import type {
 const fixedNow = new Date("2026-08-21T12:00:00.000Z");
 const recurrenceId = "10000000-0000-4000-8000-000000000001";
 const technicianId = "10000000-0000-4000-8000-000000000002";
+const foreignTechnicianId = "10000000-0000-4000-8000-000000000003";
+const absentRecurrenceId = "10000000-0000-4000-8000-000000000099";
 const listFilters: RecurrenceListFilters = { page: 2, pageSize: 10 };
 const reportInput: ReportRecurrenceInput = {
   originalOrderId: "20000000-0000-4000-8000-000000000001",
@@ -127,6 +129,13 @@ function expectForbidden(operation: Promise<unknown>) {
   });
 }
 
+function service(repository: RecurrencesRepository = repositoryWith()) {
+  return createRecurrenceService(repository, () => fixedNow, 30);
+}
+
+// @ts-expect-error RecurrenceService must receive the validated environment threshold.
+createRecurrenceService(repositoryWith(), () => fixedNow);
+
 describe("RecurrenceService read permission matrix", () => {
   it.each([
     ["ADMIN", ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"], null],
@@ -135,10 +144,10 @@ describe("RecurrenceService read permission matrix", () => {
     ["management technician", ["RECURRENCES_REVIEW", "RECURRENCES_VIEW_OWN"], technicianId],
   ] as const)("uses ALL scope for %s", async (_role, permissions, linkedTechnicianId) => {
     const repository = repositoryWith();
-    const service = createRecurrenceService(repository, () => fixedNow);
+    const recurrenceService = service(repository);
 
-    const result = await service.list(listFilters, actor(permissions, linkedTechnicianId));
-    await service.get(recurrenceId, actor(permissions, linkedTechnicianId));
+    const result = await recurrenceService.list(listFilters, actor(permissions, linkedTechnicianId));
+    await recurrenceService.get(recurrenceId, actor(permissions, linkedTechnicianId));
 
     expect(repository.listRecurrences).toHaveBeenCalledWith(listFilters, { kind: "ALL" });
     expect(repository.findRecurrence).toHaveBeenCalledWith(recurrenceId, { kind: "ALL" });
@@ -150,12 +159,12 @@ describe("RecurrenceService read permission matrix", () => {
 
   it("uses the linked technician scope for own catalog, list, and detail reads", async () => {
     const repository = repositoryWith();
-    const service = createRecurrenceService(repository, () => fixedNow);
+    const recurrenceService = service(repository);
     const technician = actor(["RECURRENCES_VIEW_OWN"], technicianId);
 
-    const catalog = await service.getCatalog(technician);
-    await service.list(listFilters, technician);
-    await service.get(recurrenceId, technician);
+    const catalog = await recurrenceService.getCatalog(technician);
+    await recurrenceService.list(listFilters, technician);
+    await recurrenceService.get(recurrenceId, technician);
 
     expect(catalog).toEqual({ causes: [{ id: analyzeInput.causeId, code: "INSTALL", name: "Instalación" }] });
     expect(repository.listRecurrences).toHaveBeenCalledWith(
@@ -172,17 +181,21 @@ describe("RecurrenceService read permission matrix", () => {
     ["unlinked technician", ["RECURRENCES_VIEW_OWN"], null],
     ["missing permission", [], technicianId],
   ] as const)("denies %s read access", async (_name, permissions, linkedTechnicianId) => {
-    const service = createRecurrenceService(repositoryWith(), () => fixedNow);
-    await expectForbidden(service.list(listFilters, actor(permissions, linkedTechnicianId)));
+    const recurrenceService = service();
+    await expectForbidden(recurrenceService.list(listFilters, actor(permissions, linkedTechnicianId)));
   });
 
-  it("returns the same recurrence-not-found envelope for an absent and an out-of-scope recurrence", async () => {
+  it.each([
+    ["absent", absentRecurrenceId, actor(["RECURRENCES_VIEW_OWN"], technicianId), { kind: "TECHNICIAN", technicianId }],
+    ["out-of-scope", recurrenceId, actor(["RECURRENCES_VIEW_OWN"], foreignTechnicianId), { kind: "TECHNICIAN", technicianId: foreignTechnicianId }],
+  ] as const)("returns RECURRENCE_NOT_FOUND for a %s recurrence", async (_scenario, id, currentActor, scope) => {
     const missing = repositoryWith();
     vi.mocked(missing.findRecurrence).mockResolvedValue(null);
-    const service = createRecurrenceService(missing, () => fixedNow);
+    const recurrenceService = service(missing);
 
-    await expect(service.get(recurrenceId, actor(["RECURRENCES_VIEW_OWN"], technicianId)))
+    await expect(recurrenceService.get(id, currentActor))
       .rejects.toMatchObject({ statusCode: 404, code: "RECURRENCE_NOT_FOUND", message: "El caso de reincidencia solicitado no existe" });
+    expect(missing.findRecurrence).toHaveBeenCalledWith(id, scope);
   });
 });
 
@@ -197,21 +210,21 @@ describe("RecurrenceService write permission matrix", () => {
   ] as const;
 
   it.each(managementOperations)("allows a reviewer to %s", async (_name, operation) => {
-    const service = createRecurrenceService(repositoryWith(), () => fixedNow);
-    await expect(operation(service, actor(["RECURRENCES_REVIEW"], technicianId))).resolves.toMatchObject({ id: recurrenceId });
+    const recurrenceService = service();
+    await expect(operation(recurrenceService, actor(["RECURRENCES_REVIEW"], technicianId))).resolves.toMatchObject({ id: recurrenceId });
   });
 
   it.each(managementOperations)("denies a linked technician without review to %s", async (_name, operation) => {
-    const service = createRecurrenceService(repositoryWith(), () => fixedNow);
-    await expectForbidden(operation(service, actor(["RECURRENCES_VIEW_OWN", "RECURRENCES_REPORT_OWN"], technicianId)));
+    const recurrenceService = service();
+    await expectForbidden(operation(recurrenceService, actor(["RECURRENCES_VIEW_OWN", "RECURRENCES_REPORT_OWN"], technicianId)));
   });
 
   it("passes the configured warning-days threshold to the analysis workflow", async () => {
     const repository = repositoryWith();
-    const service = createRecurrenceService(repository, () => fixedNow, 45);
+    const recurrenceService = createRecurrenceService(repository, () => fixedNow, 45);
     const reviewer = actor(["RECURRENCES_REVIEW"]);
 
-    await service.analyze(recurrenceId, analyzeInput, reviewer);
+    await recurrenceService.analyze(recurrenceId, analyzeInput, reviewer);
 
     expect(repository.analyzeRecurrence).toHaveBeenCalledWith(
       recurrenceId,
@@ -227,9 +240,9 @@ describe("RecurrenceService write permission matrix", () => {
     ["linked reporting technician", ["RECURRENCES_REPORT_OWN"], technicianId],
   ] as const)("allows recurrence report for %s", async (_name, permissions, linkedTechnicianId) => {
     const repository = repositoryWith();
-    const service = createRecurrenceService(repository, () => fixedNow);
+    const recurrenceService = service(repository);
 
-    await expect(service.report(reportInput, actor(permissions, linkedTechnicianId))).resolves.toMatchObject({ id: recurrenceId });
+    await expect(recurrenceService.report(reportInput, actor(permissions, linkedTechnicianId))).resolves.toMatchObject({ id: recurrenceId });
     expect(repository.reportRecurrence).toHaveBeenCalledWith(
       reportInput,
       actor(permissions, linkedTechnicianId),
@@ -241,46 +254,46 @@ describe("RecurrenceService write permission matrix", () => {
     ["unlinked reporter", ["RECURRENCES_REPORT_OWN"], null],
     ["technician without reporting permission", ["RECURRENCES_VIEW_OWN"], technicianId],
   ] as const)("denies report from %s", async (_name, permissions, linkedTechnicianId) => {
-    const service = createRecurrenceService(repositoryWith(), () => fixedNow);
-    await expectForbidden(service.report(reportInput, actor(permissions, linkedTechnicianId)));
+    const recurrenceService = service();
+    await expectForbidden(recurrenceService.report(reportInput, actor(permissions, linkedTechnicianId)));
   });
 
   it.each([
     ["reviewer", ["RECURRENCES_REVIEW"], null],
     ["linked visible technician", ["RECURRENCES_VIEW_OWN"], technicianId],
   ] as const)("allows a recurrence note from %s", async (_name, permissions, linkedTechnicianId) => {
-    const service = createRecurrenceService(repositoryWith(), () => fixedNow);
-    await expect(service.addNote(recurrenceId, noteInput, actor(permissions, linkedTechnicianId))).resolves.toMatchObject({ id: recurrenceId });
+    const recurrenceService = service();
+    await expect(recurrenceService.addNote(recurrenceId, noteInput, actor(permissions, linkedTechnicianId))).resolves.toMatchObject({ id: recurrenceId });
   });
 
   it.each([
     ["unlinked report-only actor", ["RECURRENCES_REPORT_OWN"], null],
     ["linked reporter without view permission", ["RECURRENCES_REPORT_OWN"], technicianId],
   ] as const)("denies notes from %s", async (_name, permissions, linkedTechnicianId) => {
-    const service = createRecurrenceService(repositoryWith(), () => fixedNow);
-    await expectForbidden(service.addNote(recurrenceId, noteInput, actor(permissions, linkedTechnicianId)));
+    const recurrenceService = service();
+    await expectForbidden(recurrenceService.addNote(recurrenceId, noteInput, actor(permissions, linkedTechnicianId)));
   });
 });
 
 describe("RecurrenceService public failure policy", () => {
   it.each([
-    ["RECURRENCE_NOT_FOUND", 404, "RECURRENCE_NOT_FOUND"],
-    ["RECURRENCE_ORDER_NOT_FOUND", 404, "ORDER_NOT_FOUND"],
-    ["RECURRENCE_CAUSE_NOT_FOUND", 404, "RECURRENCE_NOT_FOUND"],
-    ["VERSION_CONFLICT", 409, "VERSION_CONFLICT"],
-    ["INVALID_RECURRENCE_TRANSITION", 409, "INVALID_RECURRENCE_TRANSITION"],
-    ["RECURRENCE_ORDER_MISMATCH", 409, "RECURRENCE_ORDER_MISMATCH"],
-    ["RECURRENCE_DUPLICATE", 409, "RECURRENCE_DUPLICATE"],
-    ["RECURRENCE_VISIT_DUPLICATE", 409, "RECURRENCE_DUPLICATE"],
-    ["RECURRENCE_QUALITY_INVALID", 422, "RECURRENCE_DOCUMENTATION_INCOMPLETE"],
-    ["RECURRENCE_DOCUMENTATION_INCOMPLETE", 422, "RECURRENCE_DOCUMENTATION_INCOMPLETE"],
-    ["RECURRENCE_EVIDENCE_REQUIRED", 422, "RECURRENCE_EVIDENCE_REQUIRED"],
-  ] as const)("maps %s to the documented public error", async (kind, statusCode, code) => {
+    ["RECURRENCE_NOT_FOUND", 404, "RECURRENCE_NOT_FOUND", "El caso de reincidencia solicitado no existe"],
+    ["RECURRENCE_ORDER_NOT_FOUND", 404, "ORDER_NOT_FOUND", "La orden solicitada no existe"],
+    ["RECURRENCE_CAUSE_NOT_FOUND", 404, "RECURRENCE_NOT_FOUND", "El caso de reincidencia solicitado no existe"],
+    ["VERSION_CONFLICT", 409, "VERSION_CONFLICT", "La reincidencia fue modificada por otra operación"],
+    ["INVALID_RECURRENCE_TRANSITION", 409, "INVALID_RECURRENCE_TRANSITION", "La transición de estado no es válida"],
+    ["RECURRENCE_ORDER_MISMATCH", 409, "RECURRENCE_ORDER_MISMATCH", "Las órdenes no pertenecen al mismo cliente y sucursal"],
+    ["RECURRENCE_DUPLICATE", 409, "RECURRENCE_DUPLICATE", "La reincidencia o visita ya existe"],
+    ["RECURRENCE_VISIT_DUPLICATE", 409, "RECURRENCE_DUPLICATE", "La reincidencia o visita ya existe"],
+    ["RECURRENCE_QUALITY_INVALID", 422, "RECURRENCE_DOCUMENTATION_INCOMPLETE", "La documentación de la reincidencia está incompleta"],
+    ["RECURRENCE_DOCUMENTATION_INCOMPLETE", 422, "RECURRENCE_DOCUMENTATION_INCOMPLETE", "La documentación de la reincidencia está incompleta"],
+    ["RECURRENCE_EVIDENCE_REQUIRED", 422, "RECURRENCE_EVIDENCE_REQUIRED", "La reincidencia requiere al menos una evidencia activa"],
+  ] as const)("maps %s to the documented public error", async (kind, statusCode, code, message) => {
     const repository = repositoryWith({ kind: kind as RecurrenceFailureKind });
-    const service = createRecurrenceService(repository, () => fixedNow);
+    const recurrenceService = service(repository);
 
-    await expect(service.analyze(recurrenceId, analyzeInput, actor(["RECURRENCES_REVIEW"])))
-      .rejects.toMatchObject({ statusCode, code });
+    await expect(recurrenceService.analyze(recurrenceId, analyzeInput, actor(["RECURRENCES_REVIEW"])))
+      .rejects.toMatchObject({ statusCode, code, message });
   });
 
   it("does not expose a raw persistence error as a public service message", async () => {
@@ -288,9 +301,9 @@ describe("RecurrenceService public failure policy", () => {
     vi.mocked(repository.analyzeRecurrence).mockRejectedValue(
       new Error("Prisma failure: postgres://private-db/recurrente"),
     );
-    const service = createRecurrenceService(repository, () => fixedNow);
+    const recurrenceService = service(repository);
 
-    await expect(service.analyze(recurrenceId, analyzeInput, actor(["RECURRENCES_REVIEW"])))
+    await expect(recurrenceService.analyze(recurrenceId, analyzeInput, actor(["RECURRENCES_REVIEW"])))
       .rejects.toMatchObject({ statusCode: 500, code: "INTERNAL_ERROR", message: "Ocurrió un error interno" });
   });
 });
