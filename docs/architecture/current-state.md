@@ -40,6 +40,7 @@ server/
 │   ├── evidences/    # Evidencias privadas, almacenamiento y reglas de acceso
 │   ├── middlewares/  # Correlación, 404 y errores
 │   ├── orders/       # Órdenes, asignaciones, operación, materiales e historial
+│   ├── recurrences/  # Casos revisados, flujo, historial y reglas de calidad
 │   ├── routes/       # API versionada
 │   ├── types/        # Contratos API y Express
 │   ├── utils/        # Logger y errores operativos
@@ -100,7 +101,8 @@ al recargar la página.
 5. No hay tratamiento de carga, error de API o reintentos en el frontend.
 6. Los usuarios demo no pueden iniciar sesión; el administrador requiere
    variables privadas de seed.
-7. El frontend no integra todavía evidencias; reincidencias operativas y cálculo de KPI real siguen pendientes.
+7. El frontend no integra todavía evidencias ni reincidencias; el cálculo real
+   de puntajes KPI sigue pendiente.
 8. Algunos controles visuales todavía no ejecutan ninguna acción.
 
 ## Validaciones ejecutadas
@@ -122,8 +124,12 @@ Backend, ejecutado desde `server/`:
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 8 pruebas de reconciliación pura |
 | `npm run evidences:verify` | Correcto con una raíz preaprovisionada: `Matched 0`, `Orphan files 0`, `Missing files 0`; una raíz explícita ausente terminó con código `1`, mensaje operacional redactado y sin crearla |
-| `npm run test` | Correcto; 362 pruebas superadas y 1 omitida en 32 archivos |
-| `npm run test:db` | Correcto; 261 pruebas HTTP y PostgreSQL en 21 archivos sobre el esquema `test` aislado (con advertencias deprecadas de `pg`) |
+| Reincidencias unitarias | Correcto; 62 pruebas en 5 archivos |
+| Reincidencias PostgreSQL y HTTP | Correcto; 90 pruebas en 5 archivos |
+| Regresión HTTP de evidencias | Correcto; 8 pruebas |
+| Seguridad, errores y servidor | Correcto; 12 pruebas |
+| `npm run typecheck`, `npm run lint`, `npm run build` | Correctos; lint sin advertencias |
+| PostgreSQL | Las suites anteriores ejecutan contra `schema=test`; se conserva la advertencia deprecada conocida de `pg` sobre `client.query()` concurrente, sin fallo |
 | `npm run build` | Correcto |
 | `npm run db:format`, `db:validate`, `db:generate` | Correctos; schema válido y cliente regenerado |
 | Seed | El seed sin cuenta administrativa se ejecutó dos veces en `public` y dos en `test`, con conteos idénticos: 3 roles, 20 permisos, 41 asignaciones rol-permiso, 3 técnicos, 2 clientes, 3 órdenes, 2 actividades y 2 reincidencias |
@@ -157,7 +163,7 @@ Backend, ejecutado desde `server/`:
 
 El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
 PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
-`"Sistema_kpiGS"` tiene 32 tablas de dominio, nueve migraciones, seed idempotente
+`"Sistema_kpiGS"` tiene 32 tablas de dominio, diez migraciones, seed idempotente
 y un esquema `test` aislado.
 
 El módulo `clients` sigue la cadena completa route → middleware → controller →
@@ -199,14 +205,28 @@ del equipo canónico no elimina su visibilidad anterior. Los rangos temporales
 inválidos se exponen como HTTP 400 con código `VALIDATION_ERROR`. No hay
 integración de estas rutas en la SPA ni documentación OpenAPI/Swagger.
 
-El módulo `evidences` ofrece siete endpoints protegidos para cargar y listar
-evidencias de órdenes o actividades, descargar, editar y archivar. Mantiene los
+El módulo `evidences` ofrece endpoints protegidos para cargar y listar
+evidencias de órdenes, actividades o reincidencias, descargar, editar y
+archivar. Mantiene los
 bytes fuera de rutas públicas en un volumen privado; valida JPEG, PNG, WebP y
 PDF hasta 10 MiB y conserva físicamente los archivos archivados. El comando
 `npm run evidences:verify` sólo lee las claves finales y toda la metadata
 (incluidas archivadas y relaciones heredadas de reincidencia), informa claves
 relativas ordenadas y devuelve `2` ante diferencias. La SPA no consume todavía
 estas rutas.
+
+El módulo `recurrences` sigue la frontera route → middleware → controller →
+service → repositorios de lectura, reporte y flujo → Prisma/PostgreSQL. Expone
+13 endpoints: catálogo, lista, reporte, detalle, análisis, corrección, visitas,
+notas, descarte, cierre, ajuste y dos de evidencia. La décima migración incorpora
+la numeración anual `RI-AAAA-NNNN`, estados `OPEN`, `ANALYSIS`, `CORRECTION`,
+`CLOSED` y `DISMISSED`, snapshots de participantes y auditoría. El servicio
+recibe explícitamente `RECURRENCE_WARNING_DAYS` (entero 1–365) y un reloj; los
+repositorios sostienen transacciones, bloqueos y control optimista. Solo el
+cierre convierte decisiones de calidad en hechos para la futura fase KPI;
+`DISMISSED` no produce efecto. ADMIN y SUPERVISOR tienen alcance global;
+TECHNICIAN tiene alcance propio histórico y no puede revisar ni ver evidencia
+`INTERNAL`.
 
 La separación será:
 

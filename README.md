@@ -91,8 +91,11 @@ historial append-only con una sola asignación abierta por orden y técnico, y
 corrige la descripción del permiso `ACTIVITIES_CREATE_OWN`. La octava,
 `20260817120000_evidences_api_constraints`, incorpora el contrato de metadatos
 de evidencias; la novena, `20260817130000_evidences_phase_9_access_constraints`,
-incorpora los permisos y restricciones de acceso de fase 9. Las nueve
-migraciones deben estar aplicadas tanto en `public` como en `test`.
+incorpora los permisos y restricciones de acceso de fase 9. La décima,
+`20260820120000_recurrences_workflow_api`, incorpora el flujo revisado de
+reincidencias, su numeración anual `RI-AAAA-NNNN`, permisos, auditoría y las
+restricciones de sus estados. Las diez migraciones deben estar aplicadas tanto
+en `public` como en `test`.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
 apuntarse al esquema `public`.
@@ -180,6 +183,19 @@ GET /api/v1/activities/:activityId/evidences
 GET /api/v1/evidences/:evidenceId/download
 PATCH /api/v1/evidences/:evidenceId
 POST /api/v1/evidences/:evidenceId/archive
+GET /api/v1/recurrences/catalog
+GET /api/v1/recurrences
+POST /api/v1/recurrences
+GET /api/v1/recurrences/:recurrenceId
+POST /api/v1/recurrences/:recurrenceId/analysis
+POST /api/v1/recurrences/:recurrenceId/correction
+POST /api/v1/recurrences/:recurrenceId/visits
+POST /api/v1/recurrences/:recurrenceId/notes
+POST /api/v1/recurrences/:recurrenceId/dismiss
+POST /api/v1/recurrences/:recurrenceId/close
+POST /api/v1/recurrences/:recurrenceId/adjust
+POST /api/v1/recurrences/:recurrenceId/evidences
+GET /api/v1/recurrences/:recurrenceId/evidences
 ```
 
 Los endpoints mutables de autenticación requieren un encabezado `Origin`
@@ -277,6 +293,85 @@ inmutable. Crear una actividad y reemplazar o ajustar su equipo agrega los
 participantes a esa ACL dentro de la misma transacción; retirar a alguien del
 equipo no elimina su acceso histórico.
 
+## Reincidencias revisadas
+
+La API dispone de 13 endpoints protegidos para registrar y revisar un caso:
+
+```text
+GET    /api/v1/recurrences/catalog
+GET    /api/v1/recurrences
+POST   /api/v1/recurrences
+GET    /api/v1/recurrences/:recurrenceId
+POST   /api/v1/recurrences/:recurrenceId/analysis
+POST   /api/v1/recurrences/:recurrenceId/correction
+POST   /api/v1/recurrences/:recurrenceId/visits
+POST   /api/v1/recurrences/:recurrenceId/notes
+POST   /api/v1/recurrences/:recurrenceId/dismiss
+POST   /api/v1/recurrences/:recurrenceId/close
+POST   /api/v1/recurrences/:recurrenceId/adjust
+POST   /api/v1/recurrences/:recurrenceId/evidences
+GET    /api/v1/recurrences/:recurrenceId/evidences
+```
+
+Todas requieren sesión y contraseña definitiva. Las escrituras también exigen
+un `Origin` permitido. La autorización se compone de permisos persistidos y
+alcance histórico: un UUID ajeno para un técnico responde igual que uno
+inexistente (`404`).
+
+| Actor | Puede realizar |
+| --- | --- |
+| ADMIN o SUPERVISOR | Consultar todos los casos, reportar, analizar, corregir, agregar visitas, descartar, cerrar, ajustar y cargar evidencias `TECHNICIAN` o `INTERNAL`. |
+| TECHNICIAN vinculado | Con `RECURRENCES_REPORT_OWN`, reportar desde una orden correctiva donde participe; con `RECURRENCES_VIEW_OWN`, consultar casos donde fue reportante o participante histórico, agregar notas y cargar/consultar evidencia `TECHNICIAN`. |
+| TECHNICIAN vinculado | No puede clasificar, cambiar responsabilidad, costo, estado, cierre ni ajustar. Nunca lee evidencia `INTERNAL`. |
+
+El reporte recibe una orden original completada, una correctiva distinta de la
+misma sucursal y el problema detectado. El servidor crea un número inmutable
+`RI-AAAA-NNNN`, registra la primera visita y conserva una fotografía histórica
+de los participantes. Un técnico usa `RECURRENCES_REPORT_OWN`; gestión usa
+`RECURRENCES_REVIEW`.
+
+Ejemplo de flujo, con una cookie autorizada omitida:
+
+```powershell
+curl.exe -X POST http://localhost:4000/api/v1/recurrences `
+  -H "Origin: http://localhost:5173" -H "Content-Type: application/json" `
+  -d '{"originalOrderId":"ORIGINAL_ORDER_ID","correctionOrderId":"CORRECTION_ORDER_ID","detectedProblem":"El equipo volvió a fallar"}'
+
+curl.exe -X POST http://localhost:4000/api/v1/recurrences/RECURRENCE_ID/analysis `
+  -H "Origin: http://localhost:5173" -H "Content-Type: application/json" `
+  -d '{"version":1,"causeId":"CAUSE_ID","impact":"HIGH","responsibility":"TECHNICAL_WORK","analysis":"Análisis confirmado","qualityDecisions":[{"technicianId":"TECHNICIAN_ID","affectsQuality":true,"justification":"Intervención incompleta"}]}'
+
+curl.exe -X POST http://localhost:4000/api/v1/recurrences/RECURRENCE_ID/correction `
+  -H "Origin: http://localhost:5173" -H "Content-Type: application/json" `
+  -d '{"version":2,"correctiveAction":"Se reemplazó y probó el componente","preventiveAction":"Inspección preventiva programada"}'
+
+curl.exe -X POST http://localhost:4000/api/v1/recurrences/RECURRENCE_ID/evidences `
+  -H "Origin: http://localhost:5173" `
+  -F "file=@C:\\evidencia\\cierre.jpg;type=image/jpeg" `
+  -F "description=Prueba del cierre" -F "accessLevel=TECHNICIAN"
+
+curl.exe -X POST http://localhost:4000/api/v1/recurrences/RECURRENCE_ID/close `
+  -H "Origin: http://localhost:5173" -H "Content-Type: application/json" `
+  -d '{"version":3}'
+```
+
+El ciclo válido es `OPEN → ANALYSIS → CORRECTION → CLOSED`; desde `OPEN` o
+`ANALYSIS`, gestión puede descartar con `version` y motivo de 10 a 500
+caracteres. `CLOSED` y `DISMISSED` son terminales: no se reabren, no aceptan
+notas ni nuevas evidencias y no cambian con visitas. Un cierre requiere causa,
+análisis, acción correctiva, evidencia activa y órdenes correctivas completadas;
+también exige acción preventiva si el impacto es `HIGH` o la responsabilidad es
+`TECHNICAL_WORK`. Solo un caso `CLOSED` alimentará la futura fase de cálculo de
+KPI; `DISMISSED` nunca lo hace.
+
+Un caso cerrado se corrige con `POST /adjust`, nunca reabriéndolo. El ajuste
+requiere `version`, motivo de 10 a 500 caracteres y al menos un campo permitido;
+no puede cambiar la numeración, órdenes, visitas, fotografías, reportante,
+notas, evidencias ni fecha de cierre. Los minutos adicionales se derivan, al
+cerrar, de actividades `COMPLETED` de todas las órdenes correctivas, sin contar
+dos veces una actividad grupal. Cada cambio efectivo de costo exige motivo y
+queda auditado.
+
 El listado admite paginación, búsqueda, estado, tipo, cliente, sucursal, orden,
 técnico y rango de inicio; se ordena por `createdAt DESC, id DESC`. No se
 expone OpenAPI/Swagger en esta fase.
@@ -346,6 +441,7 @@ AUTH_SESSION_IDLE_MINUTES=30
 AUTH_COOKIE_SECURE=false
 AUTH_MAX_FAILED_ATTEMPTS=5
 AUTH_LOCK_MINUTES=15
+RECURRENCE_WARNING_DAYS=30
 SEED_ADMIN_EMAIL=admin@geeksolution.local
 SEED_ADMIN_PASSWORD=REPLACE_WITH_A_PRIVATE_PASSWORD
 SEED_ADMIN_DISPLAY_NAME=Administrador Geek Solution
@@ -364,6 +460,11 @@ reemplaza su hash.
 En desarrollo local se utiliza `AUTH_COOKIE_SECURE=false` porque la API corre
 por HTTP. En el futuro VPS, producción rechazará el arranque si esta variable
 no es `true`.
+
+`RECURRENCE_WARNING_DAYS` es un entero entre `1` y `365` (el valor local por
+defecto es `30`). Si la detección ocurre después de ese intervalo desde la
+finalización de la orden original, el reporte no se bloquea, pero al confirmar
+el análisis se exige una justificación temporal.
 
 ## Scripts del frontend
 
@@ -420,17 +521,20 @@ sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 El frontend todavía no muestra login ni consume la base o la API de negocio.
 La autorización por propiedad ya se aplica en órdenes y actividades. El
-frontend no integra aún la API de actividades: continúan pendientes la pantalla
-de acceso, evidencias, reincidencias, cálculo/persistencia de KPI, reportes y
-la integración de los mocks con datos reales. No utilices el sistema para información sensible o datos
-personales reales hasta completar las fases funcionales y el despliegue HTTPS.
+frontend no integra aún las APIs de actividades, evidencias ni reincidencias:
+continúan pendientes la pantalla de acceso, los puntajes KPI, reportes,
+exportaciones y la integración de los mocks con datos reales. No utilices el
+sistema para información sensible o datos personales reales hasta completar las
+fases funcionales y el despliegue HTTPS.
 
 Los secretos, archivos `.env`, cliente Prisma generado, logs y builds están
 excluidos mediante `.gitignore`.
 
 ## Evidencias y volumen privado
 
-La API de evidencias admite una carga por solicitud para órdenes o actividades.
+La API de evidencias admite una carga por solicitud para órdenes, actividades o
+reincidencias. Las dos rutas de reincidencias se describen arriba; descarga,
+actualización y archivado usan los endpoints genéricos existentes.
 Acepta exclusivamente JPEG, PNG, WebP y PDF cuando coinciden la extensión
 final, el MIME declarado y la firma del contenido; el límite absoluto es
 `10_485_760` bytes (10 MiB). `EVIDENCE_MAX_BYTES` puede reducirlo, pero no

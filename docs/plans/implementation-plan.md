@@ -141,18 +141,19 @@ se incorporan OpenAPI/Swagger ni conexión del frontend en esta etapa.
 - Validar MIME, tamaño, extensión y autorización de descarga.
 - Relacionar archivos con órdenes, actividades y reincidencias.
 
-Estado: implementada la fase 9 para evidencias de órdenes y actividades. La
+Estado: implementada la fase 9 para evidencias de órdenes, actividades y
+reincidencias. La
 API valida JPEG, PNG, WebP y PDF hasta 10 MiB, conserva metadatos y auditoría
 en PostgreSQL, protege carga, consulta, descarga, edición y archivado por
 permisos, y retiene el archivo físico al archivar. El volumen local privado
 usa claves relativas, temporales en el mismo volumen y promoción atómica; la
 verificación `npm run evidences:verify` compara de forma sólo lectura los
 archivos finales con toda la metadata, incluidas filas archivadas y relaciones
-heredadas de reincidencia. El frontend aún no integra estos endpoints y no hay
-endpoints operativos para reincidencias en esta fase.
+heredadas de reincidencia. El frontend aún no integra estos endpoints; las dos
+rutas de reincidencias se incorporaron con la fase 10.
 
 Salida: carga y descarga privada preparada para migrar a nube, con nueve
-migraciones versionadas en total.
+migraciones versionadas en total antes del flujo de reincidencias.
 
 ## 10. Reincidencias
 
@@ -160,6 +161,29 @@ migraciones versionadas en total.
 - Exigir justificación y evidencia.
 - Registrar acciones correctivas y preventivas.
 - Afectar calidad únicamente cuando sea atribuible al trabajo técnico.
+
+Estado: completada. El backend expone 13 endpoints protegidos para catálogo,
+consulta, reporte, análisis, corrección, visitas, notas, descarte, cierre,
+ajuste y evidencias. La décima migración `20260820120000_recurrences_workflow_api`
+añade el contrato persistente, secuencia anual `RI-AAAA-NNNN`, permisos y
+restricciones de flujo. El seed sigue siendo idempotente y las diez migraciones
+se aplican en `public` y `test`.
+
+ADMIN y SUPERVISOR revisan todos los casos; TECHNICIAN puede reportar con
+`RECURRENCES_REPORT_OWN` desde una orden correctiva donde participe, y consultar
+con `RECURRENCES_VIEW_OWN` su historial. El caso avanza `OPEN → ANALYSIS →
+CORRECTION → CLOSED`; `DISMISSED` y `CLOSED` son terminales. Solo `CLOSED`
+entrega hechos a la fase 11 de KPI, que sigue pendiente y no calcula puntajes
+todavía. La evidencia de reincidencia respeta los niveles `TECHNICIAN` e
+`INTERNAL` y el archivo se conserva tras archivar la metadata.
+
+Salida verificada: 62 pruebas unitarias de reincidencias, 90 pruebas de
+persistencia/HTTP de reincidencias, 8 de regresión HTTP de evidencias y 12 de
+seguridad/errores/servidor; typecheck, lint y build del backend correctos. Las
+pruebas PostgreSQL mantienen la advertencia deprecada conocida de `pg` sobre
+`client.query()` concurrente, sin fallo de suite. No existe integración de
+frontend, cálculo de puntajes, detección automática, exportaciones ni
+despliegue Docker/VPS terminados.
 
 Salida: trazabilidad completa con pruebas de clasificación.
 
