@@ -258,6 +258,41 @@ describe("database seed", () => {
     ]);
   });
 
+  it("raises the seeded annual recurrence sequence without regressing it", async () => {
+    await database.secuenciaReincidencia.deleteMany({ where: { year: 2026 } });
+
+    try {
+      await seedDatabase(database);
+      await seedDatabase(database);
+
+      await expect(
+        database.secuenciaReincidencia.findUniqueOrThrow({
+          where: { year: 2026 },
+          select: { year: true, lastNumber: true },
+        }),
+      ).resolves.toEqual({ year: 2026, lastNumber: 2 });
+
+      await database.secuenciaReincidencia.update({
+        where: { year: 2026 },
+        data: { lastNumber: 99 },
+      });
+      await seedDatabase(database);
+
+      await expect(
+        database.secuenciaReincidencia.findUniqueOrThrow({
+          where: { year: 2026 },
+          select: { year: true, lastNumber: true },
+        }),
+      ).resolves.toEqual({ year: 2026, lastNumber: 99 });
+    } finally {
+      await database.secuenciaReincidencia.upsert({
+        where: { year: 2026 },
+        update: { lastNumber: 2 },
+        create: { year: 2026, lastNumber: 2 },
+      });
+    }
+  });
+
   it("keeps demo users unable to authenticate", async () => {
     await seedDatabase(database);
     const demoUsers = await database.usuario.findMany({

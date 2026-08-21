@@ -62,6 +62,31 @@ describe("database constraints", () => {
     ).rejects.toThrow();
   });
 
+  it.each([
+    ["zero", 0, "RI-2026-9900"],
+    ["a negative value", -1, "RI-2026-9901"],
+  ])("rejects %s recurrence version", async (_label, version, recurrenceNumber) => {
+    const { order, user } = await fixtures();
+
+    try {
+      await expect(
+        database.reincidencia.create({
+          data: {
+            originalOrderId: order.id,
+            causeId: null,
+            status: EstadoReincidencia.OPEN,
+            detectedProblem: "Reincidencia con versiÃ³n invÃ¡lida",
+            recurrenceNumber,
+            reportedById: user.id,
+            version,
+          },
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await database.reincidencia.deleteMany({ where: { recurrenceNumber } });
+    }
+  });
+
   it("rejects negative recurrence visit minutes", async () => {
     const { order } = await fixtures();
 

@@ -129,6 +129,16 @@ export async function seedQuality(
     },
   });
 
+  await database.$executeRaw`
+    INSERT INTO "secuencia_reincidencia" ("year", "last_number")
+    VALUES (2026, 2)
+    ON CONFLICT ("year") DO UPDATE
+    SET "last_number" = GREATEST(
+      "secuencia_reincidencia"."last_number",
+      EXCLUDED."last_number"
+    )
+  `;
+
   await database.reincidenciaOrden.upsert({
     where: {
       reincidenciaId_ordenId: {
