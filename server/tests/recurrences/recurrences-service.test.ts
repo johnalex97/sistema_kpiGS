@@ -166,7 +166,19 @@ describe("RecurrenceService read permission matrix", () => {
     await recurrenceService.list(listFilters, technician);
     await recurrenceService.get(recurrenceId, technician);
 
-    expect(catalog).toEqual({ causes: [{ id: analyzeInput.causeId, code: "INSTALL", name: "Instalación" }] });
+    expect(catalog).toEqual({
+      causes: [{ id: analyzeInput.causeId, code: "INSTALL", name: "Instalación" }],
+      states: ["OPEN", "ANALYSIS", "CORRECTION", "CLOSED", "DISMISSED"],
+      impacts: ["LOW", "MEDIUM", "HIGH"],
+      responsibilities: ["TECHNICAL_WORK", "EQUIPMENT", "CLIENT", "THIRD_PARTY", "UNDETERMINED"],
+      transitions: [
+        { command: "ANALYZE", from: "OPEN", to: "ANALYSIS" },
+        { command: "START_CORRECTION", from: "ANALYSIS", to: "CORRECTION" },
+        { command: "CLOSE", from: "CORRECTION", to: "CLOSED" },
+        { command: "DISMISS", from: "OPEN", to: "DISMISSED" },
+        { command: "DISMISS", from: "ANALYSIS", to: "DISMISSED" },
+      ],
+    });
     expect(repository.listRecurrences).toHaveBeenCalledWith(
       listFilters,
       { kind: "TECHNICIAN", technicianId },
@@ -175,6 +187,32 @@ describe("RecurrenceService read permission matrix", () => {
       recurrenceId,
       { kind: "TECHNICIAN", technicianId },
     );
+  });
+
+  it("keeps INTERNAL evidence metadata out of every technician detail hydration", async () => {
+    const record = {
+      ...detailRecord(),
+      evidencias: [
+        { id: "evidence-internal", originalName: "internal.pdf", mimeType: "application/pdf", sizeBytes: 10n, accessLevel: "INTERNAL", createdAt: fixedNow },
+        { id: "evidence-technician", originalName: "technician.pdf", mimeType: "application/pdf", sizeBytes: 11n, accessLevel: "TECHNICIAN", createdAt: fixedNow },
+      ],
+    } as RecurrenceDetailRecord;
+    const repository = repositoryWith({ kind: "UPDATED", recurrence: record });
+    vi.mocked(repository.findRecurrence).mockResolvedValue(record);
+    const recurrenceService = service(repository);
+    const technician = actor(["RECURRENCES_VIEW_OWN"], technicianId);
+    const management = actor(["RECURRENCES_REVIEW"], technicianId);
+
+    const managementDetail = await recurrenceService.get(recurrenceId, management);
+    const technicianDetail = await recurrenceService.get(recurrenceId, technician);
+    const technicianNoteResult = await recurrenceService.addNote(recurrenceId, noteInput, technician);
+
+    expect(managementDetail.evidences.map(({ id }) => id)).toEqual([
+      "evidence-internal",
+      "evidence-technician",
+    ]);
+    expect(technicianDetail.evidences.map(({ id }) => id)).toEqual(["evidence-technician"]);
+    expect(technicianNoteResult.evidences.map(({ id }) => id)).toEqual(["evidence-technician"]);
   });
 
   it.each([

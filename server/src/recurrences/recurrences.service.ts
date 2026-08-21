@@ -3,7 +3,9 @@ import {
   mapRecurrenceDetail,
   mapRecurrenceSummary,
 } from "./recurrences.mapper.js";
+import { recurrenceWorkflowMetadata } from "./recurrences.state-machine.js";
 import type {
+  RecurrenceDetailRecord,
   RecurrenceFailureKind,
   RecurrenceMutationResult,
   RecurrencesRepository,
@@ -113,9 +115,19 @@ function pagination(
   };
 }
 
-function mapMutationResult(result: RecurrenceMutationResult): PublicRecurrenceDetail {
+function mapDetailForActor(
+  recurrence: RecurrenceDetailRecord,
+  actor: RecurrenceActorContext,
+): PublicRecurrenceDetail {
+  return mapRecurrenceDetail(recurrence, isManagement(actor) ? "ALL" : "TECHNICIAN");
+}
+
+function mapMutationResult(
+  result: RecurrenceMutationResult,
+  actor: RecurrenceActorContext,
+): PublicRecurrenceDetail {
   if (result.kind === "CREATED" || result.kind === "UPDATED") {
-    return mapRecurrenceDetail(result.recurrence);
+    return mapDetailForActor(result.recurrence, actor);
   }
   throw errors[result.kind]();
 }
@@ -135,16 +147,20 @@ export function createRecurrenceService(
   warningDays: number,
 ): RecurrenceService {
   async function mutate(
+    actor: RecurrenceActorContext,
     operation: (timestamp: Date) => Promise<RecurrenceMutationResult>,
   ): Promise<PublicRecurrenceDetail> {
-    return publicOperation(async () => mapMutationResult(await operation(now())));
+    return publicOperation(async () => mapMutationResult(await operation(now()), actor));
   }
 
   return {
     async getCatalog(actor) {
       return publicOperation(async () => {
         accessScope(actor);
-        return { causes: await repository.listCauses() };
+        return {
+          causes: await repository.listCauses(),
+          ...recurrenceWorkflowMetadata,
+        };
       });
     },
 
@@ -162,48 +178,48 @@ export function createRecurrenceService(
       return publicOperation(async () => {
         const recurrence = await repository.findRecurrence(id, accessScope(actor));
         if (recurrence === null) throw recurrenceNotFound();
-        return mapRecurrenceDetail(recurrence);
+        return mapDetailForActor(recurrence, actor);
       });
     },
 
     async report(input, actor) {
       requireReport(actor);
-      return mutate((timestamp) => repository.reportRecurrence(input, actor, timestamp));
+      return mutate(actor, (timestamp) => repository.reportRecurrence(input, actor, timestamp));
     },
 
     async analyze(id, input, actor) {
       requireReview(actor);
-      return mutate((timestamp) => repository.analyzeRecurrence(id, input, actor, timestamp, warningDays));
+      return mutate(actor, (timestamp) => repository.analyzeRecurrence(id, input, actor, timestamp, warningDays));
     },
 
     async correct(id, input, actor) {
       requireReview(actor);
-      return mutate((timestamp) => repository.correctRecurrence(id, input, actor, timestamp));
+      return mutate(actor, (timestamp) => repository.correctRecurrence(id, input, actor, timestamp));
     },
 
     async addVisit(id, input, actor) {
       requireReview(actor);
-      return mutate((timestamp) => repository.addVisit(id, input, actor, timestamp));
+      return mutate(actor, (timestamp) => repository.addVisit(id, input, actor, timestamp));
     },
 
     async addNote(id, input, actor) {
       requireNote(actor);
-      return mutate((timestamp) => repository.addNote(id, input, actor, timestamp));
+      return mutate(actor, (timestamp) => repository.addNote(id, input, actor, timestamp));
     },
 
     async dismiss(id, input, actor) {
       requireReview(actor);
-      return mutate((timestamp) => repository.dismissRecurrence(id, input, actor, timestamp));
+      return mutate(actor, (timestamp) => repository.dismissRecurrence(id, input, actor, timestamp));
     },
 
     async close(id, input, actor) {
       requireReview(actor);
-      return mutate((timestamp) => repository.closeRecurrence(id, input, actor, timestamp));
+      return mutate(actor, (timestamp) => repository.closeRecurrence(id, input, actor, timestamp));
     },
 
     async adjust(id, input, actor) {
       requireReview(actor);
-      return mutate((timestamp) => repository.adjustClosedRecurrence(id, input, actor, timestamp));
+      return mutate(actor, (timestamp) => repository.adjustClosedRecurrence(id, input, actor, timestamp));
     },
   };
 }

@@ -79,6 +79,7 @@ export const recurrenceDetailSelect = {
       originalName: true,
       mimeType: true,
       sizeBytes: true,
+      accessLevel: true,
       createdAt: true,
     },
   },

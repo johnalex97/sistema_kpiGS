@@ -87,6 +87,8 @@ export const recurrenceListQuerySchema = z.object({
   responsibility: repeated(responsibilitySchema).optional(),
   originalOrderId: z.uuid().optional(),
   technicianId: z.uuid().optional(),
+  clientId: z.uuid().optional(),
+  branchId: z.uuid().optional(),
   detectedFrom: dateSchema.optional(),
   detectedTo: dateSchema.optional(),
   page: z.coerce.number().int().min(1).default(1),

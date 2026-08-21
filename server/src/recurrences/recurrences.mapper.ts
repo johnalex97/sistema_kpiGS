@@ -55,7 +55,10 @@ export function mapRecurrenceSummary(record: RecurrenceSummaryRecord): PublicRec
   };
 }
 
-export function mapRecurrenceDetail(record: RecurrenceDetailRecord): PublicRecurrenceDetail {
+export function mapRecurrenceDetail(
+  record: RecurrenceDetailRecord,
+  evidenceVisibility: "ALL" | "TECHNICIAN" = "ALL",
+): PublicRecurrenceDetail {
   const qualitySnapshots = record.tecnicos.filter((technician) => technician.affectsQuality);
   if (record.responsibility !== "TECHNICAL_WORK" && qualitySnapshots.length > 0) {
     throw new Error("La responsabilidad no técnica no puede afectar calidad");
@@ -87,12 +90,14 @@ export function mapRecurrenceDetail(record: RecurrenceDetailRecord): PublicRecur
       createdAt: note.createdAt.toISOString(),
       authorDisplayName: note.author.displayName,
     })),
-    evidences: record.evidencias.map((evidence) => ({
-      id: evidence.id,
-      originalName: evidence.originalName,
-      mimeType: evidence.mimeType,
-      sizeBytes: evidence.sizeBytes.toString(),
-      createdAt: evidence.createdAt.toISOString(),
-    })),
+    evidences: record.evidencias
+      .filter((evidence) => evidenceVisibility === "ALL" || evidence.accessLevel === "TECHNICIAN")
+      .map((evidence) => ({
+        id: evidence.id,
+        originalName: evidence.originalName,
+        mimeType: evidence.mimeType,
+        sizeBytes: evidence.sizeBytes.toString(),
+        createdAt: evidence.createdAt.toISOString(),
+      })),
   };
 }

@@ -56,6 +56,14 @@ function listRecurrenceWhere(
   if (filters.technicianId) {
     constraints.push({ tecnicos: { some: { tecnicoId: filters.technicianId } } });
   }
+  if (filters.clientId) {
+    constraints.push({
+      ordenOriginal: { sucursal: { clienteId: filters.clientId } },
+    });
+  }
+  if (filters.branchId) {
+    constraints.push({ ordenOriginal: { sucursalId: filters.branchId } });
+  }
   if (filters.detectedFrom || filters.detectedTo) {
     constraints.push({
       detectedAt: {

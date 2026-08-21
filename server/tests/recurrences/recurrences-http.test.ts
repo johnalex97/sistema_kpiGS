@@ -56,6 +56,7 @@ const ids = {
   originalDismiss: randomUUID(),
   correctionDismiss: randomUUID(),
   mismatchCorrection: randomUUID(),
+  privacyRecurrence: randomUUID(),
 } as const;
 const orderIds = [
   ids.originalMain,
@@ -366,6 +367,18 @@ describe("recurrences DB-backed HTTP contract", () => {
     expect(catalog.body.data.causes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: ids.cause, code: `RH-CAUSE-${suffix}` }),
     ]));
+    expect(catalog.body.data).toMatchObject({
+      states: ["OPEN", "ANALYSIS", "CORRECTION", "CLOSED", "DISMISSED"],
+      impacts: ["LOW", "MEDIUM", "HIGH"],
+      responsibilities: ["TECHNICAL_WORK", "EQUIPMENT", "CLIENT", "THIRD_PARTY", "UNDETERMINED"],
+      transitions: [
+        { command: "ANALYZE", from: "OPEN", to: "ANALYSIS" },
+        { command: "START_CORRECTION", from: "ANALYSIS", to: "CORRECTION" },
+        { command: "CLOSE", from: "CORRECTION", to: "CLOSED" },
+        { command: "DISMISS", from: "OPEN", to: "DISMISSED" },
+        { command: "DISMISS", from: "ANALYSIS", to: "DISMISSED" },
+      ],
+    });
 
     const mismatch = await reporter
       .post("/api/v1/recurrences")
@@ -428,6 +441,22 @@ describe("recurrences DB-backed HTTP contract", () => {
       items: [expect.objectContaining({ id: recurrenceId, status: "OPEN" })],
       pagination: { page: 1, pageSize: 10, totalItems: 1, totalPages: 1 },
     });
+    const byClient = await reporter
+      .get(`/api/v1/recurrences?clientId=${ids.client}`)
+      .expect(200);
+    const byBranch = await reporter
+      .get(`/api/v1/recurrences?branchId=${ids.branch}`)
+      .expect(200);
+    const byForeignClient = await reporter
+      .get(`/api/v1/recurrences?clientId=${randomUUID()}`)
+      .expect(200);
+    const byForeignBranch = await reporter
+      .get(`/api/v1/recurrences?branchId=${ids.otherBranch}`)
+      .expect(200);
+    expect(byClient.body.data.items.map(({ id }: { id: string }) => id)).toContain(recurrenceId);
+    expect(byBranch.body.data.items.map(({ id }: { id: string }) => id)).toContain(recurrenceId);
+    expect(byForeignClient.body.data).toMatchObject({ items: [], pagination: { totalItems: 0 } });
+    expect(byForeignBranch.body.data).toMatchObject({ items: [], pagination: { totalItems: 0 } });
     const ownDetail = await reporter.get(`/api/v1/recurrences/${recurrenceId}`).expect(200);
     expect(ownDetail.body.data.id).toBe(recurrenceId);
 
@@ -639,5 +668,53 @@ describe("recurrences DB-backed HTTP contract", () => {
       dismissalReason: "El reporte fue confirmado como un incidente duplicado.",
     });
     assertNoPrivateRecurrenceFields(dismissed.body);
+  });
+
+  it("hides management INTERNAL evidence from technician detail and note hydration", async () => {
+    await database.reincidencia.create({
+      data: {
+        id: ids.privacyRecurrence,
+        recurrenceNumber: `RI-2997-${String(parseInt(suffix, 16) % 10_000).padStart(4, "0")}`,
+        originalOrderId: ids.originalMain,
+        reportedById: users.reporter.id,
+        status: "OPEN",
+        impact: "MEDIUM",
+        responsibility: "UNDETERMINED",
+        detectedProblem: "Caso de privacidad de evidencia interna",
+        tecnicos: {
+          create: {
+            tecnicoId: ids.reporterTechnician,
+            participation: "ORIGINAL_RESPONSIBLE",
+          },
+        },
+      },
+    });
+    const supervisor = await authenticatedAgent(users.supervisor);
+    const reporter = await authenticatedAgent(users.reporter);
+    const uploaded = await uploadEvidence(
+      supervisor,
+      ids.privacyRecurrence,
+      "management-internal.pdf",
+    ).expect(201);
+    expect(uploaded.body.data.accessLevel).toBe("INTERNAL");
+
+    const managementDetail = await supervisor
+      .get(`/api/v1/recurrences/${ids.privacyRecurrence}`)
+      .expect(200);
+    const technicianDetail = await reporter
+      .get(`/api/v1/recurrences/${ids.privacyRecurrence}`)
+      .expect(200);
+    const technicianNote = await reporter
+      .post(`/api/v1/recurrences/${ids.privacyRecurrence}/notes`)
+      .set("Origin", allowedOrigin)
+      .send({ content: "Nota sin exposición de evidencia interna." })
+      .expect(200);
+
+    expect(managementDetail.body.data.evidences.map(({ id }: { id: string }) => id))
+      .toContain(uploaded.body.data.id);
+    expect(technicianDetail.body.data.evidences.map(({ id }: { id: string }) => id))
+      .not.toContain(uploaded.body.data.id);
+    expect(technicianNote.body.data.evidences.map(({ id }: { id: string }) => id))
+      .not.toContain(uploaded.body.data.id);
   });
 });

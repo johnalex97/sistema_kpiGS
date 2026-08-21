@@ -105,6 +105,10 @@ describe("recurrences read repository", () => {
     const byResponsibility = await repository.listRecurrences(fixtureFilters({ responsibility: ["CLIENT"] }), allScope);
     const byOrder = await repository.listRecurrences(fixtureFilters(), allScope);
     const byTechnician = await repository.listRecurrences(fixtureFilters({ technicianId: fixture.technicianId }), allScope);
+    const byClient = await repository.listRecurrences(fixtureFilters({ clientId: fixture.clientId }), allScope);
+    const byBranch = await repository.listRecurrences(fixtureFilters({ branchId: fixture.branchId }), allScope);
+    const byForeignClient = await repository.listRecurrences(fixtureFilters({ clientId: "83000000-0000-4000-8000-000000000099" }), allScope);
+    const byForeignBranch = await repository.listRecurrences(fixtureFilters({ branchId: "83000000-0000-4000-8000-000000000099" }), allScope);
     const byDate = await repository.listRecurrences(fixtureFilters({ detectedFrom: new Date("2026-08-05T00:00:00.000Z"), detectedTo: new Date("2026-08-05T23:59:59.999Z") }), allScope);
     const first = await repository.listRecurrences(fixtureFilters({ pageSize: 2 }), allScope);
     const second = await repository.listRecurrences(fixtureFilters({ page: 2, pageSize: 2 }), allScope);
@@ -118,6 +122,10 @@ describe("recurrences read repository", () => {
       fixture.correctionParticipantRecurrenceId,
       fixture.originalParticipantRecurrenceId,
     ]);
+    expect(byClient.totalItems).toBe(6);
+    expect(byBranch.totalItems).toBe(6);
+    expect(byForeignClient).toEqual({ items: [], totalItems: 0 });
+    expect(byForeignBranch).toEqual({ items: [], totalItems: 0 });
     expect(byDate.items.map(({ id }) => id)).toEqual([
       fixture.correctionParticipantRecurrenceId,
       fixture.originalParticipantRecurrenceId,

@@ -36,6 +36,8 @@ export interface RecurrencesReadFixture {
   foreignTechnicianId: string;
   originalOrderId: string;
   correctionOrderId: string;
+  clientId: string;
+  branchId: string;
   activeCauseId: string;
   secondaryCauseId: string;
   inactiveCauseId: string;
@@ -55,6 +57,8 @@ const fixture: RecurrencesReadFixture = {
   foreignTechnicianId: ids.foreignTechnician,
   originalOrderId: ids.originalOrder,
   correctionOrderId: ids.correctionOrder,
+  clientId: ids.client,
+  branchId: ids.branch,
   activeCauseId: ids.activeCause,
   secondaryCauseId: ids.secondaryCause,
   inactiveCauseId: ids.inactiveCause,

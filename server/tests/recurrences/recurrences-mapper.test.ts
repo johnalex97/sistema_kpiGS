@@ -44,7 +44,7 @@ describe("recurrence public mappers", () => {
       ordenes: [{ id: "visit-1", visitNumber: 1, additionalMinutes: 65, observation: "Visita", orden: { id: "order-2", orderNumber: "OT-002" } }],
       tecnicos: [{ participation: "ORIGINAL_RESPONSIBLE", affectsQuality: true, justification: "Trabajo técnico deficiente", tecnico: { id: "tech-1", code: "TEC-001", fullName: "Ana" } }],
       notas: [{ id: "note-1", content: "Seguimiento", createdAt: new Date("2026-08-02T12:00:00.000Z"), author: { displayName: "Supervisor" } }],
-      evidencias: [{ id: "evidence-1", originalName: "foto.jpg", mimeType: "image/jpeg", sizeBytes: 42n, createdAt: new Date("2026-08-02T12:00:00.000Z") }],
+      evidencias: [{ id: "evidence-1", originalName: "foto.jpg", mimeType: "image/jpeg", sizeBytes: 42n, accessLevel: "INTERNAL", createdAt: new Date("2026-08-02T12:00:00.000Z") }],
       reportedById: "private-user-id",
     } as RecurrenceDetailRecord;
 

@@ -12,6 +12,8 @@ const originalOrderId = "10000000-0000-4000-8000-000000000001";
 const correctionOrderId = "10000000-0000-4000-8000-000000000002";
 const causeId = "10000000-0000-4000-8000-000000000003";
 const technicianId = "10000000-0000-4000-8000-000000000004";
+const clientId = "10000000-0000-4000-8000-000000000005";
+const branchId = "10000000-0000-4000-8000-000000000006";
 
 describe("recurrence request schemas", () => {
   it("trims required report text and rejects invalid order identifiers", () => {
@@ -108,5 +110,16 @@ describe("recurrence request schemas", () => {
       reason: "Razón suficientemente documentada",
       observations: " Observación corregida ",
     })).toMatchObject({ observations: "Observación corregida" });
+  });
+
+  it("accepts UUID client and branch list filters and rejects malformed identifiers", () => {
+    expect(recurrenceListQuerySchema.parse({ clientId, branchId })).toMatchObject({
+      clientId,
+      branchId,
+      page: 1,
+      pageSize: 20,
+    });
+    expect(() => recurrenceListQuerySchema.parse({ clientId: "not-a-uuid" })).toThrow();
+    expect(() => recurrenceListQuerySchema.parse({ branchId: "not-a-uuid" })).toThrow();
   });
 });

@@ -68,6 +68,8 @@ export interface RecurrenceListFilters {
   responsibility?: ResponsabilidadReincidencia[];
   originalOrderId?: string;
   technicianId?: string;
+  clientId?: string;
+  branchId?: string;
   detectedFrom?: Date;
   detectedTo?: Date;
   page: number;
@@ -94,6 +96,14 @@ export interface PublicRecurrenceCause {
 
 export interface PublicRecurrenceCatalog {
   causes: PublicRecurrenceCause[];
+  states: readonly EstadoReincidencia[];
+  impacts: readonly ImpactoReincidencia[];
+  responsibilities: readonly ResponsabilidadReincidencia[];
+  transitions: readonly {
+    command: RecurrenceCommand;
+    from: EstadoReincidencia;
+    to: EstadoReincidencia;
+  }[];
 }
 
 export interface PublicRecurrenceOrder {

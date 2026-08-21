@@ -280,7 +280,7 @@ async function loadDetail(
   const authorsById = new Map(authors.map((author) => [author.id, author]));
   const evidences = await transaction.evidencia.findMany({
     where: { reincidenciaId: id, deletedAt: null },
-    select: { id: true, originalName: true, mimeType: true, sizeBytes: true, createdAt: true },
+    select: { id: true, originalName: true, mimeType: true, sizeBytes: true, accessLevel: true, createdAt: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   const noteCount = await transaction.reincidenciaNota.count({ where: { reincidenciaId: id } });
