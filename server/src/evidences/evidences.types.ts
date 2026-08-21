@@ -16,7 +16,8 @@ export type EvidenceOperationalLogger = (
 
 export type EvidenceResource =
   | { type: "ORDER"; id: string }
-  | { type: "ACTIVITY"; id: string };
+  | { type: "ACTIVITY"; id: string }
+  | { type: "RECURRENCE"; id: string };
 
 export interface EvidenceActorContext {
   userId: string;
@@ -34,7 +35,7 @@ export interface EvidencePublic {
   description: string | null;
   accessLevel: EvidenceAccessLevel;
   uploadedBy: { id: string; displayName: string };
-  resourceType: "ORDER" | "ACTIVITY";
+  resourceType: "ORDER" | "ACTIVITY" | "RECURRENCE";
   resourceId: string;
   checksumSha256: string;
   version: number;

@@ -1,6 +1,7 @@
 import type {
   EstadoActividad,
   EstadoOrden,
+  EstadoReincidencia,
   Prisma,
 } from "../../generated/prisma/client.js";
 import type {
@@ -59,7 +60,7 @@ export interface EvidenceReadRepository {
   findUploadTarget(
     resource: EvidenceResource,
     actor: EvidenceActorContext,
-  ): Promise<{ status: EstadoOrden | EstadoActividad } | null>;
+  ): Promise<{ status: EstadoOrden | EstadoActividad | EstadoReincidencia } | null>;
   listEvidence(
     resource: EvidenceResource,
     filters: EvidenceListFilters,

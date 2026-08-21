@@ -52,13 +52,28 @@ describe("mapEvidence", () => {
     ]));
   });
 
-  it("maps activity evidence and fails closed for impossible or deferred relations", () => {
+  it("maps activity and recurrence evidence", () => {
     const activityRecord = { ...evidenceRecord(), orden: null, actividad: { id: "activity-1" } } as EvidenceRecord;
     expect(mapEvidence(activityRecord)).toMatchObject({ resourceType: "ACTIVITY", resourceId: "activity-1" });
 
+    const recurrenceRecord = {
+      ...evidenceRecord(),
+      orden: null,
+      reincidencia: { id: "recurrence-1" },
+    } as EvidenceRecord;
+    expect(mapEvidence(recurrenceRecord)).toMatchObject({
+      resourceType: "RECURRENCE",
+      resourceId: "recurrence-1",
+    });
+  });
+
+  it("fails closed when no resource or more than one resource is linked", () => {
     expect(() => mapEvidence({ ...evidenceRecord(), orden: null } as EvidenceRecord)).toThrow(/invariant/i);
     expect(() => mapEvidence({ ...evidenceRecord(), actividad: { id: "activity-1" } } as EvidenceRecord)).toThrow(/invariant/i);
-    expect(() => mapEvidence({ ...evidenceRecord(), orden: null, reincidencia: { id: "recurrence-1" } } as EvidenceRecord)).toThrow(/invariant/i);
+    expect(() => mapEvidence({
+      ...evidenceRecord(),
+      reincidencia: { id: "recurrence-1" },
+    } as EvidenceRecord)).toThrow(/invariant/i);
   });
 
   it("refuses to serialize a size that exceeds JavaScript's safe integer range", () => {

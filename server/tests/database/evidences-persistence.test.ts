@@ -3,6 +3,7 @@ import { NivelAccesoEvidencia, Prisma } from "../../generated/prisma/client.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createEvidencesReadRepository } from "../../src/evidences/evidences.read.repository.js";
 import { createEvidencesMutationRepository } from "../../src/evidences/evidences.mutation.repository.js";
+import { createDatabaseClient } from "../../src/config/database.js";
 import type {
   CreateEvidencePersistenceInput,
   EvidenceActorContext,
@@ -18,6 +19,11 @@ import {
   removeEvidencesReadFixture,
   type EvidencesReadFixture,
 } from "./evidences-test-data.js";
+import {
+  createRecurrencesReadFixture,
+  removeRecurrencesReadFixture,
+  type RecurrencesReadFixture,
+} from "./recurrences-test-data.js";
 
 beforeAll(() => seedDatabase(database));
 
@@ -29,6 +35,31 @@ function managementActor(userId: string, technicianId: string | null = null): Ev
 
 function technicianActor(userId: string, technicianId: string): EvidenceActorContext {
   return { userId, technicianId, permissions: ["EVIDENCES_VIEW"], requestId: "70000000-0000-4000-8000-000000000002" };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function deferredValue<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function waitForDatabaseLock(backendPid: number): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const rows = await database.$queryRaw<Array<{ waitEventType: string | null }>>`
+      SELECT "wait_event_type" AS "waitEventType"
+      FROM "pg_stat_activity"
+      WHERE "pid" = ${backendPid}
+    `;
+    if (rows[0]?.waitEventType === "Lock") return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Evidence upload backend ${backendPid} never waited on a recurrence lock`);
 }
 
 describe("evidence persistence", () => {
@@ -287,10 +318,100 @@ describe("evidence read repository", () => {
   });
 });
 
+describe("recurrence evidence read repository", () => {
+  let fixture: RecurrencesReadFixture;
+  const evidenceIds = {
+    reporterTechnician: "84000000-0000-4000-8000-000000000001",
+    originalTechnician: "84000000-0000-4000-8000-000000000002",
+    correctionInternal: "84000000-0000-4000-8000-000000000003",
+    closedTechnician: "84000000-0000-4000-8000-000000000004",
+    dismissedInternal: "84000000-0000-4000-8000-000000000005",
+  } as const;
+
+  beforeAll(async () => {
+    fixture = await createRecurrencesReadFixture(database);
+    await database.evidencia.createMany({
+      data: [
+        { id: evidenceIds.reporterTechnician, originalName: "reporter.pdf", storedName: "reporter.pdf", mimeType: "application/pdf", fileExtension: "pdf", sizeBytes: 11n, storageKey: "evidences/recurrence/reporter.pdf", checksumSha256: "1".repeat(64), accessLevel: "TECHNICIAN", uploadedById: fixture.supervisorUserId, reincidenciaId: fixture.reporterRecurrenceId },
+        { id: evidenceIds.originalTechnician, originalName: "original.pdf", storedName: "original.pdf", mimeType: "application/pdf", fileExtension: "pdf", sizeBytes: 12n, storageKey: "evidences/recurrence/original.pdf", checksumSha256: "2".repeat(64), accessLevel: "TECHNICIAN", uploadedById: fixture.supervisorUserId, reincidenciaId: fixture.originalParticipantRecurrenceId },
+        { id: evidenceIds.correctionInternal, originalName: "correction.pdf", storedName: "correction.pdf", mimeType: "application/pdf", fileExtension: "pdf", sizeBytes: 13n, storageKey: "evidences/recurrence/correction.pdf", checksumSha256: "3".repeat(64), accessLevel: "INTERNAL", uploadedById: fixture.supervisorUserId, reincidenciaId: fixture.correctionParticipantRecurrenceId },
+        { id: evidenceIds.closedTechnician, originalName: "closed.pdf", storedName: "closed.pdf", mimeType: "application/pdf", fileExtension: "pdf", sizeBytes: 14n, storageKey: "evidences/recurrence/closed.pdf", checksumSha256: "4".repeat(64), accessLevel: "TECHNICIAN", uploadedById: fixture.supervisorUserId, reincidenciaId: fixture.foreignRecurrenceId },
+        { id: evidenceIds.dismissedInternal, originalName: "dismissed.pdf", storedName: "dismissed.pdf", mimeType: "application/pdf", fileExtension: "pdf", sizeBytes: 15n, storageKey: "evidences/recurrence/dismissed.pdf", checksumSha256: "5".repeat(64), accessLevel: "INTERNAL", uploadedById: fixture.supervisorUserId, reincidenciaId: fixture.inactiveCauseRecurrenceId },
+      ],
+    });
+  });
+
+  afterAll(async () => {
+    await removeRecurrencesReadFixture(database);
+  });
+
+  it("applies historical reporter and technician-snapshot ACL while management sees INTERNAL", async () => {
+    const repository = createEvidencesReadRepository(database);
+    const management = managementActor(fixture.adminUserId);
+    const participant = technicianActor(fixture.adminUserId, fixture.technicianId);
+    const foreign = technicianActor(fixture.adminUserId, fixture.foreignTechnicianId);
+    const unlinked: EvidenceActorContext = {
+      userId: fixture.adminUserId,
+      technicianId: null,
+      permissions: ["EVIDENCES_VIEW"],
+      requestId: "70000000-0000-4000-8000-000000000004",
+    };
+
+    const managementPage = await repository.listEvidence(
+      { type: "RECURRENCE", id: fixture.reporterRecurrenceId }, page, management,
+    );
+    expect(managementPage?.items.map(({ accessLevel }) => accessLevel).sort())
+      .toEqual(["INTERNAL", "TECHNICIAN"]);
+    await expect(repository.listEvidence(
+      { type: "RECURRENCE", id: fixture.reporterRecurrenceId }, page, participant,
+    )).resolves.toMatchObject({ items: [{ id: evidenceIds.reporterTechnician }] });
+    await expect(repository.listEvidence(
+      { type: "RECURRENCE", id: fixture.originalParticipantRecurrenceId }, page, participant,
+    )).resolves.toMatchObject({ items: [{ id: evidenceIds.originalTechnician }] });
+    await expect(repository.listEvidence(
+      { type: "RECURRENCE", id: fixture.correctionParticipantRecurrenceId }, page, participant,
+    )).resolves.toMatchObject({ items: [] });
+    await expect(repository.listEvidence(
+      { type: "RECURRENCE", id: fixture.reporterRecurrenceId }, page, foreign,
+    )).resolves.toBeNull();
+    await expect(repository.listEvidence(
+      { type: "RECURRENCE", id: fixture.reporterRecurrenceId }, page, unlinked,
+    )).resolves.toBeNull();
+    await expect(repository.findDownloadableEvidence(evidenceIds.reporterTechnician, unlinked))
+      .resolves.toBeNull();
+  });
+
+  it("keeps terminal recurrence reads and generic downloads available under the same ACL", async () => {
+    const repository = createEvidencesReadRepository(database);
+    const management = managementActor(fixture.adminUserId);
+    const closedParticipant = technicianActor(fixture.adminUserId, fixture.foreignTechnicianId);
+    const unrelated = technicianActor(fixture.adminUserId, fixture.technicianId);
+
+    await expect(repository.findUploadTarget(
+      { type: "RECURRENCE", id: fixture.foreignRecurrenceId }, management,
+    )).resolves.toEqual({ status: "CLOSED" });
+    await expect(repository.findUploadTarget(
+      { type: "RECURRENCE", id: fixture.inactiveCauseRecurrenceId }, management,
+    )).resolves.toEqual({ status: "DISMISSED" });
+    await expect(repository.listEvidence(
+      { type: "RECURRENCE", id: fixture.foreignRecurrenceId }, page, closedParticipant,
+    )).resolves.toMatchObject({ items: [{ id: evidenceIds.closedTechnician }] });
+    await expect(repository.findDownloadableEvidence(evidenceIds.closedTechnician, closedParticipant))
+      .resolves.toMatchObject({ id: evidenceIds.closedTechnician });
+    await expect(repository.findDownloadableEvidence(evidenceIds.dismissedInternal, management))
+      .resolves.toMatchObject({ id: evidenceIds.dismissedInternal });
+    await expect(repository.findDownloadableEvidence(evidenceIds.closedTechnician, unrelated))
+      .resolves.toBeNull();
+    await expect(repository.findDownloadableEvidence("00000000-0000-4000-8000-000000000000", unrelated))
+      .resolves.toBeNull();
+  });
+});
+
 afterAll(disconnectTestDatabase);
 
 describe("evidence mutation repository", () => {
   let fixture: EvidencesReadFixture;
+  let recurrenceFixture: RecurrencesReadFixture;
   const createdIds: string[] = [];
   const now = new Date("2026-08-17T15:30:00.000Z");
   const privateSnapshotFields = [
@@ -311,6 +432,7 @@ describe("evidence mutation repository", () => {
 
   beforeAll(async () => {
     fixture = await createEvidencesReadFixture(database);
+    recurrenceFixture = await createRecurrencesReadFixture(database);
   });
   afterAll(async () => {
     const created = await database.evidencia.findMany({
@@ -319,6 +441,7 @@ describe("evidence mutation repository", () => {
     });
     await database.auditoria.deleteMany({ where: { entityId: { in: created.map(({ id }) => id) } } });
     await database.evidencia.deleteMany({ where: { id: { in: created.map(({ id }) => id) } } });
+    await removeRecurrencesReadFixture(database);
     await removeEvidencesReadFixture(database);
   });
 
@@ -451,6 +574,144 @@ describe("evidence mutation repository", () => {
     expect(completed).toMatchObject({ kind: "CREATED", evidence: { orden: { id: fixture.completedOrderId } } });
     expect(completedPromoted).toBe(true);
     await database.ordenTrabajo.delete({ where: { id: deletedOrder.id } });
+  });
+
+  it("uploads recurrence evidence only in OPEN, ANALYSIS, or CORRECTION before promotion", async () => {
+    const repository = createEvidencesMutationRepository(database);
+    const allowed = [
+      recurrenceFixture.reporterRecurrenceId,
+      recurrenceFixture.originalParticipantRecurrenceId,
+      recurrenceFixture.correctionParticipantRecurrenceId,
+    ];
+
+    for (const recurrenceId of allowed) {
+      let promoted = false;
+      const result = await repository.createEvidence(
+        inputFor({ type: "RECURRENCE", id: recurrenceId }),
+        managementActor(recurrenceFixture.adminUserId), now,
+        async () => { promoted = true; },
+      );
+      expect(result).toMatchObject({
+        kind: "CREATED",
+        evidence: { reincidencia: { id: recurrenceId }, accessLevel: "INTERNAL" },
+      });
+      expect(promoted).toBe(true);
+    }
+
+    for (const recurrenceId of [
+      recurrenceFixture.foreignRecurrenceId,
+      recurrenceFixture.inactiveCauseRecurrenceId,
+    ]) {
+      let promoted = false;
+      const result = await repository.createEvidence(
+        inputFor({ type: "RECURRENCE", id: recurrenceId }),
+        managementActor(recurrenceFixture.adminUserId), now,
+        async () => { promoted = true; },
+      );
+      expect(result).toEqual({ kind: "RESOURCE_INACTIVE" });
+      expect(promoted).toBe(false);
+    }
+  });
+
+  it("updates and archives recurrence evidence with RECURRENCE audit snapshots", async () => {
+    const repository = createEvidencesMutationRepository(database);
+    const created = await repository.createEvidence(
+      inputFor({ type: "RECURRENCE", id: recurrenceFixture.reporterRecurrenceId }),
+      managementActor(recurrenceFixture.adminUserId), now,
+      async () => undefined,
+    );
+    if (created.kind !== "CREATED") throw new Error(`Expected recurrence evidence creation, received ${created.kind}`);
+
+    const updated = await repository.updateEvidence(
+      created.evidence.id,
+      { version: 1, description: "Reviewed recurrence proof", accessLevel: "TECHNICIAN" },
+      managementActor(recurrenceFixture.adminUserId), now,
+    );
+    expect(updated).toMatchObject({ kind: "UPDATED", evidence: { version: 2, accessLevel: "TECHNICIAN" } });
+    const archived = await repository.archiveEvidence(
+      created.evidence.id,
+      { version: 2, reason: "Superseded recurrence evidence after review" },
+      managementActor(recurrenceFixture.adminUserId), now,
+    );
+    expect(archived).toMatchObject({ kind: "UPDATED", evidence: { version: 3, deletedAt: now } });
+
+    const audits = await database.auditoria.findMany({
+      where: { entityId: created.evidence.id },
+      orderBy: { action: "asc" },
+      select: { action: true, beforeData: true, afterData: true },
+    });
+    expect(audits).toHaveLength(3);
+    for (const audit of audits) {
+      expect(audit.afterData).toMatchObject({
+        resourceType: "RECURRENCE",
+        resourceId: recurrenceFixture.reporterRecurrenceId,
+      });
+    }
+    expect(audits.find(({ action }) => action === "EVIDENCE_UPDATED")?.beforeData)
+      .toMatchObject({ resourceType: "RECURRENCE", resourceId: recurrenceFixture.reporterRecurrenceId });
+    expect(audits.find(({ action }) => action === "EVIDENCE_ARCHIVED")?.beforeData)
+      .toMatchObject({ resourceType: "RECURRENCE", resourceId: recurrenceFixture.reporterRecurrenceId });
+  });
+
+  it("waits for a terminal recurrence mutation and rejects upload without promotion or metadata", async () => {
+    const recurrenceLocked = deferred();
+    const releaseTerminalMutation = deferred();
+    const uploadBackendPid = deferredValue<number>();
+    const connectionString = process.env.DATABASE_TEST_URL;
+    if (connectionString === undefined) throw new Error("DATABASE_TEST_URL is required");
+    const secondClient = createDatabaseClient(connectionString);
+    const recurrenceId = recurrenceFixture.correctionParticipantRecurrenceId;
+    const input = inputFor({ type: "RECURRENCE", id: recurrenceId });
+    let promoted = false;
+    const instrumentedDatabase = {
+      $transaction: async <T>(callback: (transaction: unknown) => Promise<T>, options: unknown) => database.$transaction(
+        async (transaction) => {
+          const rows = await transaction.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS "pid"`;
+          uploadBackendPid.resolve(rows[0]!.pid);
+          return callback(transaction);
+        },
+        options as never,
+      ) as Promise<T>,
+    };
+    const terminalMutation = secondClient.$transaction(async (transaction) => {
+      await transaction.$queryRaw`
+        SELECT "id" FROM "reincidencia"
+        WHERE "id" = ${recurrenceId}::uuid
+        FOR UPDATE
+      `;
+      recurrenceLocked.resolve();
+      await releaseTerminalMutation.promise;
+      await transaction.reincidencia.update({
+        where: { id: recurrenceId },
+        data: { status: "CLOSED", closedAt: now, closedById: recurrenceFixture.supervisorUserId },
+      });
+    });
+    let pendingUpload: ReturnType<ReturnType<typeof createEvidencesMutationRepository>["createEvidence"]> | undefined;
+
+    try {
+      await recurrenceLocked.promise;
+      pendingUpload = createEvidencesMutationRepository(instrumentedDatabase as never).createEvidence(
+        input,
+        managementActor(recurrenceFixture.adminUserId), now,
+        async () => { promoted = true; },
+      );
+      await waitForDatabaseLock(await uploadBackendPid.promise);
+      releaseTerminalMutation.resolve();
+      await expect(terminalMutation).resolves.toBeUndefined();
+      await expect(pendingUpload).resolves.toEqual({ kind: "RESOURCE_INACTIVE" });
+      expect(promoted).toBe(false);
+      await expect(database.evidencia.findUnique({ where: { storageKey: input.storageKey } }))
+        .resolves.toBeNull();
+    } finally {
+      releaseTerminalMutation.resolve();
+      await terminalMutation.catch(() => undefined);
+      await pendingUpload?.catch(() => undefined);
+      await database.reincidencia.updateMany({
+        where: { id: recurrenceId },
+        data: { status: "CORRECTION", closedAt: null, closedById: null },
+      });
+      await secondClient.$disconnect();
+    }
   });
 
   it("rolls back evidence metadata when uploaded audit creation fails", async () => {

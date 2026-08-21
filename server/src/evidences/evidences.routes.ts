@@ -49,6 +49,8 @@ export function createEvidencesRouter(
   router.get("/orders/:orderId/evidences", ...read, controller.listOrder);
   router.post("/activities/:activityId/evidences", ...upload, controller.uploadActivity);
   router.get("/activities/:activityId/evidences", ...read, controller.listActivity);
+  router.post("/recurrences/:recurrenceId/evidences", ...upload, controller.uploadRecurrence);
+  router.get("/recurrences/:recurrenceId/evidences", ...read, controller.listRecurrence);
   router.get("/evidences/:evidenceId/download", ...read, controller.download);
   router.patch("/evidences/:evidenceId", ...manage, controller.update);
   router.post("/evidences/:evidenceId/archive", ...manage, controller.archive);

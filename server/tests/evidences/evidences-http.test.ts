@@ -14,6 +14,7 @@ import { LocalEvidenceStorage } from "../../src/evidences/evidences.local-storag
 import type { EvidenceStorage } from "../../src/evidences/evidences.storage.js";
 import { silentLogger } from "../../src/utils/logger.js";
 import { createEvidencesReadFixture, removeEvidencesReadFixture, type EvidencesReadFixture } from "../database/evidences-test-data.js";
+import { createRecurrencesReadFixture, removeRecurrencesReadFixture, type RecurrencesReadFixture } from "../database/recurrences-test-data.js";
 import { database, disconnectTestDatabase } from "../database/database-test-context.js";
 
 const allowedOrigin = "http://localhost:5173";
@@ -24,6 +25,8 @@ const users = {
   provisional: { id: randomUUID(), email: `evidence.http.provisional.${randomUUID()}@example.test` },
 } as const;
 let fixture: EvidencesReadFixture;
+let recurrenceFixture: RecurrencesReadFixture;
+let recurrenceTechnicianUserId = "";
 let storageRoot = "";
 let lazyStorageRoot = "";
 let storage: LocalEvidenceStorage;
@@ -57,18 +60,31 @@ async function agentFor(user: { email: string }, targetApp = app) {
   return agent;
 }
 
-function upload(agent: Agent, target: string, body: Buffer = pdf, name = "proof.pdf") {
-  return agent.post(target).set("Origin", allowedOrigin).field("description", "HTTP evidence").field("accessLevel", "TECHNICIAN").attach("file", body, { filename: name, contentType: "application/pdf" });
+function upload(agent: Agent, target: string, body: Buffer = pdf, name = "proof.pdf", accessLevel = "TECHNICIAN") {
+  return agent.post(target).set("Origin", allowedOrigin).field("description", "HTTP evidence").field("accessLevel", accessLevel).attach("file", body, { filename: name, contentType: "application/pdf" });
 }
 
 function errorCode(response: request.Response) {
   return response.body.errors[0]?.code;
 }
 
+async function finalStorageKeys(): Promise<string[]> {
+  const keys: string[] = [];
+  for await (const key of storage.listFinalKeys()) keys.push(key);
+  return keys.sort();
+}
+
 beforeAll(async () => {
   await seedDatabase(database);
   await database.sesion.deleteMany({ where: { userId: { in: [...fixtureUserIds] } } });
   fixture = await createEvidencesReadFixture(database);
+  recurrenceFixture = await createRecurrencesReadFixture(database);
+  const recurrenceTechnician = await database.reincidencia.findUniqueOrThrow({
+    where: { id: recurrenceFixture.reporterRecurrenceId },
+    select: { reportedById: true },
+  });
+  if (recurrenceTechnician.reportedById === null) throw new Error("Approved recurrence fixture requires a reporter");
+  recurrenceTechnicianUserId = recurrenceTechnician.reportedById;
   const [roles, passwordHash] = await Promise.all([
     database.rol.findMany({ where: { code: { in: ["ADMIN", "TECHNICIAN"] } } }),
     hashPassword(password, { N: 1024, r: 8, p: 1, maxmem: 16 * 1024 * 1024 }),
@@ -86,9 +102,10 @@ beforeAll(async () => {
     { usuarioId: fixture.formerUserId, rolId: roleIds.TECHNICIAN! },
     { usuarioId: fixture.historicalActivityUserId, rolId: roleIds.TECHNICIAN! },
     { usuarioId: fixture.supervisorUserId, rolId: roleIds.ADMIN! },
+    { usuarioId: recurrenceTechnicianUserId, rolId: roleIds.TECHNICIAN! },
   ] });
   await database.usuario.updateMany({
-    where: { id: { in: [fixture.formerUserId, fixture.historicalActivityUserId, fixture.supervisorUserId] } },
+    where: { id: { in: [fixture.formerUserId, fixture.historicalActivityUserId, fixture.supervisorUserId, recurrenceTechnicianUserId] } },
     data: { passwordHash, mustChangePassword: false },
   });
   await database.tecnico.update({ where: { id: fixture.assignedTechnicianId }, data: { userId: users.technician.id } });
@@ -106,13 +123,26 @@ afterAll(async () => {
     return;
   }
   const userIds = Object.values(users).map(({ id }) => id);
-  const created = await database.evidencia.findMany({ where: { uploadedById: { in: userIds } }, select: { id: true } });
+  const recurrenceIds = [
+    recurrenceFixture.reporterRecurrenceId,
+    recurrenceFixture.originalParticipantRecurrenceId,
+    recurrenceFixture.correctionParticipantRecurrenceId,
+    recurrenceFixture.foreignRecurrenceId,
+    recurrenceFixture.inactiveCauseRecurrenceId,
+    recurrenceFixture.deletedCauseRecurrenceId,
+  ];
+  const created = await database.evidencia.findMany({
+    where: { OR: [{ uploadedById: { in: userIds } }, { reincidenciaId: { in: recurrenceIds } }] },
+    select: { id: true },
+  });
   await database.auditoria.deleteMany({ where: { entity: "Evidencia", entityId: { in: created.map(({ id }) => id) } } });
   await database.evidencia.deleteMany({ where: { id: { in: created.map(({ id }) => id) } } });
-  await database.sesion.deleteMany({ where: { userId: { in: [...userIds, fixture.formerUserId, fixture.historicalActivityUserId, fixture.supervisorUserId] } } });
+  await database.sesion.deleteMany({ where: { userId: { in: [...userIds, fixture.formerUserId, fixture.historicalActivityUserId, fixture.supervisorUserId, recurrenceTechnicianUserId] } } });
   await database.usuarioRol.deleteMany({ where: { usuarioId: { in: userIds } } });
   await database.usuarioRol.deleteMany({ where: { usuarioId: { in: [fixture.formerUserId, fixture.historicalActivityUserId, fixture.supervisorUserId] } } });
+  await database.usuarioRol.deleteMany({ where: { usuarioId: recurrenceTechnicianUserId } });
   await database.usuario.deleteMany({ where: { id: { in: userIds } } });
+  await removeRecurrencesReadFixture(database);
   await removeEvidencesReadFixture(database);
   await rm(storageRoot, { recursive: true, force: true });
   await rm(lazyStorageRoot, { recursive: true, force: true });
@@ -150,6 +180,141 @@ describe("evidences HTTP", () => {
     await admin.get(`/api/v1/evidences/${created.body.data.id}/download`).expect(404);
     const archived = await database.evidencia.findUniqueOrThrow({ where: { id: created.body.data.id }, select: { storageKey: true } });
     expect(await storage.exists(archived.storageKey)).toBe(true);
+  });
+
+  it("exposes recurrence upload/list routes with historical ACL, terminal reads, and retained archive bytes", async () => {
+    const admin = await agentFor(users.admin);
+    const participant = await agentFor({ email: "recurrences-read-reporter@example.test" });
+    const unrelated = await agentFor(users.technician);
+
+    const openInternal = await upload(
+      admin,
+      `/api/v1/recurrences/${recurrenceFixture.reporterRecurrenceId}/evidences`,
+      pdf,
+      "open-internal.pdf",
+      "INTERNAL",
+    ).expect(201);
+    expect(openInternal.body.data).toMatchObject({
+      resourceType: "RECURRENCE",
+      resourceId: recurrenceFixture.reporterRecurrenceId,
+      accessLevel: "INTERNAL",
+    });
+    const openTechnician = await upload(
+      participant,
+      `/api/v1/recurrences/${recurrenceFixture.reporterRecurrenceId}/evidences`,
+      pdf,
+      "open-technician.pdf",
+      "INTERNAL",
+    ).expect(201);
+    expect(openTechnician.body.data).toMatchObject({
+      resourceType: "RECURRENCE",
+      resourceId: recurrenceFixture.reporterRecurrenceId,
+      accessLevel: "TECHNICIAN",
+    });
+    const analysisTechnician = await upload(
+      participant,
+      `/api/v1/recurrences/${recurrenceFixture.originalParticipantRecurrenceId}/evidences`,
+      pdf,
+      "analysis.pdf",
+    ).expect(201);
+    expect(analysisTechnician.body.data).toMatchObject({ resourceType: "RECURRENCE", accessLevel: "TECHNICIAN" });
+    const correctionTechnician = await upload(
+      participant,
+      `/api/v1/recurrences/${recurrenceFixture.correctionParticipantRecurrenceId}/evidences`,
+      pdf,
+      "correction.pdf",
+    ).expect(201);
+    expect(correctionTechnician.body.data).toMatchObject({ resourceType: "RECURRENCE", accessLevel: "TECHNICIAN", version: 1 });
+
+    const participantList = await participant
+      .get(`/api/v1/recurrences/${recurrenceFixture.reporterRecurrenceId}/evidences`)
+      .expect(200);
+    expect(participantList.body.data.items).toEqual([
+      expect.objectContaining({ id: openTechnician.body.data.id, accessLevel: "TECHNICIAN" }),
+    ]);
+    const foreignList = await unrelated
+      .get(`/api/v1/recurrences/${recurrenceFixture.reporterRecurrenceId}/evidences`)
+      .expect(404);
+    const absentList = await unrelated.get(`/api/v1/recurrences/${randomUUID()}/evidences`).expect(404);
+    expect({ status: foreignList.status, body: { ...foreignList.body, meta: { requestId: "" } } })
+      .toEqual({ status: absentList.status, body: { ...absentList.body, meta: { requestId: "" } } });
+    const foreignDownload = await unrelated
+      .get(`/api/v1/evidences/${openTechnician.body.data.id}/download`)
+      .expect(404);
+    const absentDownload = await unrelated.get(`/api/v1/evidences/${randomUUID()}/download`).expect(404);
+    expect({ status: foreignDownload.status, body: { ...foreignDownload.body, meta: { requestId: "" } } })
+      .toEqual({ status: absentDownload.status, body: { ...absentDownload.body, meta: { requestId: "" } } });
+
+    await database.reincidencia.update({
+      where: { id: recurrenceFixture.correctionParticipantRecurrenceId },
+      data: {
+        status: "CLOSED",
+        closedAt: new Date("2026-08-21T18:00:00.000Z"),
+        closedById: recurrenceFixture.supervisorUserId,
+      },
+    });
+    await participant
+      .get(`/api/v1/recurrences/${recurrenceFixture.correctionParticipantRecurrenceId}/evidences`)
+      .expect(200);
+    const terminalDownload = await participant
+      .get(`/api/v1/evidences/${correctionTechnician.body.data.id}/download`)
+      .buffer(true)
+      .parse((res, cb) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        res.on("end", () => cb(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    expect(terminalDownload.body).toEqual(pdf);
+    await admin
+      .get(`/api/v1/recurrences/${recurrenceFixture.inactiveCauseRecurrenceId}/evidences`)
+      .expect(200);
+
+    const updated = await admin
+      .patch(`/api/v1/evidences/${correctionTechnician.body.data.id}`)
+      .set("Origin", allowedOrigin)
+      .send({ version: 1, description: "Terminal recurrence evidence reviewed", accessLevel: "INTERNAL" })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ resourceType: "RECURRENCE", accessLevel: "INTERNAL", version: 2 });
+    const archivedResponse = await admin
+      .post(`/api/v1/evidences/${correctionTechnician.body.data.id}/archive`)
+      .set("Origin", allowedOrigin)
+      .send({ version: 2, reason: "Archive recurrence evidence while retaining protected bytes" })
+      .expect(200);
+    expect(archivedResponse.body.data).toMatchObject({ resourceType: "RECURRENCE", version: 3 });
+    const archived = await database.evidencia.findUniqueOrThrow({
+      where: { id: correctionTechnician.body.data.id },
+      select: { storageKey: true, deletedAt: true, deletionReason: true },
+    });
+    expect(archived).toMatchObject({
+      deletedAt: expect.any(Date),
+      deletionReason: "Archive recurrence evidence while retaining protected bytes",
+    });
+    expect(await storage.exists(archived.storageKey)).toBe(true);
+  });
+
+  it("rejects CLOSED and DISMISSED recurrence uploads without durable promotion or metadata", async () => {
+    const admin = await agentFor(users.admin);
+    const targets = [
+      recurrenceFixture.foreignRecurrenceId,
+      recurrenceFixture.inactiveCauseRecurrenceId,
+    ];
+    const beforeKeys = await finalStorageKeys();
+    const beforeCount = await database.evidencia.count({ where: { reincidenciaId: { in: targets } } });
+
+    for (const recurrenceId of targets) {
+      const response = await upload(
+        admin,
+        `/api/v1/recurrences/${recurrenceId}/evidences`,
+        pdf,
+        `terminal-${recurrenceId}.pdf`,
+      ).expect(409);
+      expect(errorCode(response)).toBe("RESOURCE_INACTIVE");
+    }
+
+    expect(await finalStorageKeys()).toEqual(beforeKeys);
+    await expect(database.evidencia.count({ where: { reincidenciaId: { in: targets } } }))
+      .resolves.toBe(beforeCount);
   });
 
   it("shares lazy storage initialization across concurrent first operations", async () => {

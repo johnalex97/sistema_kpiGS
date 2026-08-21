@@ -14,6 +14,7 @@ import type {
 
 const fixedNow = new Date("2026-08-17T12:00:00.000Z");
 const order = { type: "ORDER" as const, id: "10000000-0000-4000-8000-000000000001" };
+const recurrence = { type: "RECURRENCE" as const, id: "10000000-0000-4000-8000-000000000002" };
 const evidenceId = "20000000-0000-4000-8000-000000000001";
 const tempKey = "tmp/30000000-0000-4000-8000-000000000001.upload";
 const finalKey = "files/2026/08/40000000-0000-4000-8000-000000000001.jpg";
@@ -155,10 +156,11 @@ describe("evidence service permissions", () => {
 
   it("forces a technician upload to TECHNICIAN", async () => {
     const mutation = mutationRepository();
-    await serviceWith({ mutation }).createEvidence(order, upload(), technician());
+    const read = readRepository({ findUploadTarget: vi.fn(async () => ({ status: "OPEN" as const })) });
+    await serviceWith({ mutation, read }).createEvidence(recurrence, upload(), technician());
 
     expect(mutation.createEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({ accessLevel: "TECHNICIAN" }),
+      expect.objectContaining({ resource: recurrence, accessLevel: "TECHNICIAN" }),
       expect.anything(), expect.any(Date), expect.any(Function),
     );
   });
@@ -192,6 +194,35 @@ describe("evidence service permissions", () => {
 });
 
 describe("evidence service lifecycle", () => {
+  it.each(["OPEN", "ANALYSIS", "CORRECTION"] as const)(
+    "permits recurrence upload preparation while status is %s",
+    async (status) => {
+      const read = readRepository({ findUploadTarget: vi.fn(async () => ({ status })) });
+
+      await expect(serviceWith({ read }).prepareUpload(recurrence, technician()))
+        .resolves.toBeUndefined();
+    },
+  );
+
+  it.each(["CLOSED", "DISMISSED"] as const)(
+    "rejects recurrence upload while status is %s before reading or promoting bytes",
+    async (status) => {
+      const read = readRepository({ findUploadTarget: vi.fn(async () => ({ status })) });
+      const fileStorage = storage();
+      const mutation = mutationRepository();
+
+      await expect(serviceWith({ read, fileStorage, mutation }).createEvidence(
+        recurrence,
+        upload(),
+        technician(),
+      )).rejects.toMatchObject({ statusCode: 409, code: "RESOURCE_INACTIVE" });
+      expect(fileStorage.readHead).not.toHaveBeenCalled();
+      expect(fileStorage.promote).not.toHaveBeenCalled();
+      expect(mutation.createEvidence).not.toHaveBeenCalled();
+      expect(fileStorage.remove).toHaveBeenCalledWith(tempKey);
+    },
+  );
+
   it("checks upload authorization before any file body is processed", async () => {
     const fileStorage = storage();
     await expectForbidden(serviceWith({ fileStorage }).createEvidence(order, upload(), { ...technician(), permissions: [] }));

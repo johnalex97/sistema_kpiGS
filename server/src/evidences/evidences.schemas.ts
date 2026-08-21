@@ -18,7 +18,7 @@ export const evidenceIdSchema = z.object({ evidenceId: z.uuid() }).strict();
 
 export const evidenceResourceParamsSchema = z
   .object({
-    resourceType: z.enum(["ORDER", "ACTIVITY"]),
+    resourceType: z.enum(["ORDER", "ACTIVITY", "RECURRENCE"]),
     resourceId: z.uuid(),
   })
   .strict();

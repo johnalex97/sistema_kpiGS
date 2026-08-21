@@ -59,6 +59,24 @@ function visibleActivityWhere(
   };
 }
 
+function visibleRecurrenceWhere(
+  id: string,
+  actor: EvidenceActorContext,
+): Prisma.ReincidenciaWhereInput {
+  if (!hasManagementAccess(actor) && !hasTechnicianAccess(actor)) {
+    return { AND: [{ id }, { id: { in: [] } }] };
+  }
+  return {
+    id,
+    ...(hasTechnicianAccess(actor) && {
+      OR: [
+        { reportedBy: { tecnico: { id: actor.technicianId } } },
+        { tecnicos: { some: { tecnicoId: actor.technicianId } } },
+      ],
+    }),
+  };
+}
+
 function visibleEvidenceWhere(
   actor: EvidenceActorContext,
 ): Prisma.EvidenciaWhereInput {
@@ -72,11 +90,14 @@ function visibleEvidenceWhere(
   const activityVisibility = hasTechnicianAccess(actor)
     ? { actividad: visibleActivityWhereForEvidence(actor) }
     : { actividad: { deletedAt: null } };
+  const recurrenceVisibility = hasTechnicianAccess(actor)
+    ? { reincidencia: visibleRecurrenceWhereForEvidence(actor) }
+    : { reincidenciaId: { not: null } };
 
   return {
     deletedAt: null,
     ...(hasTechnicianAccess(actor) && { accessLevel: "TECHNICIAN" }),
-    OR: [orderVisibility, activityVisibility],
+    OR: [orderVisibility, activityVisibility, recurrenceVisibility],
   };
 }
 
@@ -101,6 +122,17 @@ function visibleActivityWhereForEvidence(
   };
 }
 
+function visibleRecurrenceWhereForEvidence(
+  actor: EvidenceActorContext & { technicianId: string },
+): Prisma.ReincidenciaWhereInput {
+  return {
+    OR: [
+      { reportedBy: { tecnico: { id: actor.technicianId } } },
+      { tecnicos: { some: { tecnicoId: actor.technicianId } } },
+    ],
+  };
+}
+
 function resourceEvidenceWhere(
   resource: EvidenceResource,
   actor: EvidenceActorContext,
@@ -110,7 +142,9 @@ function resourceEvidenceWhere(
       visibleEvidenceWhere(actor),
       resource.type === "ORDER"
         ? { ordenId: resource.id }
-        : { actividadId: resource.id },
+        : resource.type === "ACTIVITY"
+          ? { actividadId: resource.id }
+          : { reincidenciaId: resource.id },
     ],
   };
 }
@@ -142,8 +176,14 @@ export function createEvidencesReadRepository(
           select: { status: true },
         });
       }
-      return database.actividad.findFirst({
-        where: visibleActivityWhere(resource.id, actor),
+      if (resource.type === "ACTIVITY") {
+        return database.actividad.findFirst({
+          where: visibleActivityWhere(resource.id, actor),
+          select: { status: true },
+        });
+      }
+      return database.reincidencia.findFirst({
+        where: visibleRecurrenceWhere(resource.id, actor),
         select: { status: true },
       });
     },
@@ -155,10 +195,15 @@ export function createEvidencesReadRepository(
             where: visibleOrderWhere(resource.id, actor),
             select: { id: true },
           })
-          : await transaction.actividad.findFirst({
-            where: visibleActivityWhere(resource.id, actor),
-            select: { id: true },
-          });
+          : resource.type === "ACTIVITY"
+            ? await transaction.actividad.findFirst({
+              where: visibleActivityWhere(resource.id, actor),
+              select: { id: true },
+            })
+            : await transaction.reincidencia.findFirst({
+              where: visibleRecurrenceWhere(resource.id, actor),
+              select: { id: true },
+            });
         if (target === null) return null;
 
         return loadEvidencePage(

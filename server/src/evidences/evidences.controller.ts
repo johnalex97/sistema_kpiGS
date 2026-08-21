@@ -25,9 +25,14 @@ function actor(request: Request): EvidenceActorContext {
   return { userId: request.auth!.userId, technicianId: request.auth!.technicianId, permissions: request.auth!.permissions, requestId: request.requestId };
 }
 
-function resource(request: Request, type: "ORDER" | "ACTIVITY"): EvidenceResource {
-  const { resourceId } = parse(evidenceResourceParamsSchema.safeParse({ resourceType: type, resourceId: type === "ORDER" ? request.params.orderId : request.params.activityId }));
-  return { type, id: resourceId };
+function resource(request: Request, type: EvidenceResource["type"]): EvidenceResource {
+  const resourceId = type === "ORDER"
+    ? request.params.orderId
+    : type === "ACTIVITY"
+      ? request.params.activityId
+      : request.params.recurrenceId;
+  const parsed = parse(evidenceResourceParamsSchema.safeParse({ resourceType: type, resourceId }));
+  return { type, id: parsed.resourceId };
 }
 
 function success(request: Request, response: Response, status: number, message: string, data: unknown): void {
@@ -77,7 +82,7 @@ export function createEvidencesController(
       // Observational logging must never alter the HTTP response.
     }
   };
-  const upload = (type: "ORDER" | "ACTIVITY") => async (req: Request, res: Response, next: NextFunction) => {
+  const upload = (type: EvidenceResource["type"]) => async (req: Request, res: Response, next: NextFunction) => {
     try {
       const target = resource(req, type);
       const context = actor(req);
@@ -92,14 +97,14 @@ export function createEvidencesController(
       success(req, res, 201, "Evidencia cargada", evidence);
     } catch (error) { next(error); }
   };
-  const list = (type: "ORDER" | "ACTIVITY") => async (req: Request, res: Response, next: NextFunction) => {
+  const list = (type: EvidenceResource["type"]) => async (req: Request, res: Response, next: NextFunction) => {
     try {
       success(req, res, 200, "Evidencias consultadas", await service.listEvidence(resource(req, type), parse(evidenceListQuerySchema.safeParse(req.query)), actor(req)));
     } catch (error) { next(error); }
   };
   return {
-    uploadOrder: upload("ORDER"), uploadActivity: upload("ACTIVITY"),
-    listOrder: list("ORDER"), listActivity: list("ACTIVITY"),
+    uploadOrder: upload("ORDER"), uploadActivity: upload("ACTIVITY"), uploadRecurrence: upload("RECURRENCE"),
+    listOrder: list("ORDER"), listActivity: list("ACTIVITY"), listRecurrence: list("RECURRENCE"),
     download: async (req: Request, res: Response, next: NextFunction) => {
       try {
         const { evidenceId } = parse(evidenceIdSchema.safeParse(req.params));

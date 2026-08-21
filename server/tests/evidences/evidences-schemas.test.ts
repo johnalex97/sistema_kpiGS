@@ -17,6 +17,9 @@ describe("evidence request schemas", () => {
     expect(
       evidenceResourceParamsSchema.parse({ resourceType: "ORDER", resourceId }),
     ).toEqual({ resourceType: "ORDER", resourceId });
+    expect(
+      evidenceResourceParamsSchema.parse({ resourceType: "RECURRENCE", resourceId }),
+    ).toEqual({ resourceType: "RECURRENCE", resourceId });
     expect(() => evidenceIdSchema.parse({ evidenceId: "not-a-uuid" })).toThrow();
     expect(() => evidenceResourceParamsSchema.parse({ resourceType: "ORDER", resourceId, extra: true })).toThrow();
   });

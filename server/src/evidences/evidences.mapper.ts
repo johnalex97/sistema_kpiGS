@@ -9,15 +9,14 @@ function invariant(message: string): never {
 }
 
 function mapResource(record: EvidenceRecord): Pick<EvidencePublic, "resourceType" | "resourceId"> {
-  if (record.reincidencia !== null) {
-    return invariant("reincidence evidence is not supported in phase 9");
-  }
-
-  if (record.orden !== null && record.actividad === null) {
+  if (record.orden !== null && record.actividad === null && record.reincidencia === null) {
     return { resourceType: "ORDER", resourceId: record.orden.id };
   }
-  if (record.orden === null && record.actividad !== null) {
+  if (record.orden === null && record.actividad !== null && record.reincidencia === null) {
     return { resourceType: "ACTIVITY", resourceId: record.actividad.id };
+  }
+  if (record.orden === null && record.actividad === null && record.reincidencia !== null) {
+    return { resourceType: "RECURRENCE", resourceId: record.reincidencia.id };
   }
   return invariant("exactly one API-supported resource relation is required");
 }

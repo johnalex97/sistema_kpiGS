@@ -28,6 +28,7 @@ interface EvidenceTarget {
   id: string;
   ordenId: string | null;
   actividadId: string | null;
+  reincidenciaId: string | null;
 }
 
 interface LockedEvidenceRow extends EvidenceTarget {
@@ -75,12 +76,19 @@ async function lockTarget(
     `;
     return rows[0] ?? null;
   }
-  const rows = await transaction.$queryRaw<LockedTargetRow[]>`
-    SELECT "id", UPPER("status"::text) AS "status"
-    FROM "actividad"
-    WHERE "id" = ${resource.id}::uuid AND "deleted_at" IS NULL
-    FOR UPDATE
-  `;
+  const rows = resource.type === "ACTIVITY"
+    ? await transaction.$queryRaw<LockedTargetRow[]>`
+      SELECT "id", UPPER("status"::text) AS "status"
+      FROM "actividad"
+      WHERE "id" = ${resource.id}::uuid AND "deleted_at" IS NULL
+      FOR UPDATE
+    `
+    : await transaction.$queryRaw<LockedTargetRow[]>`
+      SELECT "id", UPPER("status"::text) AS "status"
+      FROM "reincidencia"
+      WHERE "id" = ${resource.id}::uuid
+      FOR UPDATE
+    `;
   return rows[0] ?? null;
 }
 
@@ -90,14 +98,17 @@ async function findEvidenceTarget(
 ): Promise<EvidenceResource | null> {
   const evidence = await transaction.evidencia.findUnique({
     where: { id },
-    select: { ordenId: true, actividadId: true, deletedAt: true },
+    select: { ordenId: true, actividadId: true, reincidenciaId: true, deletedAt: true },
   });
   if (evidence === null || evidence.deletedAt !== null) return null;
-  if (evidence.ordenId !== null && evidence.actividadId === null) {
+  if (evidence.ordenId !== null && evidence.actividadId === null && evidence.reincidenciaId === null) {
     return { type: "ORDER", id: evidence.ordenId };
   }
-  if (evidence.actividadId !== null && evidence.ordenId === null) {
+  if (evidence.actividadId !== null && evidence.ordenId === null && evidence.reincidenciaId === null) {
     return { type: "ACTIVITY", id: evidence.actividadId };
+  }
+  if (evidence.reincidenciaId !== null && evidence.ordenId === null && evidence.actividadId === null) {
+    return { type: "RECURRENCE", id: evidence.reincidenciaId };
   }
   return null;
 }
@@ -111,6 +122,7 @@ async function lockEvidence(
       "id",
       "orden_id" AS "ordenId",
       "actividad_id" AS "actividadId",
+      "reincidencia_id" AS "reincidenciaId",
       "version"
     FROM "evidencia"
     WHERE "id" = ${id}::uuid AND "deleted_at" IS NULL
@@ -130,7 +142,7 @@ async function loadEvidence(
 }
 
 function resourceSnapshot(evidence: EvidenceRecord): {
-  resourceType: "ORDER" | "ACTIVITY";
+  resourceType: "ORDER" | "ACTIVITY" | "RECURRENCE";
   resourceId: string;
 } {
   if (evidence.orden !== null && evidence.actividad === null && evidence.reincidencia === null) {
@@ -138,6 +150,9 @@ function resourceSnapshot(evidence: EvidenceRecord): {
   }
   if (evidence.actividad !== null && evidence.orden === null && evidence.reincidencia === null) {
     return { resourceType: "ACTIVITY", resourceId: evidence.actividad.id };
+  }
+  if (evidence.reincidencia !== null && evidence.orden === null && evidence.actividad === null) {
+    return { resourceType: "RECURRENCE", resourceId: evidence.reincidencia.id };
   }
   throw new Error("Evidence mutation requires exactly one supported resource");
 }
@@ -202,6 +217,12 @@ async function createEvidence(
   const target = await lockTarget(transaction, input.resource);
   if (target === null) return { kind: "RESOURCE_NOT_FOUND" };
   if (target.status === "CANCELLED") return { kind: "RESOURCE_CANCELLED" };
+  if (input.resource.type === "RECURRENCE"
+    && target.status !== "OPEN"
+    && target.status !== "ANALYSIS"
+    && target.status !== "CORRECTION") {
+    return { kind: "RESOURCE_INACTIVE" };
+  }
 
   // The final storage key is supplied by the storage coordinator; promotion stays
   // inside the target lock so its same-volume rename cannot outlive a stale target.
@@ -223,7 +244,9 @@ async function createEvidence(
       uploadedById: actor.userId,
       ...(input.resource.type === "ORDER"
         ? { ordenId: input.resource.id }
-        : { actividadId: input.resource.id }),
+        : input.resource.type === "ACTIVITY"
+          ? { actividadId: input.resource.id }
+          : { reincidenciaId: input.resource.id }),
       createdAt: now,
       updatedAt: now,
     },

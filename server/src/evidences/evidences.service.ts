@@ -174,6 +174,12 @@ export function createEvidencesService({
     if (target.status === "CANCELLED") {
       throw new ApiError(409, "El recurso está cancelado", "RESOURCE_CANCELLED");
     }
+    if (resource.type === "RECURRENCE"
+      && target.status !== "OPEN"
+      && target.status !== "ANALYSIS"
+      && target.status !== "CORRECTION") {
+      throw new ApiError(409, "El recurso no está activo", "RESOURCE_INACTIVE");
+    }
   }
 
   return {
