@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  addRecurrenceVisitSchema,
   adjustRecurrenceSchema,
   analyzeRecurrenceSchema,
+  correctRecurrenceSchema,
   recurrenceListQuerySchema,
   reportRecurrenceSchema,
 } from "../../src/recurrences/recurrences.schemas.js";
@@ -62,6 +64,32 @@ describe("recurrence request schemas", () => {
     })).toThrow();
   });
 
+  it.each([
+    ["quality justification", () => analyzeRecurrenceSchema.parse({
+      version: 1, causeId, impact: "LOW", responsibility: "TECHNICAL_WORK",
+      analysis: "Análisis suficientemente documentado",
+      qualityDecisions: [{ technicianId, affectsQuality: false, justification: null }],
+    })],
+    ["analysis age override reason", () => analyzeRecurrenceSchema.parse({
+      version: 1, causeId, impact: "LOW", responsibility: "TECHNICAL_WORK",
+      analysis: "Análisis suficientemente documentado",
+      qualityDecisions: [{ technicianId, affectsQuality: true, justification: "Trabajo técnico deficiente" }],
+      ageOverrideReason: null,
+    })],
+    ["analysis cost reason", () => analyzeRecurrenceSchema.parse({
+      version: 1, causeId, impact: "LOW", responsibility: "TECHNICAL_WORK",
+      analysis: "Análisis suficientemente documentado",
+      qualityDecisions: [{ technicianId, affectsQuality: true, justification: "Trabajo técnico deficiente" }],
+      costReason: null,
+    })],
+    ["correction cost reason", () => correctRecurrenceSchema.parse({
+      version: 1, correctiveAction: "Acción correctiva documentada", costReason: null,
+    })],
+    ["visit observation", () => addRecurrenceVisitSchema.parse({ version: 1, orderId: correctionOrderId, observation: null })],
+  ])("rejects null for string-only %s", (_field, parse) => {
+    expect(parse).toThrow();
+  });
+
   it("enforces pagination, chronological filters, and a non-empty adjustment", () => {
     expect(() => recurrenceListQuerySchema.parse({ page: 0 })).toThrow();
     expect(() => recurrenceListQuerySchema.parse({ pageSize: 101 })).toThrow();
@@ -70,6 +98,11 @@ describe("recurrence request schemas", () => {
       detectedTo: "2026-08-01T00:00:00.000Z",
     })).toThrow();
     expect(() => adjustRecurrenceSchema.parse({ version: 1, reason: "Razón suficientemente documentada" })).toThrow();
+    expect(() => adjustRecurrenceSchema.parse({
+      version: 1,
+      reason: "Razón suficientemente documentada",
+      costReason: null,
+    })).toThrow();
     expect(adjustRecurrenceSchema.parse({
       version: 1,
       reason: "Razón suficientemente documentada",
