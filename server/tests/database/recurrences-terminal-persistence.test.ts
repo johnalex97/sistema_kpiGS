@@ -8,6 +8,7 @@ import {
 } from "vitest";
 import { Prisma } from "../../generated/prisma/client.js";
 import { createDatabaseClient } from "../../src/config/database.js";
+import { runRecurrenceSerializableTransaction } from "../../src/recurrences/recurrences.repository.helpers.js";
 import { createRecurrencesWorkflowRepository } from "../../src/recurrences/recurrences.workflow.repository.js";
 import type {
   AdjustRecurrenceInput,
@@ -54,6 +55,81 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: () => void = () => undefined;
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
+}
+
+function deferredValue<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function within<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 1_500);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+async function waitForDatabaseLock(client: typeof database, backendPid: number): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const rows = await client.$queryRaw<Array<{ waitEventType: string | null }>>`
+      SELECT "wait_event_type" AS "waitEventType"
+      FROM "pg_stat_activity"
+      WHERE "pid" = ${backendPid}
+    `;
+    if (rows[0]?.waitEventType === "Lock") return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Backend ${backendPid} never waited on a database lock`);
+}
+
+async function waitForTaggedArchiveLock(client: typeof database): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const rows = await client.$queryRaw<Array<{ waiting: number }>>`
+      SELECT COUNT(*)::int AS "waiting"
+      FROM "pg_stat_activity"
+      WHERE "query" LIKE '%recurrence archive race%'
+        AND "wait_event_type" = 'Lock'
+    `;
+    if ((rows[0]?.waiting ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Archive transaction never waited on the recurrence lock");
+}
+
+async function archiveRecurrenceEvidence(
+  client: ReturnType<typeof createDatabaseClient>,
+  hooks: { afterRecurrenceLocked?: () => Promise<void> } = {},
+): Promise<"ARCHIVED" | "INVALID_RECURRENCE_TRANSITION"> {
+  return runRecurrenceSerializableTransaction(client, async (transaction) => {
+    const recurrenceRows = await transaction.$queryRaw<Array<{ status: string }>>`
+      SELECT UPPER("status"::text) AS "status"
+      FROM "reincidencia"
+      WHERE "id" = ${ids.recurrence}::uuid
+      /* recurrence archive race */
+      FOR UPDATE
+    `;
+    await hooks.afterRecurrenceLocked?.();
+    if (recurrenceRows[0]?.status === "CLOSED") return "INVALID_RECURRENCE_TRANSITION";
+    await transaction.$queryRaw`
+      SELECT "id"
+      FROM "evidencia"
+      WHERE "id" = ${ids.evidence}::uuid AND "deleted_at" IS NULL
+      FOR UPDATE
+    `;
+    await transaction.evidencia.updateMany({
+      where: { id: ids.evidence, deletedAt: null },
+      data: { deletedAt: now, deletedById: ids.reviewerUser, deletionReason: "Concurrent archive won.", version: { increment: 1 } },
+    });
+    return "ARCHIVED";
+  });
 }
 
 async function cleanupFixture(): Promise<void> {
@@ -308,32 +384,69 @@ describe("recurrence closure persistence", () => {
     expect(await database.auditoria.count({ where: { entityId: ids.recurrence } })).toBe(0);
   });
 
-  // Mutation caught: CLOSE uses a stale pre-lock evidence count while an archive wins the recurrence/evidence lock order.
-  it("CLOSE racing a recurrence evidence archive returns RECURRENCE_EVIDENCE_REQUIRED instead of closing from a stale count", async () => {
-    const preliminaryRead = deferred();
-    const archiveCommitted = deferred();
+  // Mutation caught: CLOSE omits/reorders its recurrence lock and can pass a stale evidence count while archive owns recurrence.
+  it("CLOSE really waits when archive owns recurrence, then rejects the archived evidence", async () => {
+    const archiveHasRecurrence = deferred();
+    const releaseArchive = deferred();
+    const closeBackendPid = deferredValue<number>();
     const connectionString = process.env.DATABASE_TEST_URL;
     if (connectionString === undefined) throw new Error("DATABASE_TEST_URL is required");
     const secondClient = createDatabaseClient(connectionString);
     const repository = createRecurrencesWorkflowRepository(database, { hooks: {
-      afterCloseRelationsRead: async () => {
-        preliminaryRead.resolve();
-        await archiveCommitted.promise;
+      afterCloseOrdersLocked: async ({ backendPid }) => {
+        closeBackendPid.resolve(backendPid);
       },
     } });
+    const pendingArchive = archiveRecurrenceEvidence(secondClient, { afterRecurrenceLocked: async () => {
+      archiveHasRecurrence.resolve();
+      await releaseArchive.promise;
+    } });
+    let pendingClose: ReturnType<ReturnType<typeof createRecurrencesWorkflowRepository>["closeRecurrence"]> | undefined;
     try {
-      const pendingClose = repository.closeRecurrence(ids.recurrence, { version: 3 }, actor, now);
-      await preliminaryRead.promise;
-      await secondClient.$transaction(async (transaction) => {
-        await transaction.$queryRaw`SELECT "id" FROM "reincidencia" WHERE "id" = ${ids.recurrence}::uuid FOR UPDATE`;
-        await transaction.$queryRaw`SELECT "id" FROM "evidencia" WHERE "id" = ${ids.evidence}::uuid FOR UPDATE`;
-        await transaction.evidencia.update({ where: { id: ids.evidence }, data: { deletedAt: now, deletedById: ids.reviewerUser, deletionReason: "Concurrent archive won.", version: { increment: 1 } } });
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-      archiveCommitted.resolve();
+      await within(archiveHasRecurrence.promise, "archive recurrence lock");
+      pendingClose = repository.closeRecurrence(ids.recurrence, { version: 3 }, actor, now);
+      const backendPid = await within(closeBackendPid.promise, "close transaction order lock");
+      await waitForDatabaseLock(secondClient, backendPid);
+      releaseArchive.resolve();
+      await expect(pendingArchive).resolves.toBe("ARCHIVED");
       await expect(pendingClose).resolves.toEqual({ kind: "RECURRENCE_EVIDENCE_REQUIRED" });
       await expect(database.reincidencia.findUniqueOrThrow({ where: { id: ids.recurrence }, select: { status: true } })).resolves.toEqual({ status: "CORRECTION" });
     } finally {
-      archiveCommitted.resolve();
+      releaseArchive.resolve();
+      await pendingArchive.catch(() => undefined);
+      await pendingClose?.catch(() => undefined);
+      await secondClient.$disconnect();
+    }
+  });
+
+  // Mutation caught: CLOSE does not hold recurrence through evidence validation, allowing archive to invalidate a stale close.
+  it("CLOSE owning recurrence makes archive wait, closes with active evidence, and leaves that evidence active", async () => {
+    const closeHasRecurrence = deferred();
+    const releaseClose = deferred();
+    const connectionString = process.env.DATABASE_TEST_URL;
+    if (connectionString === undefined) throw new Error("DATABASE_TEST_URL is required");
+    const secondClient = createDatabaseClient(connectionString);
+    const repository = createRecurrencesWorkflowRepository(database, { hooks: {
+      afterCloseRecurrenceLocked: async () => {
+        closeHasRecurrence.resolve();
+        await releaseClose.promise;
+      },
+    } });
+    const pendingClose = repository.closeRecurrence(ids.recurrence, { version: 3 }, actor, now);
+    let pendingArchive: Promise<"ARCHIVED" | "INVALID_RECURRENCE_TRANSITION"> | undefined;
+    try {
+      await within(closeHasRecurrence.promise, "close recurrence lock");
+      pendingArchive = archiveRecurrenceEvidence(secondClient);
+      await waitForTaggedArchiveLock(database);
+      releaseClose.resolve();
+      await expect(pendingClose).resolves.toMatchObject({ kind: "UPDATED", recurrence: { status: "CLOSED", evidencias: [{ id: ids.evidence }] } });
+      await expect(pendingArchive).resolves.toBe("INVALID_RECURRENCE_TRANSITION");
+      await expect(database.evidencia.findUniqueOrThrow({ where: { id: ids.evidence }, select: { deletedAt: true, version: true } }))
+        .resolves.toEqual({ deletedAt: null, version: 1 });
+    } finally {
+      releaseClose.resolve();
+      await pendingClose.catch(() => undefined);
+      await pendingArchive?.catch(() => undefined);
       await secondClient.$disconnect();
     }
   });
@@ -411,6 +524,8 @@ describe("closed recurrence adjustment persistence", () => {
       notas: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, authorId: true, content: true, createdAt: true } },
       evidencias: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, storageKey: true, deletedAt: true, version: true } },
     } });
+    await database.actividad.update({ where: { id: ids.firstActivity }, data: { productiveMinutes: 35 } });
+    await database.actividad.update({ where: { id: ids.thirdActivity }, data: { productiveMinutes: 40 } });
     const input = {
       ...adjustment(),
       recurrenceNumber: "RI-ILLEGAL",
@@ -442,6 +557,10 @@ describe("closed recurrence adjustment persistence", () => {
       status: "CLOSED", version: 4, causeId: ids.activeCause, impact: "HIGH", responsibility: "TECHNICAL_WORK",
       analysis: "The original termination was not secured.", correctiveAction: "Replace and certify the termination.", preventiveAction: "Add a mandatory pull-test checklist.",
       observations: "Correction reviewed by supervision.", estimatedCost: "150.00", additionalMinutes: 95,
+      visitMinutes: [
+        { visitId: ids.firstVisit, orderId: ids.firstCorrectionOrder, visitNumber: 1, additionalMinutes: 50 },
+        { visitId: ids.secondVisit, orderId: ids.secondCorrectionOrder, visitNumber: 2, additionalMinutes: 45 },
+      ],
       qualityDecisions: [
         { technicianId: ids.originalResponsible, participation: "ORIGINAL_RESPONSIBLE", affectsQuality: true, justification: "The responsible technician omitted the pull test." },
         { technicianId: ids.originalParticipant, participation: "ORIGINAL_PARTICIPANT", affectsQuality: false, justification: null },
@@ -451,11 +570,47 @@ describe("closed recurrence adjustment persistence", () => {
       status: "CLOSED", version: 5, causeId: ids.alternateCause, impact: "MEDIUM", responsibility: "EQUIPMENT",
       analysis: "A connector batch defect caused the recurrence.", correctiveAction: "Replace the affected connector batch.", preventiveAction: null,
       observations: "Administrative correction approved.", estimatedCost: "200.00", additionalMinutes: 95,
+      visitMinutes: [
+        { visitId: ids.firstVisit, orderId: ids.firstCorrectionOrder, visitNumber: 1, additionalMinutes: 55 },
+        { visitId: ids.secondVisit, orderId: ids.secondCorrectionOrder, visitNumber: 2, additionalMinutes: 40 },
+      ],
+      costReason: "Corrected final invoice estimate.",
       qualityDecisions: [
         { technicianId: ids.originalResponsible, participation: "ORIGINAL_RESPONSIBLE", affectsQuality: false, justification: null },
         { technicianId: ids.originalParticipant, participation: "ORIGINAL_PARTICIPANT", affectsQuality: false, justification: null },
       ],
     });
+  });
+
+  // Mutation caught: ADJUST fabricates cost metadata when no estimated-cost change was requested.
+  it("ADJUST keeps costReason absent from exact audit snapshots when cost does not change", async () => {
+    await closeFixture();
+    const result = await createRecurrencesWorkflowRepository(database).adjustClosedRecurrence(ids.recurrence, {
+      version: 4,
+      reason: "Clarify the final administrative observation.",
+      observations: "Observation clarified without a cost change.",
+    }, actor, now);
+    expect(result).toMatchObject({ kind: "UPDATED", recurrence: { status: "CLOSED", version: 5, estimatedCost: new Prisma.Decimal("150.00") } });
+    const audit = await database.auditoria.findFirstOrThrow({
+      where: { entityId: ids.recurrence, action: "RECURRENCE_ADJUSTED" },
+      select: { beforeData: true, afterData: true, reason: true },
+    });
+    expect(audit.reason).toBe("Clarify the final administrative observation.");
+    expect(audit.beforeData).not.toHaveProperty("costReason");
+    expect(audit.afterData).not.toHaveProperty("costReason");
+  });
+
+  // Mutation caught: ADJUST validates costReason but drops it instead of preserving it separately from the general reason.
+  it("ADJUST audits costReason separately while retaining the general adjustment reason", async () => {
+    await closeFixture();
+    const result = await createRecurrencesWorkflowRepository(database).adjustClosedRecurrence(ids.recurrence, adjustment(), actor, now);
+    expect(result).toMatchObject({ kind: "UPDATED", recurrence: { estimatedCost: new Prisma.Decimal("200.00") } });
+    const audit = await database.auditoria.findFirstOrThrow({
+      where: { entityId: ids.recurrence, action: "RECURRENCE_ADJUSTED" },
+      select: { afterData: true, reason: true },
+    });
+    expect(audit.reason).toBe("Correct final classification after review.");
+    expect(audit.afterData).toHaveProperty("costReason", "Corrected final invoice estimate.");
   });
 
   // Mutation caught: ADJUST accepts invalid quality/cost/reason or a non-closed case.

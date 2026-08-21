@@ -50,15 +50,17 @@ interface VisitRelationHookContext {
   proposedOrderId: string;
 }
 
-interface TerminalRelationHookContext {
+interface TerminalLockHookContext {
   recurrenceId: string;
   orderIds: readonly string[];
+  backendPid: number;
 }
 
 export interface RecurrencesWorkflowRepositoryOptions {
   hooks?: {
     afterVisitRelationsRead?: (context: VisitRelationHookContext) => Promise<void>;
-    afterCloseRelationsRead?: (context: TerminalRelationHookContext) => Promise<void>;
+    afterCloseOrdersLocked?: (context: TerminalLockHookContext) => Promise<void>;
+    afterCloseRecurrenceLocked?: (context: TerminalLockHookContext) => Promise<void>;
   };
 }
 
@@ -94,6 +96,13 @@ interface LockedActivity {
   id: string;
   orderId: string;
   productiveMinutes: number;
+}
+
+interface VisitMinuteSnapshot {
+  visitId: string;
+  orderId: string;
+  visitNumber: number;
+  additionalMinutes: number;
 }
 
 interface QualitySnapshot {
@@ -370,26 +379,56 @@ async function lockCompletedActivities(
   return activities;
 }
 
-function derivedVisitMinutes(
+async function runTerminalLockHook(
+  transaction: Prisma.TransactionClient,
+  hook: ((context: TerminalLockHookContext) => Promise<void>) | undefined,
+  recurrenceId: string,
   orderIds: readonly string[],
+): Promise<void> {
+  if (hook === undefined) return;
+  const rows = await transaction.$queryRaw<Array<{ backendPid: number }>>`
+    SELECT pg_backend_pid()::int AS "backendPid"
+  `;
+  await hook({ recurrenceId, orderIds, backendPid: rows[0]!.backendPid });
+}
+
+function derivedVisitMinutes(
+  visits: readonly { id: string; ordenId: string; visitNumber: number }[],
   activities: readonly LockedActivity[],
-): Array<{ orderId: string; additionalMinutes: number }> {
-  return canonicalIds(orderIds).map((orderId) => ({
-    orderId,
-    additionalMinutes: sumUniqueProductiveMinutes(
-      activities.filter((activity) => activity.orderId === orderId),
-    ),
-  }));
+): VisitMinuteSnapshot[] {
+  return [...visits]
+    .sort((left, right) => left.visitNumber - right.visitNumber || left.id.localeCompare(right.id))
+    .map((visit) => ({
+      visitId: visit.id,
+      orderId: visit.ordenId,
+      visitNumber: visit.visitNumber,
+      additionalMinutes: sumUniqueProductiveMinutes(
+        activities.filter((activity) => activity.orderId === visit.ordenId),
+      ),
+    }));
+}
+
+function storedVisitMinutes(
+  visits: readonly { id: string; ordenId: string; visitNumber: number; additionalMinutes: number }[],
+): VisitMinuteSnapshot[] {
+  return [...visits]
+    .sort((left, right) => left.visitNumber - right.visitNumber || left.id.localeCompare(right.id))
+    .map((visit) => ({
+      visitId: visit.id,
+      orderId: visit.ordenId,
+      visitNumber: visit.visitNumber,
+      additionalMinutes: visit.additionalMinutes,
+    }));
 }
 
 async function writeVisitMinutes(
   transaction: Prisma.TransactionClient,
   recurrenceId: string,
-  visitMinutes: readonly { orderId: string; additionalMinutes: number }[],
+  visitMinutes: readonly VisitMinuteSnapshot[],
 ): Promise<void> {
   for (const visit of visitMinutes) {
     const updated = await transaction.reincidenciaOrden.updateMany({
-      where: { reincidenciaId: recurrenceId, ordenId: visit.orderId },
+      where: { id: visit.visitId, reincidenciaId: recurrenceId, ordenId: visit.orderId },
       data: { additionalMinutes: visit.additionalMinutes },
     });
     if (updated.count !== 1) throw new TerminalRelationsChanged();
@@ -948,14 +987,14 @@ function closureSnapshot(record: {
   additionalMinutes: number;
   closedById: string | null;
   closedAt: Date | null;
-}, visitMinutes: readonly { orderId: string; additionalMinutes: number }[]): object {
+}, visitMinutes: readonly VisitMinuteSnapshot[]): object {
   return {
     status: record.status,
     version: record.version,
     additionalMinutes: record.additionalMinutes,
     closedById: record.closedById,
     closedAt: record.closedAt?.toISOString() ?? null,
-    visitMinutes,
+    visitMinutes: visitMinutes.map(({ orderId, additionalMinutes }) => ({ orderId, additionalMinutes })),
   };
 }
 
@@ -963,13 +1002,26 @@ async function closeInTransaction(
   transaction: Prisma.TransactionClient,
   recurrenceId: string,
   preliminary: PreliminaryTerminalRelations,
+  hooks: RecurrencesWorkflowRepositoryOptions["hooks"],
   input: CloseRecurrenceInput,
   actor: RecurrenceActorContext,
   now: Date,
 ): Promise<RecurrenceDetailRecord> {
   const lockedOrders = await lockOrdersInOrder(transaction, preliminary.orderIds);
+  await runTerminalLockHook(
+    transaction,
+    hooks?.afterCloseOrdersLocked,
+    recurrenceId,
+    preliminary.orderIds,
+  );
   const locked = await lockRecurrence(transaction, recurrenceId);
   if (locked === null) reject("RECURRENCE_NOT_FOUND");
+  await runTerminalLockHook(
+    transaction,
+    hooks?.afterCloseRecurrenceLocked,
+    recurrenceId,
+    preliminary.orderIds,
+  );
   const record = await transaction.reincidencia.findUnique({
     where: { id: recurrenceId },
     select: {
@@ -984,7 +1036,7 @@ async function closeInTransaction(
       additionalMinutes: true,
       closedById: true,
       closedAt: true,
-      ordenes: { select: { ordenId: true, additionalMinutes: true } },
+      ordenes: { select: { id: true, ordenId: true, visitNumber: true, additionalMinutes: true } },
       tecnicos: { select: { tecnicoId: true, participation: true, affectsQuality: true, justification: true } },
     },
   });
@@ -1019,11 +1071,8 @@ async function closeInTransaction(
     || lockedOrders.some((order) => order.deletedAt !== null || order.status !== "COMPLETED" || order.endedAt === null)) {
     reject("RECURRENCE_ORDER_MISMATCH");
   }
-  const beforeVisitMinutes = canonicalIds(currentOrderIds).map((orderId) => ({
-    orderId,
-    additionalMinutes: record.ordenes.find((visit) => visit.ordenId === orderId)!.additionalMinutes,
-  }));
-  const visitMinutes = derivedVisitMinutes(currentOrderIds, activities);
+  const beforeVisitMinutes = storedVisitMinutes(record.ordenes);
+  const visitMinutes = derivedVisitMinutes(record.ordenes, activities);
   const additionalMinutes = sumUniqueProductiveMinutes(activities);
   const beforeData = closureSnapshot(record, beforeVisitMinutes);
   await writeVisitMinutes(transaction, recurrenceId, visitMinutes);
@@ -1070,7 +1119,7 @@ function adjustmentSnapshot(record: {
   observations: string | null;
   estimatedCost: { toFixed(fractionDigits: number): string };
   additionalMinutes: number;
-}, qualityDecisions: readonly OriginalSnapshot[]): object {
+}, qualityDecisions: readonly OriginalSnapshot[], visitMinutes: readonly VisitMinuteSnapshot[], costReason?: string): object {
   return {
     status: record.status,
     version: record.version,
@@ -1083,6 +1132,8 @@ function adjustmentSnapshot(record: {
     observations: record.observations,
     estimatedCost: record.estimatedCost.toFixed(2),
     additionalMinutes: record.additionalMinutes,
+    visitMinutes,
+    ...(costReason === undefined ? {} : { costReason }),
     qualityDecisions,
   };
 }
@@ -1110,7 +1161,7 @@ async function adjustInTransaction(
     observations: true,
     estimatedCost: true,
     additionalMinutes: true,
-    ordenes: { select: { ordenId: true, additionalMinutes: true } },
+    ordenes: { select: { id: true, ordenId: true, visitNumber: true, additionalMinutes: true } },
     tecnicos: { select: { tecnicoId: true, participation: true, affectsQuality: true, justification: true } },
   } });
   if (record === null) reject("RECURRENCE_NOT_FOUND");
@@ -1151,9 +1202,13 @@ async function adjustInTransaction(
   const nextEstimatedCost = input.estimatedCost === undefined
     ? record.estimatedCost
     : new Prisma.Decimal(input.estimatedCost.trim());
-  const visitMinutes = derivedVisitMinutes(currentOrderIds, activities);
+  const beforeVisitMinutes = storedVisitMinutes(record.ordenes);
+  const visitMinutes = derivedVisitMinutes(record.ordenes, activities);
   const additionalMinutes = sumUniqueProductiveMinutes(activities);
-  const beforeData = adjustmentSnapshot(record, originals);
+  const costReason = input.estimatedCost === undefined
+    ? undefined
+    : normalizedOptional(input.costReason)!;
+  const beforeData = adjustmentSnapshot(record, originals, beforeVisitMinutes);
   const decisionsById = new Map(decisions.map((decision) => [decision.technicianId, decision]));
   for (const original of originals) {
     const decision = decisionsById.get(original.technicianId)!;
@@ -1208,7 +1263,7 @@ async function adjustInTransaction(
       observations: nextObservations,
       estimatedCost: nextEstimatedCost,
       additionalMinutes,
-    }, afterDecisions)),
+    }, afterDecisions, visitMinutes, costReason)),
     reason,
     occurredAt: now,
     requestId: actor.requestId,
@@ -1318,14 +1373,10 @@ export function createRecurrencesWorkflowRepository(
       const recurrenceId = canonicalUuid(id);
       for (let attempt = 1; attempt <= maximumRelationAttempts; attempt += 1) {
         const preliminary = await readTerminalRelations(database, recurrenceId);
-        await options.hooks?.afterCloseRelationsRead?.({
-          recurrenceId,
-          orderIds: preliminary?.orderIds ?? [],
-        });
         if (preliminary === null) return { kind: "RECURRENCE_NOT_FOUND" };
         try {
           const recurrence = await runRecurrenceSerializableTransaction(database, (transaction) =>
-            closeInTransaction(transaction, recurrenceId, preliminary, input, actor, now));
+            closeInTransaction(transaction, recurrenceId, preliminary, options.hooks, input, actor, now));
           return { kind: "UPDATED", recurrence } satisfies RecurrenceMutationResult;
         } catch (error) {
           if (error instanceof TerminalRelationsChanged && attempt < maximumRelationAttempts) continue;
