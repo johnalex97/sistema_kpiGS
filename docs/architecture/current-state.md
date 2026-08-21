@@ -134,7 +134,7 @@ Backend, ejecutado desde `server/`:
 | `npm run db:format`, `db:validate`, `db:generate` | Correctos; schema válido y cliente regenerado |
 | Seed | El seed sin cuenta administrativa se ejecutó dos veces en `public` y dos en `test`, con conteos idénticos: 3 roles, 20 permisos, 41 asignaciones rol-permiso, 3 técnicos, 2 clientes, 3 órdenes, 2 actividades y 2 reincidencias |
 | `npm run db:verify` | 32 tablas de dominio, 37 checks, 21 índices y 2 secuencias verificados |
-| `npx prisma migrate status` | Correcto; nueve migraciones aplicadas en `public` y `test` |
+| `npx prisma migrate status` | Correcto; diez migraciones aplicadas en `public` y `test` |
 | Smoke compilado de evidencias | Carga 201; descarga 200; archivado 200; exceso 413; contenido disfrazado 422; técnico ajeno 404; archivo físico ausente 503; sin exponer claves ni raíces privadas |
 | Smoke compilado de actividades | Health 200; catálogo 200; pendiente 201; iniciar/pausar/reanudar/completar 200; manual 201; solapamiento 409; participante 403; ajuste y detalle 200; versiones `1→2→3→4→5` |
 | Flujo auth compilado | Login 200, me 200 y logout 204 |
@@ -205,7 +205,7 @@ del equipo canónico no elimina su visibilidad anterior. Los rangos temporales
 inválidos se exponen como HTTP 400 con código `VALIDATION_ERROR`. No hay
 integración de estas rutas en la SPA ni documentación OpenAPI/Swagger.
 
-El módulo `evidences` ofrece endpoints protegidos para cargar y listar
+El módulo `evidences` ofrece nueve endpoints protegidos para cargar y listar
 evidencias de órdenes, actividades o reincidencias, descargar, editar y
 archivar. Mantiene los
 bytes fuera de rutas públicas en un volumen privado; valida JPEG, PNG, WebP y

@@ -92,10 +92,11 @@ corrige la descripción del permiso `ACTIVITIES_CREATE_OWN`. La octava,
 `20260817120000_evidences_api_constraints`, incorpora el contrato de metadatos
 de evidencias; la novena, `20260817130000_evidences_phase_9_access_constraints`,
 incorpora los permisos y restricciones de acceso de fase 9. La décima,
-`20260820120000_recurrences_workflow_api`, incorpora el flujo revisado de
-reincidencias, su numeración anual `RI-AAAA-NNNN`, permisos, auditoría y las
-restricciones de sus estados. Las diez migraciones deben estar aplicadas tanto
-en `public` como en `test`.
+`20260820120000_recurrences_workflow_api`, incorpora el esquema y flujo
+persistente de reincidencias, su numeración anual `RI-AAAA-NNNN`, auditoría,
+restricciones e índices. El seed idempotente provisiona los permisos
+`RECURRENCES_*` y sus asignaciones por rol. Las diez migraciones deben estar
+aplicadas tanto en `public` como en `test`.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben
 apuntarse al esquema `public`.

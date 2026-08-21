@@ -165,9 +165,10 @@ migraciones versionadas en total antes del flujo de reincidencias.
 Estado: completada. El backend expone 13 endpoints protegidos para catálogo,
 consulta, reporte, análisis, corrección, visitas, notas, descarte, cierre,
 ajuste y evidencias. La décima migración `20260820120000_recurrences_workflow_api`
-añade el contrato persistente, secuencia anual `RI-AAAA-NNNN`, permisos y
-restricciones de flujo. El seed sigue siendo idempotente y las diez migraciones
-se aplican en `public` y `test`.
+añade el esquema y flujo persistente, secuencia anual `RI-AAAA-NNNN`,
+restricciones e índices; el seed idempotente provisiona los permisos
+`RECURRENCES_*` y sus asignaciones por rol. Las diez migraciones se aplican en
+`public` y `test`.
 
 ADMIN y SUPERVISOR revisan todos los casos; TECHNICIAN puede reportar con
 `RECURRENCES_REPORT_OWN` desde una orden correctiva donde participe, y consultar
