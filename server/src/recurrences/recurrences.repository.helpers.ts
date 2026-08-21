@@ -10,12 +10,17 @@ const transactionOptions = {
 } as const;
 const maximumSerializableAttempts = 3;
 
+function canonicalUuid(id: string): string {
+  return id.toLowerCase();
+}
+
 export interface RecurrenceSerializableTransactionOptions {
   maxAttempts?: number;
 }
 
 export interface LockedOrder {
   id: string;
+  orderNumber: string;
   status: EstadoOrden;
   branchId: string;
   endedAt: Date | null;
@@ -66,11 +71,13 @@ export async function lockOrdersInOrder(
   ids: readonly string[],
 ): Promise<LockedOrder[]> {
   const locked: LockedOrder[] = [];
-  const orderedIds = [...new Set(ids)].sort((left, right) => left.localeCompare(right));
+  const orderedIds = [...new Set(ids.map(canonicalUuid))]
+    .sort((left, right) => left.localeCompare(right));
   for (const id of orderedIds) {
     const rows = await transaction.$queryRaw<Array<Omit<LockedOrder, "status"> & { status: string }>>`
       SELECT
         "id",
+        "order_number" AS "orderNumber",
         "status",
         "sucursal_id" AS "branchId",
         "ended_at" AS "endedAt",
@@ -93,10 +100,11 @@ export async function lockRecurrence(
   transaction: Prisma.TransactionClient,
   id: string,
 ): Promise<LockedRecurrence | null> {
+  const canonicalId = canonicalUuid(id);
   const rows = await transaction.$queryRaw<Array<Omit<LockedRecurrence, "status"> & { status: string }>>`
     SELECT "id", "status", "version"
     FROM "reincidencia"
-    WHERE "id" = ${id}::uuid
+    WHERE "id" = ${canonicalId}::uuid
     FOR UPDATE
   `;
   const row = rows[0];

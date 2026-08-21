@@ -5,7 +5,6 @@ import {
   runRecurrenceSerializableTransaction,
 } from "./recurrences.repository.helpers.js";
 import {
-  recurrenceDetailSelect,
   type RecurrenceDetailRecord,
   type RecurrenceFailureKind,
   type RecurrenceMutationResult,
@@ -18,6 +17,26 @@ import type {
 
 type RecurrencesReportRepository = Pick<RecurrencesRepository, "reportRecurrence">;
 
+interface RecurrenceReportRepositoryOptions {
+  hooks?: {
+    afterSequenceAllocated?: (context: RecurrenceReportHookContext) => Promise<void>;
+    beforePairLock?: (context: RecurrenceReportHookContext) => Promise<void>;
+    afterPairLock?: (context: RecurrenceReportHookContext) => Promise<void>;
+    beforeDuplicateLookup?: (context: RecurrenceReportHookContext) => Promise<void>;
+    afterDuplicateLookup?: (
+      context: RecurrenceReportHookContext & { duplicate: boolean },
+    ) => Promise<void>;
+    beforeHydration?: (context: { recurrenceId: string }) => Promise<void>;
+  };
+}
+
+interface RecurrenceReportHookContext {
+  year: number;
+  recurrenceNumber: string;
+  originalOrderId: string;
+  correctionOrderId: string;
+}
+
 const pairLockNamespace = 1_382_541_665;
 const blockingStatuses = ["OPEN", "ANALYSIS", "CORRECTION"] as const;
 
@@ -29,6 +48,14 @@ class RejectedRecurrenceReport extends Error {
 
 function reject(kind: RecurrenceFailureKind): never {
   throw new RejectedRecurrenceReport(kind);
+}
+
+function canonicalizeReportInput(input: ReportRecurrenceInput): ReportRecurrenceInput {
+  return {
+    ...input,
+    originalOrderId: input.originalOrderId.toLowerCase(),
+    correctionOrderId: input.correctionOrderId.toLowerCase(),
+  };
 }
 
 async function allocateAnnualNumber(
@@ -135,38 +162,42 @@ async function buildTeamSnapshot(
     || left.participation.localeCompare(right.participation));
 }
 
-function normalizeCreatedRecurrence(
-  recurrence: RecurrenceDetailRecord,
-): RecurrenceDetailRecord {
-  const detail = recurrence;
-  detail.ordenes.sort((left, right) => left.visitNumber - right.visitNumber || left.id.localeCompare(right.id));
-  detail.tecnicos.sort((left, right) =>
-    left.tecnico.id.localeCompare(right.tecnico.id)
-    || left.participation.localeCompare(right.participation));
-  return detail;
-}
-
 async function reportRecurrenceInTransaction(
   transaction: Prisma.TransactionClient,
   input: ReportRecurrenceInput,
   actor: RecurrenceActorContext,
   now: Date,
-): Promise<string> {
-  const recurrenceNumber = await allocateAnnualNumber(transaction, now.getUTCFullYear());
-  await lockOrderPair(transaction, input.originalOrderId, input.correctionOrderId);
-  if (await pairHasBlockingRecurrence(transaction, input)) reject("RECURRENCE_DUPLICATE");
+  options: RecurrenceReportRepositoryOptions,
+): Promise<RecurrenceDetailRecord> {
+  const year = now.getUTCFullYear();
+  const recurrenceNumber = await allocateAnnualNumber(transaction, year);
+  const canonicalInput = canonicalizeReportInput(input);
+  const hookContext: RecurrenceReportHookContext = {
+    year,
+    recurrenceNumber,
+    originalOrderId: canonicalInput.originalOrderId,
+    correctionOrderId: canonicalInput.correctionOrderId,
+  };
+  await options.hooks?.afterSequenceAllocated?.(hookContext);
+  await options.hooks?.beforePairLock?.(hookContext);
+  await lockOrderPair(transaction, canonicalInput.originalOrderId, canonicalInput.correctionOrderId);
+  await options.hooks?.afterPairLock?.(hookContext);
+  await options.hooks?.beforeDuplicateLookup?.(hookContext);
+  const duplicate = await pairHasBlockingRecurrence(transaction, canonicalInput);
+  await options.hooks?.afterDuplicateLookup?.({ ...hookContext, duplicate });
+  if (duplicate) reject("RECURRENCE_DUPLICATE");
 
   const lockedOrders = await lockOrdersInOrder(transaction, [
-    input.originalOrderId,
-    input.correctionOrderId,
+    canonicalInput.originalOrderId,
+    canonicalInput.correctionOrderId,
   ]);
-  if (lockedOrders.length !== new Set([input.originalOrderId, input.correctionOrderId]).size) {
+  if (lockedOrders.length !== new Set([canonicalInput.originalOrderId, canonicalInput.correctionOrderId]).size) {
     reject("RECURRENCE_ORDER_NOT_FOUND");
   }
-  const original = lockedOrders.find(({ id }) => id === input.originalOrderId);
-  const correction = lockedOrders.find(({ id }) => id === input.correctionOrderId);
+  const original = lockedOrders.find(({ id }) => id === canonicalInput.originalOrderId);
+  const correction = lockedOrders.find(({ id }) => id === canonicalInput.correctionOrderId);
   if (
-    input.originalOrderId === input.correctionOrderId
+    canonicalInput.originalOrderId === canonicalInput.correctionOrderId
     || original === undefined
     || correction === undefined
     || original.deletedAt !== null
@@ -204,13 +235,40 @@ async function reportRecurrenceInTransaction(
       createdAt: now,
       updatedAt: now,
     },
-    select: { id: true },
+    select: {
+      id: true,
+      recurrenceNumber: true,
+      status: true,
+      impact: true,
+      responsibility: true,
+      detectedProblem: true,
+      detectedAt: true,
+      additionalMinutes: true,
+      estimatedCost: true,
+      createdAt: true,
+      updatedAt: true,
+      version: true,
+      analysis: true,
+      correctiveAction: true,
+      preventiveAction: true,
+      observations: true,
+      ageOverrideReason: true,
+      dismissalReason: true,
+      dismissedAt: true,
+      closedAt: true,
+    },
   });
-  await transaction.reincidenciaOrden.create({
+  const visit = await transaction.reincidenciaOrden.create({
     data: {
       reincidenciaId: recurrence.id,
       ordenId: correction.id,
       visitNumber: 1,
+    },
+    select: {
+      id: true,
+      visitNumber: true,
+      additionalMinutes: true,
+      observation: true,
     },
   });
   for (const { technicianId, participation } of team) {
@@ -243,27 +301,49 @@ async function reportRecurrenceInTransaction(
       requestId: actor.requestId,
     },
   });
-  return recurrence.id;
+  await options.hooks?.beforeHydration?.({ recurrenceId: recurrence.id });
+  const technicians = await transaction.tecnico.findMany({
+    where: { id: { in: team.map(({ technicianId }) => technicianId) } },
+    select: { id: true, code: true, fullName: true },
+  });
+  const techniciansById = new Map(technicians.map((technician) => [technician.id, technician]));
+  if (techniciansById.size !== new Set(team.map(({ technicianId }) => technicianId)).size) {
+    throw new Error("Reported recurrence technicians could not be hydrated");
+  }
+  return {
+    ...recurrence,
+    ordenOriginal: { id: original.id, orderNumber: original.orderNumber },
+    causa: null,
+    _count: { ordenes: 1, notas: 0 },
+    ordenes: [{
+      ...visit,
+      orden: { id: correction.id, orderNumber: correction.orderNumber },
+    }],
+    tecnicos: team.map(({ technicianId, participation }) => ({
+      participation,
+      affectsQuality: false,
+      justification: null,
+      tecnico: techniciansById.get(technicianId)!,
+    })),
+    notas: [],
+    evidencias: [],
+  };
 }
 
 export function createRecurrencesReportRepository(
   database: PrismaClient,
+  options: RecurrenceReportRepositoryOptions = {},
 ): RecurrencesReportRepository {
   return {
     async reportRecurrence(input, actor, now) {
       try {
-        const recurrenceId = await runRecurrenceSerializableTransaction(
+        const recurrence = await runRecurrenceSerializableTransaction(
           database,
-          (transaction) => reportRecurrenceInTransaction(transaction, input, actor, now),
+          (transaction) => reportRecurrenceInTransaction(transaction, input, actor, now, options),
         );
-        const recurrence = await database.reincidencia.findUnique({
-          where: { id: recurrenceId },
-          select: recurrenceDetailSelect,
-        });
-        if (recurrence === null) throw new Error("Reported recurrence could not be hydrated");
         return {
           kind: "CREATED",
-          recurrence: normalizeCreatedRecurrence(recurrence as RecurrenceDetailRecord),
+          recurrence,
         } satisfies RecurrenceMutationResult;
       } catch (error) {
         if (error instanceof RejectedRecurrenceReport) return { kind: error.kind };

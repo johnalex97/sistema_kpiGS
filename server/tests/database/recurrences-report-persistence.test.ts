@@ -1,6 +1,7 @@
 import {
   afterAll,
   afterEach,
+  beforeAll,
   beforeEach,
   describe,
   expect,
@@ -36,10 +37,10 @@ const ids = {
   branch: "84000000-0000-4000-8000-000000000022",
   otherBranch: "84000000-0000-4000-8000-000000000023",
   serviceType: "84000000-0000-4000-8000-000000000024",
-  originalOrder: "84000000-0000-4000-8000-000000000031",
-  correctionOrder: "84000000-0000-4000-8000-000000000032",
-  secondOriginalOrder: "84000000-0000-4000-8000-000000000033",
-  secondCorrectionOrder: "84000000-0000-4000-8000-000000000034",
+  originalOrder: "84000000-0000-4000-8000-00000000003a",
+  correctionOrder: "84000000-0000-4000-8000-00000000003b",
+  secondOriginalOrder: "84000000-0000-4000-8000-00000000003c",
+  secondCorrectionOrder: "84000000-0000-4000-8000-00000000003d",
 } as const;
 
 const actor: RecurrenceActorContext = {
@@ -49,8 +50,9 @@ const actor: RecurrenceActorContext = {
   requestId: "84000000-0000-4000-8000-000000000099",
 };
 
-let preservedNumbers: Array<{ id: string; recurrenceNumber: string }> = [];
-let preservedSequence: number | null = null;
+let originalNumbers: Array<{ id: string; recurrenceNumber: string }> = [];
+let originalSequences: Array<{ year: number; lastNumber: number }> = [];
+let ambientSequenceBeforeSuite: number | null = null;
 
 function input(
   originalOrderId: string = ids.originalOrder,
@@ -60,7 +62,7 @@ function input(
   return { originalOrderId, correctionOrderId, detectedProblem };
 }
 
-async function removeFixture(): Promise<void> {
+async function cleanupFixtureData(): Promise<void> {
   const recurrenceRows = await database.reincidencia.findMany({
     where: {
       originalOrderId: {
@@ -77,20 +79,7 @@ async function removeFixture(): Promise<void> {
   const orderIds = [ids.originalOrder, ids.correctionOrder, ids.secondOriginalOrder, ids.secondCorrectionOrder];
   await database.ordenTecnico.deleteMany({ where: { ordenId: { in: orderIds } } });
   await database.ordenTrabajo.deleteMany({ where: { id: { in: orderIds } } });
-  await database.secuenciaReincidencia.deleteMany({ where: { year: 2026 } });
-  for (const preserved of preservedNumbers) {
-    await database.reincidencia.update({
-      where: { id: preserved.id },
-      data: { recurrenceNumber: preserved.recurrenceNumber },
-    });
-  }
-  if (preservedSequence !== null) {
-    await database.secuenciaReincidencia.create({
-      data: { year: 2026, lastNumber: preservedSequence },
-    });
-  }
-  preservedNumbers = [];
-  preservedSequence = null;
+  await database.secuenciaReincidencia.deleteMany({ where: { year: { in: [2026, 2027] } } });
   await database.tecnico.deleteMany({
     where: {
       id: {
@@ -105,21 +94,7 @@ async function removeFixture(): Promise<void> {
 }
 
 async function createFixture(): Promise<void> {
-  await removeFixture();
-  preservedNumbers = await database.reincidencia.findMany({
-    where: { recurrenceNumber: { startsWith: "RI-2026-" } },
-    select: { id: true, recurrenceNumber: true },
-    orderBy: { recurrenceNumber: "asc" },
-  });
-  const sequence = await database.secuenciaReincidencia.findUnique({ where: { year: 2026 } });
-  preservedSequence = sequence?.lastNumber ?? null;
-  for (const [index, preserved] of preservedNumbers.entries()) {
-    await database.reincidencia.update({
-      where: { id: preserved.id },
-      data: { recurrenceNumber: `RI-2999-${String(9000 + index).padStart(4, "0")}` },
-    });
-  }
-  await database.secuenciaReincidencia.deleteMany({ where: { year: 2026 } });
+  await cleanupFixtureData();
   await database.usuario.createMany({
     data: [
       { id: ids.reporterUser, email: "recurrence-report@example.test", displayName: "Report technician", status: "ACTIVE" },
@@ -180,6 +155,38 @@ function twoPartyBarrier(): () => Promise<void> {
   };
 }
 
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function waitForAdvisoryWaiter(
+  originalOrderId: string,
+  correctionOrderId: string,
+): Promise<void> {
+  const pairKey = [originalOrderId.toLowerCase(), correctionOrderId.toLowerCase()]
+    .sort((left, right) => left.localeCompare(right))
+    .join(":");
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const rows = await database.$queryRaw<Array<{ count: number }>>`
+      SELECT COUNT(*)::integer AS "count"
+      FROM pg_locks
+      WHERE locktype = 'advisory'
+        AND granted = false
+        AND classid = 1382541665::integer::oid
+        AND objid = (hashtext(${pairKey})::bigint & 4294967295)::oid
+        AND objsubid = 2
+    `;
+    if ((rows[0]?.count ?? 0) > 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error("second recurrence transaction never waited on the advisory pair lock");
+}
+
 function databaseWithTransactionStartBarrier(
   source: PrismaClient,
   barrier: () => Promise<void>,
@@ -209,9 +216,109 @@ function rawTransactionError(sqlState: string) {
 }
 
 describe("recurrence atomic report persistence", () => {
+  beforeAll(async () => {
+    ambientSequenceBeforeSuite = (
+      await database.secuenciaReincidencia.findUnique({ where: { year: 2026 } })
+    )?.lastNumber ?? null;
+    if (ambientSequenceBeforeSuite === null) {
+      await database.secuenciaReincidencia.create({
+        data: { year: 2026, lastNumber: 73 },
+      });
+    }
+    originalNumbers = await database.reincidencia.findMany({
+      where: {
+        OR: [
+          { recurrenceNumber: { startsWith: "RI-2026-" } },
+          { recurrenceNumber: { startsWith: "RI-2027-" } },
+        ],
+      },
+      select: { id: true, recurrenceNumber: true },
+      orderBy: { recurrenceNumber: "asc" },
+    });
+    originalSequences = await database.secuenciaReincidencia.findMany({
+      where: { year: { in: [2026, 2027] } },
+      select: { year: true, lastNumber: true },
+      orderBy: { year: "asc" },
+    });
+    for (const [index, original] of originalNumbers.entries()) {
+      await database.reincidencia.update({
+        where: { id: original.id },
+        data: { recurrenceNumber: `RI-2999-${String(9000 + index).padStart(4, "0")}` },
+      });
+    }
+  });
   beforeEach(createFixture);
-  afterEach(removeFixture);
-  afterAll(disconnectTestDatabase);
+  afterEach(cleanupFixtureData);
+  afterAll(async () => {
+    await cleanupFixtureData();
+    for (const original of originalNumbers) {
+      await database.reincidencia.update({
+        where: { id: original.id },
+        data: { recurrenceNumber: original.recurrenceNumber },
+      });
+    }
+    for (const sequence of originalSequences) {
+      await database.secuenciaReincidencia.create({ data: sequence });
+    }
+    expect(await database.secuenciaReincidencia.findMany({
+      where: { year: { in: [2026, 2027] } },
+      select: { year: true, lastNumber: true },
+      orderBy: { year: "asc" },
+    })).toEqual(originalSequences);
+    expect(await database.reincidencia.findMany({
+      where: { id: { in: originalNumbers.map(({ id }) => id) } },
+      select: { id: true, recurrenceNumber: true },
+      orderBy: { recurrenceNumber: "asc" },
+    })).toEqual(originalNumbers);
+    if (ambientSequenceBeforeSuite !== null) {
+      await database.secuenciaReincidencia.upsert({
+        where: { year: 2026 },
+        create: { year: 2026, lastNumber: ambientSequenceBeforeSuite },
+        update: { lastNumber: ambientSequenceBeforeSuite },
+      });
+    } else {
+      await database.secuenciaReincidencia.deleteMany({ where: { year: 2026 } });
+    }
+    expect(await database.secuenciaReincidencia.findMany({
+      where: { year: { in: [2026, 2027] } },
+      select: { year: true, lastNumber: true },
+      orderBy: { year: "asc" },
+    })).toEqual(originalSequences.filter(({ year }) =>
+      year !== 2026 || ambientSequenceBeforeSuite !== null));
+    await disconnectTestDatabase();
+  });
+
+  // Mutation caught: deleting the sequence before capture loses the global seed state permanently.
+  it("captures the original annual sequence before the first fixture cleanup", () => {
+    expect(originalSequences).toContainEqual({
+      year: 2026,
+      lastNumber: ambientSequenceBeforeSuite ?? 73,
+    });
+  });
+
+  // Mutation caught: hashing/comparing uppercase UUID text against lowercase PostgreSQL rows rejects a valid pair.
+  it("canonicalizes uppercase order UUIDs before pair locking, lookup, and row comparison", async () => {
+    const result = await createRecurrencesReportRepository(database).reportRecurrence(
+      input(ids.originalOrder.toUpperCase(), ids.correctionOrder.toUpperCase()),
+      actor,
+      now,
+    );
+    expect(result.kind).toBe("CREATED");
+    if (result.kind !== "CREATED") throw new Error("uppercase UUID report was rejected");
+    expect(result.recurrence.ordenOriginal.id).toBe(ids.originalOrder);
+    expect(result.recurrence.ordenes[0]?.orden.id).toBe(ids.correctionOrder);
+  });
+
+  // Mutation caught: a case-sensitive same-order check treats one UUID spelling as two orders.
+  it("rejects one order supplied with equivalent lowercase and uppercase UUID spellings", async () => {
+    const result = await createRecurrencesReportRepository(database).reportRecurrence(
+      input(ids.originalOrder, ids.originalOrder.toUpperCase()),
+      { ...actor, userId: ids.reviewerUser, technicianId: null, permissions: ["RECURRENCES_REVIEW"] },
+      now,
+    );
+    expect(result).toEqual({ kind: "RECURRENCE_ORDER_MISMATCH" });
+    expect(await database.secuenciaReincidencia.findUnique({ where: { year: 2026 } })).toBeNull();
+  });
 
   // Mutation caught: allocating no annual sequence or skipping any snapshot/audit write leaves an incomplete report.
   it("creates number, OPEN case, first visit, deduplicated snapshots, and exact public audit atomically", async () => {
@@ -220,6 +327,26 @@ describe("recurrence atomic report persistence", () => {
     if (result.kind !== "CREATED") throw new Error("recurrence report was rejected");
     expect(result.recurrence.recurrenceNumber).toBe("RI-2026-0001");
     expect(result.recurrence.status).toBe("OPEN");
+    expect(result.recurrence).toMatchObject({
+      impact: "MEDIUM",
+      responsibility: "UNDETERMINED",
+      detectedProblem: "El enlace volvió a fallar después del cierre",
+      detectedAt: now,
+      additionalMinutes: 0,
+      version: 1,
+      analysis: null,
+      correctiveAction: null,
+      preventiveAction: null,
+      observations: null,
+      ageOverrideReason: null,
+      dismissalReason: null,
+      dismissedAt: null,
+      closedAt: null,
+      causa: null,
+      _count: { ordenes: 1, notas: 0 },
+      notas: [],
+      evidencias: [],
+    });
     expect(result.recurrence.ordenes).toEqual([
       expect.objectContaining({ visitNumber: 1, orden: { id: ids.correctionOrder, orderNumber: "OT-RPT-0002" } }),
     ]);
@@ -271,15 +398,15 @@ describe("recurrence atomic report persistence", () => {
     });
     await database.$transaction(async (transaction) => {
       const orders = await lockOrdersInOrder(transaction, [
-        ids.correctionOrder,
-        ids.originalOrder,
+        ids.correctionOrder.toUpperCase(),
+        ids.originalOrder.toUpperCase(),
         ids.correctionOrder,
       ]);
       expect(orders.map(({ id, status }) => ({ id, status }))).toEqual([
         { id: ids.originalOrder, status: "COMPLETED" },
         { id: ids.correctionOrder, status: "IN_PROGRESS" },
       ]);
-      await expect(lockRecurrence(transaction, recurrence.id)).resolves.toEqual({
+      await expect(lockRecurrence(transaction, recurrence.id.toUpperCase())).resolves.toEqual({
         id: recurrence.id,
         status: "ANALYSIS",
         version: 1,
@@ -393,6 +520,28 @@ describe("recurrence atomic report persistence", () => {
     expect(await database.secuenciaReincidencia.findUnique({ where: { year: 2026 } })).toBeNull();
   });
 
+  // Mutation caught: hydrating after commit can reject the response after all report writes became durable.
+  it("rolls back case, sequence, visit, snapshots, and audit when hydration fails after auditing", async () => {
+    const repository = createRecurrencesReportRepository(database, {
+      hooks: {
+        beforeHydration: async () => {
+          throw new Error("forced recurrence hydration failure");
+        },
+      },
+    });
+    await expect(repository.reportRecurrence(input(), actor, now))
+      .rejects.toThrow("forced recurrence hydration failure");
+    expect(await database.reincidencia.count({ where: { originalOrderId: ids.originalOrder } })).toBe(0);
+    expect(await database.reincidenciaOrden.count({ where: { ordenId: ids.correctionOrder } })).toBe(0);
+    expect(await database.reincidenciaTecnico.count({
+      where: { reincidencia: { originalOrderId: ids.originalOrder } },
+    })).toBe(0);
+    expect(await database.auditoria.count({
+      where: { entity: "Reincidencia", action: "RECURRENCE_REPORTED" },
+    })).toBe(0);
+    expect(await database.secuenciaReincidencia.findUnique({ where: { year: 2026 } })).toBeNull();
+  });
+
   // Mutation caught: a non-atomic annual counter can duplicate or skip numbers under concurrent reports.
   it("forces concurrent different pairs to receive consecutive unique annual numbers", async () => {
     const barrier = twoPartyBarrier();
@@ -412,19 +561,69 @@ describe("recurrence atomic report persistence", () => {
     }
   });
 
-  // Mutation caught: moving duplicate lookup before pair serialization allows two CREATED results for one pair.
-  it("forces concurrent identical pairs to return one CREATED and one RECURRENCE_DUPLICATE", async () => {
-    const barrier = twoPartyBarrier();
+  // Mutation caught: removing the pair advisory or moving lookup before it lets the second transaction cross lookup.
+  it("keeps a different-year same-pair transaction before lookup until the advisory owner commits", async () => {
     const secondClient = createDatabaseClient(process.env.DATABASE_TEST_URL!);
+    const firstSequence = deferred();
+    const secondSequence = deferred();
+    const firstPairLock = deferred();
+    const secondBeforePairLock = deferred();
+    const releaseFirst = deferred();
+    let secondCrossedPairLock = false;
+    let secondCrossedLookup = false;
+    let firstReport: ReturnType<ReturnType<typeof createRecurrencesReportRepository>["reportRecurrence"]> | undefined;
+    let secondReport: ReturnType<ReturnType<typeof createRecurrencesReportRepository>["reportRecurrence"]> | undefined;
     try {
-      const repositories = [database, secondClient].map((client) =>
-        createRecurrencesReportRepository(databaseWithTransactionStartBarrier(client, barrier)));
-      const results = await Promise.all(repositories.map((repository, index) =>
-        repository.reportRecurrence(input(ids.originalOrder, ids.correctionOrder, `Concurrent duplicate ${index}`), actor, now)));
+      const firstRepository = createRecurrencesReportRepository(database, {
+        hooks: {
+          afterSequenceAllocated: async () => {
+            firstSequence.resolve();
+            await secondSequence.promise;
+          },
+          afterPairLock: async () => {
+            firstPairLock.resolve();
+            await releaseFirst.promise;
+          },
+        },
+      });
+      const secondRepository = createRecurrencesReportRepository(secondClient, {
+        hooks: {
+          afterSequenceAllocated: async () => {
+            secondSequence.resolve();
+            await firstSequence.promise;
+            await firstPairLock.promise;
+          },
+          beforePairLock: async () => { secondBeforePairLock.resolve(); },
+          afterPairLock: async () => { secondCrossedPairLock = true; },
+          beforeDuplicateLookup: async () => { secondCrossedLookup = true; },
+        },
+      });
+      firstReport = firstRepository.reportRecurrence(
+        input(ids.originalOrder, ids.correctionOrder, "First advisory owner"),
+        actor,
+        now,
+      );
+      secondReport = secondRepository.reportRecurrence(
+        input(ids.originalOrder, ids.correctionOrder, "Second advisory waiter"),
+        actor,
+        new Date("2027-08-20T15:30:00.000Z"),
+      );
+      await secondBeforePairLock.promise;
+      await waitForAdvisoryWaiter(ids.originalOrder, ids.correctionOrder);
+      expect(secondCrossedPairLock).toBe(false);
+      expect(secondCrossedLookup).toBe(false);
+      releaseFirst.resolve();
+      const results = await Promise.all([firstReport, secondReport]);
       expect(results.map(({ kind }) => kind).sort()).toEqual(["CREATED", "RECURRENCE_DUPLICATE"]);
       expect(await database.reincidencia.count({ where: { originalOrderId: ids.originalOrder, status: { in: ["OPEN", "ANALYSIS", "CORRECTION"] } } })).toBe(1);
       expect((await database.secuenciaReincidencia.findUniqueOrThrow({ where: { year: 2026 } })).lastNumber).toBe(1);
+      expect(await database.secuenciaReincidencia.findUnique({ where: { year: 2027 } })).toBeNull();
     } finally {
+      releaseFirst.resolve();
+      await Promise.allSettled([
+        ...(firstReport === undefined ? [] : [firstReport]),
+        ...(secondReport === undefined ? [] : [secondReport]),
+      ]);
       await secondClient.$disconnect();
     }
   });
