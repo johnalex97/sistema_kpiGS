@@ -86,6 +86,11 @@ describe("recurrence request schemas", () => {
       version: 1, correctiveAction: "Acción correctiva documentada", costReason: null,
     })],
     ["visit observation", () => addRecurrenceVisitSchema.parse({ version: 1, orderId: correctionOrderId, observation: null })],
+    ["unilateral adjustment cost reason", () => adjustRecurrenceSchema.parse({
+      version: 1,
+      reason: "Razón suficientemente documentada",
+      costReason: null,
+    })],
   ])("rejects null for string-only %s", (_field, parse) => {
     expect(parse).toThrow();
   });
@@ -98,11 +103,6 @@ describe("recurrence request schemas", () => {
       detectedTo: "2026-08-01T00:00:00.000Z",
     })).toThrow();
     expect(() => adjustRecurrenceSchema.parse({ version: 1, reason: "Razón suficientemente documentada" })).toThrow();
-    expect(() => adjustRecurrenceSchema.parse({
-      version: 1,
-      reason: "Razón suficientemente documentada",
-      costReason: null,
-    })).toThrow();
     expect(adjustRecurrenceSchema.parse({
       version: 1,
       reason: "Razón suficientemente documentada",
