@@ -124,8 +124,8 @@ Backend, ejecutado desde `server/`:
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 8 pruebas de reconciliación pura |
 | `npm run evidences:verify` | Correcto con una raíz preaprovisionada: `Matched 0`, `Orphan files 0`, `Missing files 0`; una raíz explícita ausente terminó con código `1`, mensaje operacional redactado y sin crearla |
-| Reincidencias unitarias | Correcto; 63 pruebas en 5 archivos |
-| Reincidencias PostgreSQL y HTTP | Correcto; 90 pruebas en 5 archivos |
+| Reincidencias unitarias | Correcto; 66 pruebas en 5 archivos |
+| Reincidencias PostgreSQL y HTTP | Correcto; 94 pruebas en 5 archivos |
 | Regresión HTTP de evidencias | Correcto; 8 pruebas |
 | Seguridad, errores y servidor | Correcto; 12 pruebas |
 | `npm run typecheck`, `npm run lint`, `npm run build` | Correctos; lint sin advertencias |
@@ -133,8 +133,8 @@ Backend, ejecutado desde `server/`:
 | `npm run build` | Correcto |
 | `npm run db:format`, `db:validate`, `db:generate` | Correctos; schema válido y cliente regenerado |
 | Seed | El seed sin cuenta administrativa se ejecutó dos veces en `public` y dos en `test`, con conteos idénticos: 3 roles, 23 permisos, 47 asignaciones rol-permiso, 3 técnicos, 2 clientes, 3 órdenes, 2 actividades y 2 reincidencias |
-| `npm run db:verify` | 34 tablas de dominio, 46 checks, 27 índices y 2 secuencias verificados |
-| `npx prisma migrate status` | Correcto; diez migraciones aplicadas en `public` y `test` |
+| `npm run db:verify` | 34 tablas de dominio, 50 checks, 27 índices y 2 secuencias verificados |
+| `npx prisma migrate status` | Correcto; once migraciones aplicadas en `public` y `test` |
 | Smoke compilado de evidencias | Carga 201; descarga 200; archivado 200; exceso 413; contenido disfrazado 422; técnico ajeno 404; archivo físico ausente 503; sin exponer claves ni raíces privadas |
 | Smoke compilado de actividades | Health 200; catálogo 200; pendiente 201; iniciar/pausar/reanudar/completar 200; manual 201; solapamiento 409; participante 403; ajuste y detalle 200; versiones `1→2→3→4→5` |
 | Flujo auth compilado | Login 200, me 200 y logout 204 |
@@ -163,7 +163,7 @@ Backend, ejecutado desde `server/`:
 
 El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
 PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
-`"Sistema_kpiGS"` tiene 34 tablas de dominio, diez migraciones, seed idempotente
+`"Sistema_kpiGS"` tiene 34 tablas de dominio, once migraciones, seed idempotente
 y un esquema `test` aislado.
 
 El módulo `clients` sigue la cadena completa route → middleware → controller →
@@ -220,7 +220,9 @@ service → repositorios de lectura, reporte y flujo → Prisma/PostgreSQL. Expo
 13 endpoints: catálogo, lista, reporte, detalle, análisis, corrección, visitas,
 notas, descarte, cierre, ajuste y dos de evidencia. La décima migración incorpora
 la numeración anual `RI-AAAA-NNNN`, estados `OPEN`, `ANALYSIS`, `CORRECTION`,
-`CLOSED` y `DISMISSED`, snapshots de participantes y auditoría. El servicio
+`CLOSED` y `DISMISSED`, snapshots de participantes y auditoría. La undécima
+migración completa las restricciones de causa por estado y las longitudes de
+motivo de descarte, justificación temporal y justificación de calidad. El servicio
 recibe explícitamente `RECURRENCE_WARNING_DAYS` (entero 1–365) y un reloj; los
 repositorios sostienen transacciones, bloqueos y control optimista. Solo el
 cierre convierte decisiones de calidad en hechos para la futura fase KPI;

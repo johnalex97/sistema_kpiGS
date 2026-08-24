@@ -95,7 +95,9 @@ incorpora los permisos y restricciones de acceso de fase 9. La décima,
 `20260820120000_recurrences_workflow_api`, incorpora el esquema y flujo
 persistente de reincidencias, su numeración anual `RI-AAAA-NNNN`, auditoría,
 restricciones e índices. El seed idempotente provisiona los permisos
-`RECURRENCES_*` y sus asignaciones por rol. Las diez migraciones deben estar
+`RECURRENCES_*` y sus asignaciones por rol. La undécima migración,
+`20260824110000_recurrences_invariant_constraints`, refuerza causa por estado y
+los límites de motivos y justificaciones. Las once migraciones deben estar
 aplicadas tanto en `public` como en `test`.
 
 Las pruebas de base utilizan `DATABASE_TEST_URL` con `schema=test`. Nunca deben

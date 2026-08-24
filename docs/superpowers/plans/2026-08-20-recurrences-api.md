@@ -975,7 +975,7 @@ git commit -m "docs(recurrences): document reviewed case operations"
 - [ ] **Step 1: Verify Prisma and both schemas**
 
 Run format, validate, generate, deploy, status, and `db:verify` against `public`
-and `test`. Expected: ten migrations, exact recurrence checks/indexes/permissions,
+and `test`. Expected: eleven migrations, exact recurrence checks/indexes/permissions,
 and no pending migration.
 
 - [ ] **Step 2: Prove seed idempotence twice per schema**

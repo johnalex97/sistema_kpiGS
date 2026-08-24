@@ -167,7 +167,9 @@ consulta, reporte, análisis, corrección, visitas, notas, descarte, cierre,
 ajuste y evidencias. La décima migración `20260820120000_recurrences_workflow_api`
 añade el esquema y flujo persistente, secuencia anual `RI-AAAA-NNNN`,
 restricciones e índices; el seed idempotente provisiona los permisos
-`RECURRENCES_*` y sus asignaciones por rol. Las diez migraciones se aplican en
+`RECURRENCES_*` y sus asignaciones por rol. La undécima migración
+`20260824110000_recurrences_invariant_constraints` completa las invariantes de
+causa, descarte y longitudes. Las once migraciones se aplican en
 `public` y `test`.
 
 ADMIN y SUPERVISOR revisan todos los casos; TECHNICIAN puede reportar con
@@ -178,7 +180,7 @@ entrega hechos a la fase 11 de KPI, que sigue pendiente y no calcula puntajes
 todavía. La evidencia de reincidencia respeta los niveles `TECHNICIAN` e
 `INTERNAL` y el archivo se conserva tras archivar la metadata.
 
-Salida verificada: 62 pruebas unitarias de reincidencias, 90 pruebas de
+Salida verificada: 66 pruebas unitarias de reincidencias, 94 pruebas de
 persistencia/HTTP de reincidencias, 8 de regresión HTTP de evidencias y 12 de
 seguridad/errores/servidor; typecheck, lint y build del backend correctos. Las
 pruebas PostgreSQL mantienen la advertencia deprecada conocida de `pg` sobre
