@@ -255,3 +255,29 @@ HTTP route → middleware → controller → service → repository → Prisma/P
 - Calcular métricas grupales más de una vez por técnico participante.
 - Acoplar el almacenamiento local de archivos al resto del dominio.
 - Introducir cambios visuales durante la separación estructural.
+
+## Motor KPI semanal y dashboard
+
+El módulo `kpis` está disponible bajo `/api/v1/kpis`. Calcula productividad
+(`créditos completados / meta`), cumplimiento (`créditos a tiempo / elegibles`),
+eficiencia (`minutos productivos / registrados`) y calidad
+(`1 - reincidencias atribuibles / créditos completados`). Los pesos iniciales
+son `20/25/25/30`; una dimensión no aplicable redistribuye su peso sólo en esa
+semana.
+
+Cada cierre conserva contadores, porcentajes, pesos y fuentes en una instantánea
+inmutable. Un recálculo crea una revisión y mantiene la anterior. El cierre o
+ajuste de una reincidencia técnica atribuible crea una solicitud durable para
+recalcular la semana original. `KPI_TIME_ZONE=America/Tegucigalpa` define los
+límites locales.
+
+La SPA consume resumen, ranking e historial real y ofrece metas, ponderaciones,
+cierre y recálculo según capacidades del usuario. Los paneles operativos
+restantes conservan datos locales hasta la fase 12.
+
+Verificación local: `npm run kpis:verify`, `npm run test:db`, `npm test`,
+`npm run typecheck`, `npm run lint` y `npm run build` desde `server/`; desde la
+raíz, `npm test`, `npm run lint` y `npm run build`. PostgreSQL puede emitir la
+advertencia no bloqueante conocida de `pg` sobre `client.query()` concurrente.
+La matriz de cierre de esta fase aprobó 462 pruebas unitarias del backend (una
+omitida), 401 pruebas de persistencia y 11 pruebas del frontend.

@@ -197,7 +197,12 @@ Salida: trazabilidad completa con pruebas de clasificación.
 - Calcular productividad, cumplimiento, eficiencia, calidad y resultado general.
 - Conectar dashboard, comparaciones y ranking.
 
-Salida: indicadores reproducibles y explicables.
+Estado: completada. Incluye cálculo semanal determinista, cierres y revisiones
+inmutables, cola durable por reincidencias, consolidación mensual/anual, API
+protegida, dashboard conectado y administración de metas y ponderaciones.
+
+Salida: indicadores reproducibles y explicables, verificados con
+`npm run kpis:verify`.
 
 ## 12. Migración del frontend a la API
 
@@ -207,6 +212,9 @@ Salida: indicadores reproducibles y explicables.
 - Mantener mocks sólo para pruebas y desarrollo aislado.
 
 Salida: interfaz existente conectada a datos persistentes.
+
+Estado: en progreso. El bloque KPI ya consume la API; actividades, jornada y
+otros paneles operativos conservan temporalmente sus fuentes locales.
 
 ## 13. Reportes y auditoría
 

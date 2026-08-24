@@ -20,7 +20,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:verify": "tsx database/run-sql.ts database/verify-database.sql",
-    "evidences:verify": "tsx scripts/verify-evidences.ts"
+    "evidences:verify": "tsx scripts/verify-evidences.ts",
+    "kpis:verify": "tsx scripts/verify-kpis.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

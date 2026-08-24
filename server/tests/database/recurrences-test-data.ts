@@ -179,6 +179,7 @@ export async function removeRecurrencesReadFixture(
   await database.reincidenciaNota.deleteMany({ where: { reincidenciaId: { in: recurrenceIds } } });
   await database.reincidenciaTecnico.deleteMany({ where: { reincidenciaId: { in: recurrenceIds } } });
   await database.reincidenciaOrden.deleteMany({ where: { reincidenciaId: { in: recurrenceIds } } });
+  await database.solicitudRevisionKPI.deleteMany({ where: { reincidenciaId: { in: recurrenceIds } } });
   await database.reincidencia.deleteMany({ where: { id: { in: recurrenceIds } } });
   await database.ordenTecnico.deleteMany({ where: { ordenId: { in: [ids.originalOrder, ids.correctionOrder] } } });
   await database.ordenTrabajo.deleteMany({ where: { id: { in: [ids.originalOrder, ids.correctionOrder] } } });

@@ -85,6 +85,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 async function cleanupFixture(): Promise<void> {
   await database.auditoria.deleteMany({ where: { entityId: ids.recurrence } });
   await database.reincidenciaNota.deleteMany({ where: { reincidenciaId: ids.recurrence } });
+  await database.solicitudRevisionKPI.deleteMany({ where: { reincidenciaId: ids.recurrence } });
   await database.reincidenciaTecnico.deleteMany({ where: { reincidenciaId: ids.recurrence } });
   await database.reincidenciaOrden.deleteMany({ where: { reincidenciaId: ids.recurrence } });
   await database.reincidencia.deleteMany({ where: { id: ids.recurrence } });

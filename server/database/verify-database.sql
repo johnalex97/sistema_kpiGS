@@ -575,3 +575,15 @@ SELECT "version",
        "is_active"
 FROM "configuracion_kpi"
 ORDER BY "version";
+
+DO $kpi_verification$
+DECLARE invalid_count integer;
+BEGIN
+  SELECT count(*) INTO invalid_count FROM "configuracion_kpi" WHERE "productivity_weight" + "compliance_weight" + "efficiency_weight" + "quality_weight" <> 1.0000;
+  IF invalid_count <> 0 THEN RAISE EXCEPTION 'Las ponderaciones KPI no suman 1.0000'; END IF;
+  SELECT count(*) INTO invalid_count FROM "meta_tecnico" WHERE "period_end" - "period_start" <> 6 OR EXTRACT(ISODOW FROM "period_start") <> 1;
+  IF invalid_count <> 0 THEN RAISE EXCEPTION 'Existen metas KPI fuera de lunes-domingo'; END IF;
+  SELECT count(*) INTO invalid_count FROM (SELECT "tecnico_id", "period_start", "period_end" FROM "resultado_kpi" WHERE "is_current" GROUP BY 1,2,3 HAVING count(*) > 1) duplicates;
+  IF invalid_count <> 0 THEN RAISE EXCEPTION 'Existe más de una revisión KPI vigente'; END IF;
+END
+$kpi_verification$;

@@ -176,6 +176,7 @@ async function cleanupFixture(): Promise<void> {
   await database.reincidenciaNota.deleteMany({ where: { reincidenciaId: { in: recurrenceIds } } });
   await database.reincidenciaTecnico.deleteMany({ where: { reincidenciaId: { in: recurrenceIds } } });
   await database.reincidenciaOrden.deleteMany({ where: { reincidenciaId: { in: recurrenceIds } } });
+  await database.solicitudRevisionKPI.deleteMany({ where: { reincidenciaId: { in: recurrenceIds } } });
   await database.reincidencia.deleteMany({ where: { id: { in: recurrenceIds } } });
   await database.ordenTecnico.deleteMany({ where: { ordenId: { in: [...orderIds] } } });
   await database.ordenTrabajo.deleteMany({ where: { id: { in: [...orderIds] } } });
