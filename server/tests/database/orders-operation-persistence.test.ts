@@ -116,6 +116,7 @@ interface CreateOperationOrderOptions {
   supportTechnicianId?: string;
   startedAt?: Date | null;
   endedAt?: Date | null;
+  withProductiveTime?: boolean;
 }
 
 let fixture: OperationFixture;
@@ -176,6 +177,33 @@ async function createOperationOrder(
   }
   if (assignments.length > 0) {
     await database.ordenTecnico.createMany({ data: assignments });
+  }
+  if ((options.withProductiveTime ?? status === "IN_PROGRESS") && assignments.length > 0) {
+    const activityType = await database.tipoActividad.findFirstOrThrow({
+      where: { isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+    await database.actividad.create({
+      data: {
+        sucursalId: fixture.branchId,
+        ordenId: id,
+        tipoActividadId: activityType.id,
+        status: "COMPLETED",
+        description: "Tiempo productivo para completar la orden",
+        startedAt: firstNow,
+        endedAt: secondNow,
+        productiveMinutes: 30,
+        tecnicos: {
+          create: {
+            tecnicoId: assignments[0]!.tecnicoId,
+            role: "RESPONSIBLE",
+            participationPercentage: "100.00",
+            startedAt: firstNow,
+            endedAt: secondNow,
+          },
+        },
+      },
+    });
   }
   return id;
 }
@@ -270,6 +298,12 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  await database.actividadTecnico.deleteMany({
+    where: { actividad: { ordenId: { in: createdOrderIds } } },
+  });
+  await database.actividad.deleteMany({
+    where: { ordenId: { in: createdOrderIds } },
+  });
   await database.materialUtilizado.deleteMany({
     where: { ordenId: { in: createdOrderIds } },
   });
@@ -582,6 +616,25 @@ describe("orders operation repository transitions", () => {
         fourthNow,
       ),
     ).resolves.toEqual({ kind: "INVALID_ORDER_TRANSITION" });
+  });
+
+  it("rejects completion without productive technician time", async () => {
+    const repository = createOrdersOperationRepository(database);
+    const orderId = await createOperationOrder({
+      status: "IN_PROGRESS",
+      version: 4,
+      startedAt: firstNow,
+      withProductiveTime: false,
+    });
+
+    await expect(repository.completeOrder(
+      orderId,
+      { version: 4, diagnosis: "Diagnóstico válido", result: "Resultado válido" },
+      actor(fixture.technicianIds.primary),
+      fourthNow,
+    )).resolves.toEqual({ kind: "ORDER_PRODUCTIVE_TIME_REQUIRED" });
+    await expect(database.ordenTrabajo.findUniqueOrThrow({ where: { id: orderId } }))
+      .resolves.toMatchObject({ status: "IN_PROGRESS", version: 4 });
   });
 
   it("rejects completion without the required owned in-progress work", async () => {

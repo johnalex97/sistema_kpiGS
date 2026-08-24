@@ -103,6 +103,12 @@ const errors: Record<OrderFailureKind, () => ApiError> = {
       "El material no tiene costo de referencia",
       "MATERIAL_COST_UNAVAILABLE",
     ),
+  ORDER_PRODUCTIVE_TIME_REQUIRED: () =>
+    new ApiError(
+      422,
+      "La orden requiere tiempo productivo de al menos un técnico",
+      "ORDER_PRODUCTIVE_TIME_REQUIRED",
+    ),
 };
 
 function forbidden(): ApiError {

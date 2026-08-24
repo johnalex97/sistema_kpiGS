@@ -746,6 +746,7 @@ const failureCases: Array<
   ["RESOURCE_INACTIVE", 409, "El recurso relacionado está inactivo"],
   ["ORDER_CLOSED", 409, "La orden está cerrada"],
   ["MATERIAL_COST_UNAVAILABLE", 409, "El material no tiene costo de referencia"],
+  ["ORDER_PRODUCTIVE_TIME_REQUIRED", 422, "La orden requiere tiempo productivo de al menos un técnico"],
 ];
 
 describe("OrdersService public failures", () => {

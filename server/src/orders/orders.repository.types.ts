@@ -138,7 +138,8 @@ export type OrderFailureKind =
   | "TECHNICIAN_BUSY"
   | "RESOURCE_INACTIVE"
   | "ORDER_CLOSED"
-  | "MATERIAL_COST_UNAVAILABLE";
+  | "MATERIAL_COST_UNAVAILABLE"
+  | "ORDER_PRODUCTIVE_TIME_REQUIRED";
 
 export type OrderMutationResult =
   | { kind: "CREATED" | "UPDATED"; order: OrderDetailRecord }

@@ -622,6 +622,20 @@ export function createOrdersOperationRepository(
           return { kind: "TECHNICIAN_NOT_ASSIGNED" } as const;
         }
 
+        const productiveActivity = await transaction.actividad.findFirst({
+          where: {
+            ordenId: id,
+            status: "COMPLETED",
+            deletedAt: null,
+            productiveMinutes: { gt: 0 },
+            tecnicos: { some: {} },
+          },
+          select: { id: true },
+        });
+        if (productiveActivity === null) {
+          return { kind: "ORDER_PRODUCTIVE_TIME_REQUIRED" } as const;
+        }
+
         const before = await loadOrderDetail(transaction, id);
         const changed = await transaction.ordenTrabajo.updateMany({
           where: { id, version: input.version },
