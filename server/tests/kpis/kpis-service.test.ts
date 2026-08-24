@@ -1,0 +1,38 @@
+import { describe, expect, it, vi } from "vitest";
+import { createKpiService } from "../../src/kpis/kpis.service.js";
+import type { KpiFactsRepository } from "../../src/kpis/kpis.repository.types.js";
+
+const rows = {
+  technicians: [
+    { id: "a", code: "TEC-A", fullName: "Ana", targetJobs: 10 },
+    { id: "b", code: "TEC-B", fullName: "Beto", targetJobs: null },
+  ],
+  weights: { productivity: "0.2000", compliance: "0.2500", efficiency: "0.2500", quality: "0.3000" },
+  orders: [], activities: [], recurrences: [],
+};
+
+describe("KPI preview service", () => {
+  it("calculates target-bearing technicians and warns about missing goals", async () => {
+    const repository: KpiFactsRepository = { loadWeeklySources: vi.fn(async () => rows) };
+    const service = createKpiService(repository, "America/Tegucigalpa");
+    const result = await service.previewWeekly("2026-08-24", {
+      userId: "user", technicianId: null, permissions: ["KPI_VIEW_ALL"], requestId: "request",
+    });
+    expect(result.status).toBe("PREVIEW");
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ technicianId: "a", overallScore: "0.00" });
+    expect(result.warnings).toEqual([{ code: "MISSING_TARGET", technicianId: "b" }]);
+  });
+
+  it("uses own scope and hides foreign technicians", async () => {
+    const repository: KpiFactsRepository = { loadWeeklySources: vi.fn(async () => rows) };
+    const service = createKpiService(repository, "America/Tegucigalpa");
+    await service.previewWeekly("2026-08-24", {
+      userId: "user", technicianId: "a", permissions: ["KPI_VIEW_OWN"], requestId: "request",
+    });
+    expect(repository.loadWeeklySources).toHaveBeenCalledWith(
+      expect.objectContaining({ periodStart: "2026-08-24" }),
+      { kind: "TECHNICIAN", technicianId: "a" },
+    );
+  });
+});
