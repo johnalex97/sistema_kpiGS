@@ -1,10 +1,10 @@
 import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
 import { ApiError } from "../utils/api-error.js";
-import type { KpiFactsRepository } from "./kpis.repository.types.js";
+import type { KpiFactsRepository, KpiQueryRepository } from "./kpis.repository.types.js";
 
 const dateOnly = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
-export function createKpiReadRepository(database: PrismaClient | Prisma.TransactionClient): KpiFactsRepository {
+export function createKpiReadRepository(database: PrismaClient | Prisma.TransactionClient): KpiFactsRepository & KpiQueryRepository {
   return {
     async loadWeeklySources(week, scope) {
       const periodStart = dateOnly(week.periodStart);
@@ -127,6 +127,44 @@ export function createKpiReadRepository(database: PrismaClient | Prisma.Transact
           attributableTechnicianIds: recurrence.tecnicos.map(({ tecnicoId }) => tecnicoId),
         })),
       };
+    },
+    async findCurrentResults(query, scope) {
+      const start = dateOnly(query.periodStart);
+      let endExclusive = new Date(start);
+      if (query.granularity === "WEEK") endExclusive.setUTCDate(endExclusive.getUTCDate() + 7);
+      else if (query.granularity === "MONTH") endExclusive = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+      else endExclusive = new Date(Date.UTC(start.getUTCFullYear() + 1, 0, 1));
+      return database.resultadoKPI.findMany({
+        where: {
+          isCurrent: true,
+          periodEnd: { gte: start, lt: endExclusive },
+          ...(scope.kind === "TECHNICIAN" ? { tecnicoId: scope.technicianId } : {}),
+          ...(query.technicianId ? { tecnicoId: query.technicianId } : {}),
+        },
+        include: { tecnico: { select: { code: true, fullName: true } } },
+        orderBy: [{ periodStart: "asc" }, { tecnico: { code: "asc" } }],
+      });
+    },
+    findTechnicianHistory(technicianId, scope) {
+      return database.resultadoKPI.findMany({
+        where: {
+          tecnicoId: technicianId,
+          isCurrent: true,
+          ...(scope.kind === "TECHNICIAN" ? { tecnicoId: scope.technicianId } : {}),
+        },
+        include: { tecnico: { select: { code: true, fullName: true } } },
+        orderBy: { periodStart: "asc" },
+      });
+    },
+    findVersions(week, scope) {
+      return database.resultadoKPI.findMany({
+        where: {
+          periodStart: dateOnly(week.periodStart), periodEnd: dateOnly(week.periodEnd),
+          ...(scope.kind === "TECHNICIAN" ? { tecnicoId: scope.technicianId } : {}),
+        },
+        include: { tecnico: { select: { code: true, fullName: true } } },
+        orderBy: [{ tecnicoId: "asc" }, { revision: "desc" }],
+      });
     },
   };
 }

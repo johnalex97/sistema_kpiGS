@@ -1,6 +1,7 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 import type { KpiWeek, WeeklySourceRows } from "./kpis.types.js";
 import type { CreateConfigurationInput, CreateTargetInput, UpdateTargetInput } from "./kpis.schemas.js";
+import type { KpiPeriodQuery } from "./kpis.schemas.js";
 import type { KpiActorContext } from "./kpis.types.js";
 
 export type KpiAccessScope =
@@ -45,4 +46,14 @@ export interface KpiCloseRepository {
   closeWeek(input: CloseWeekInput): Promise<CloseWeekResult>;
   recalculateWeek(input: CloseWeekInput & { reason: string }): Promise<CloseWeekResult>;
   processRevisionRequests(limit: number, now: Date): Promise<RevisionBatchResult>;
+}
+
+export type KpiResultWithTechnician = KpiResultRecord & {
+  tecnico: { code: string; fullName: string };
+};
+
+export interface KpiQueryRepository {
+  findCurrentResults(query: KpiPeriodQuery, scope: KpiAccessScope): Promise<KpiResultWithTechnician[]>;
+  findTechnicianHistory(technicianId: string, scope: KpiAccessScope): Promise<KpiResultWithTechnician[]>;
+  findVersions(week: KpiWeek, scope: KpiAccessScope): Promise<KpiResultWithTechnician[]>;
 }

@@ -14,6 +14,7 @@ import type { EvidenceStorage } from "../evidences/evidences.storage.js";
 import { createRecurrencesRouter } from "../recurrences/recurrences.routes.js";
 import { createHealthRouter } from "./health.routes.js";
 import { createKpiCloseRepository } from "../kpis/kpis.close.repository.js";
+import { createKpiRouter } from "../kpis/kpis.routes.js";
 
 export function createApiRouter(
   env: Environment,
@@ -41,6 +42,7 @@ export function createApiRouter(
     createTechniciansRouter(env, database, authService),
   );
   router.use("/orders", createOrdersRouter(env, database, authService));
+  router.use("/kpis", createKpiRouter(env, database, authService, kpiCloseRepository));
   router.use(createActivitiesRouter(env, database, authService));
   router.use("/recurrences", createRecurrencesRouter(
     env,

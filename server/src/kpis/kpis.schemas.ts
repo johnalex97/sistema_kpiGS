@@ -69,3 +69,15 @@ export const recalculationReasonSchema = schemas.recalculationReasonSchema;
 export type CreateTargetInput = z.infer<typeof createTargetSchema>;
 export type UpdateTargetInput = z.infer<typeof updateTargetSchema>;
 export type CreateConfigurationInput = z.infer<typeof createConfigurationSchema>;
+
+export const kpiPeriodQuerySchema = z.object({
+  periodStart: localDate,
+  granularity: z.enum(["WEEK", "MONTH", "YEAR"]).default("WEEK"),
+  technicianId: z.uuid().optional(),
+  serviceTypeId: z.uuid().optional(),
+  workStatus: z.string().trim().min(1).max(50).optional(),
+}).strict();
+export const kpiWeekParamsSchema = z.object({ periodStart: localDate }).strict();
+export const kpiTechnicianParamsSchema = z.object({ technicianId: z.uuid() }).strict();
+export const kpiTargetParamsSchema = z.object({ id: z.uuid() }).strict();
+export type KpiPeriodQuery = z.infer<typeof kpiPeriodQuerySchema>;
