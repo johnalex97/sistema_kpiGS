@@ -149,9 +149,16 @@ describe("Prisma schema contract", () => {
     expect(checks).toHaveLength(6);
   });
 
-  it("creates the nine recurrence row-level checks", async () => {
-    const checks = await database.$queryRaw<Array<{ conname: string }>>`
-      SELECT constraint_data.conname
+  it("creates the thirteen recurrence row-level checks with validated workflow bounds", async () => {
+    const checks = await database.$queryRaw<Array<{
+      conname: string;
+      definition: string;
+      validated: boolean;
+    }>>`
+      SELECT
+        constraint_data.conname,
+        pg_get_constraintdef(constraint_data.oid) AS definition,
+        constraint_data.convalidated AS validated
       FROM pg_constraint AS constraint_data
       JOIN pg_namespace AS namespace_data
         ON namespace_data.oid = constraint_data.connamespace
@@ -165,7 +172,11 @@ describe("Prisma schema contract", () => {
           'ck_reincidencia_descarte',
           'ck_reincidencia_fecha_terminal',
           'ck_reincidencia_tecnico_calidad',
-          'ck_reincidencia_orden_minutos_adicionales'
+          'ck_reincidencia_orden_minutos_adicionales',
+          'ck_reincidencia_causa_estado',
+          'ck_reincidencia_motivo_descarte_longitud',
+          'ck_reincidencia_justificacion_antiguedad_longitud',
+          'ck_reincidencia_tecnico_justificacion_longitud'
         )
     `;
 
@@ -180,9 +191,28 @@ describe("Prisma schema contract", () => {
         "ck_reincidencia_fecha_terminal",
         "ck_reincidencia_tecnico_calidad",
         "ck_reincidencia_orden_minutos_adicionales",
+        "ck_reincidencia_causa_estado",
+        "ck_reincidencia_motivo_descarte_longitud",
+        "ck_reincidencia_justificacion_antiguedad_longitud",
+        "ck_reincidencia_tecnico_justificacion_longitud",
       ]),
     );
-    expect(checks).toHaveLength(9);
+    expect(checks).toHaveLength(13);
+    const newConstraintNames = new Set([
+      "ck_reincidencia_causa_estado",
+      "ck_reincidencia_motivo_descarte_longitud",
+      "ck_reincidencia_justificacion_antiguedad_longitud",
+      "ck_reincidencia_tecnico_justificacion_longitud",
+    ]);
+    expect(checks
+      .filter(({ conname }) => newConstraintNames.has(conname))
+      .every(({ validated }) => validated)).toBe(true);
+    const definitions = Object.fromEntries(checks.map(({ conname, definition }) => [conname, definition]));
+    expect(definitions.ck_reincidencia_causa_estado).toContain("cause_id IS NOT NULL");
+    expect(definitions.ck_reincidencia_motivo_descarte_longitud).toContain(">= 10");
+    expect(definitions.ck_reincidencia_motivo_descarte_longitud).toContain("<= 500");
+    expect(definitions.ck_reincidencia_justificacion_antiguedad_longitud).toContain("<= 500");
+    expect(definitions.ck_reincidencia_tecnico_justificacion_longitud).toContain("<= 1000");
   });
 
   it("creates the required active-resource and archived-evidence indexes", async () => {

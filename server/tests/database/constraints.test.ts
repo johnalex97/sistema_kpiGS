@@ -18,7 +18,7 @@ beforeAll(() => seedDatabase(database));
 afterAll(disconnectTestDatabase);
 
 async function fixtures() {
-  const [order, activity, technician, user, material, configuration] =
+  const [order, activity, technician, user, material, configuration, cause] =
     await Promise.all([
       database.ordenTrabajo.findUniqueOrThrow({
         where: { orderNumber: "GS-2026-0001" },
@@ -34,9 +34,12 @@ async function fixtures() {
         where: { code: "MAT-CABLE-001" },
       }),
       database.configuracionKPI.findUniqueOrThrow({ where: { version: 1 } }),
+      database.causaReincidencia.findFirstOrThrow({
+        where: { isActive: true, deletedAt: null },
+      }),
     ]);
 
-  return { order, activity, technician, user, material, configuration };
+  return { order, activity, technician, user, material, configuration, cause };
 }
 
 describe("database constraints", () => {
@@ -187,6 +190,129 @@ describe("database constraints", () => {
         },
       }),
     ).rejects.toThrow();
+  });
+
+  // Mutation caught: dropping the state-aware cause check allows classified or
+  // KPI-final rows to exist without a cause.
+  it.each([
+    [EstadoReincidencia.ANALYSIS, "RI-2090-9801", {}],
+    [EstadoReincidencia.CORRECTION, "RI-2090-9802", {}],
+    [EstadoReincidencia.CLOSED, "RI-2090-9803", {
+      closedAt: new Date("2026-08-02T12:00:00.000Z"),
+      closedById: undefined as string | undefined,
+    }],
+  ])("rejects a %s recurrence without a cause", async (status, recurrenceNumber, terminal) => {
+    const { order, user } = await fixtures();
+    const closedValues = status === EstadoReincidencia.CLOSED
+      ? { ...terminal, closedById: user.id }
+      : {};
+    try {
+      await expect(database.reincidencia.create({
+        data: {
+          originalOrderId: order.id,
+          causeId: null,
+          status,
+          detectedProblem: "Classified recurrence without a cause",
+          recurrenceNumber,
+          reportedById: user.id,
+          detectedAt: new Date("2026-08-01T12:00:00.000Z"),
+          ...closedValues,
+        },
+      })).rejects.toThrow();
+    } finally {
+      await database.reincidencia.deleteMany({ where: { recurrenceNumber } });
+    }
+  });
+
+  // Mutation caught: dismissal reasons outside 10..500 or attached to another
+  // state violate the terminal reason contract even when actors/dates are valid.
+  it.each([
+    ["nine characters", "RI-2090-9811", {
+      status: EstadoReincidencia.DISMISSED,
+      dismissalReason: "123456789",
+    }],
+    ["501 characters", "RI-2090-9812", {
+      status: EstadoReincidencia.DISMISSED,
+      dismissalReason: "x".repeat(501),
+    }],
+    ["a reason outside DISMISSED", "RI-2090-9813", {
+      status: EstadoReincidencia.OPEN,
+      dismissalReason: "A valid-length reason on the wrong state",
+    }],
+  ])("rejects dismissal reason with %s", async (_label, recurrenceNumber, invalid) => {
+    const { order, user } = await fixtures();
+    const terminal = invalid.status === EstadoReincidencia.DISMISSED
+      ? { dismissedAt: new Date("2026-08-02T12:00:00.000Z"), dismissedById: user.id }
+      : {};
+    try {
+      await expect(database.reincidencia.create({
+        data: {
+          originalOrderId: order.id,
+          status: invalid.status,
+          detectedProblem: "Recurrence with invalid dismissal reason",
+          recurrenceNumber,
+          reportedById: user.id,
+          detectedAt: new Date("2026-08-01T12:00:00.000Z"),
+          dismissalReason: invalid.dismissalReason,
+          ...terminal,
+        },
+      })).rejects.toThrow();
+    } finally {
+      await database.reincidencia.deleteMany({ where: { recurrenceNumber } });
+    }
+  });
+
+  it.each([
+    ["blank", "RI-2090-9821", "   "],
+    ["501 characters", "RI-2090-9822", "x".repeat(501)],
+  ])("rejects %s age override reason", async (_label, recurrenceNumber, ageOverrideReason) => {
+    const { order, user } = await fixtures();
+    try {
+      await expect(database.reincidencia.create({
+        data: {
+          originalOrderId: order.id,
+          status: EstadoReincidencia.OPEN,
+          detectedProblem: "Recurrence with invalid age override reason",
+          recurrenceNumber,
+          reportedById: user.id,
+          ageOverrideReason,
+        },
+      })).rejects.toThrow();
+    } finally {
+      await database.reincidencia.deleteMany({ where: { recurrenceNumber } });
+    }
+  });
+
+  it.each([
+    ["blank", "RI-2090-9831", "   "],
+    ["1001 characters", "RI-2090-9832", "x".repeat(1_001)],
+  ])("rejects %s technician quality justification", async (_label, recurrenceNumber, justification) => {
+    const { order, user, technician } = await fixtures();
+    const recurrenceId = randomUUID();
+    try {
+      await database.reincidencia.create({
+        data: {
+          id: recurrenceId,
+          originalOrderId: order.id,
+          status: EstadoReincidencia.OPEN,
+          detectedProblem: "Recurrence with invalid quality justification",
+          recurrenceNumber,
+          reportedById: user.id,
+        },
+      });
+      await expect(database.reincidenciaTecnico.create({
+        data: {
+          reincidenciaId: recurrenceId,
+          tecnicoId: technician.id,
+          participation: ParticipacionReincidencia.ORIGINAL_PARTICIPANT,
+          affectsQuality: false,
+          justification,
+        },
+      })).rejects.toThrow();
+    } finally {
+      await database.reincidenciaTecnico.deleteMany({ where: { reincidenciaId: recurrenceId } });
+      await database.reincidencia.deleteMany({ where: { id: recurrenceId } });
+    }
   });
 
   it("rejects a duplicate work order number", async () => {

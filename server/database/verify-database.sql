@@ -78,6 +78,15 @@ BEGIN
   END IF;
 
   SELECT count(*) INTO actual_count
+  FROM "_prisma_migrations"
+  WHERE migration_name = '20260824110000_recurrences_invariant_constraints'
+    AND finished_at IS NOT NULL
+    AND rolled_back_at IS NULL;
+  IF actual_count <> 1 THEN
+    RAISE EXCEPTION 'La undÃ©cima migraciÃ³n de invariantes de reincidencias no estÃ¡ aplicada';
+  END IF;
+
+  SELECT count(*) INTO actual_count
   FROM information_schema.tables
   WHERE table_schema = current_schema()
     AND table_name IN ('secuencia_reincidencia', 'reincidencia_nota');
@@ -128,7 +137,11 @@ BEGIN
     ('ck_reincidencia_descarte'),
     ('ck_reincidencia_fecha_terminal'),
     ('ck_reincidencia_tecnico_calidad'),
-    ('ck_reincidencia_orden_minutos_adicionales')
+    ('ck_reincidencia_orden_minutos_adicionales'),
+    ('ck_reincidencia_causa_estado'),
+    ('ck_reincidencia_motivo_descarte_longitud'),
+    ('ck_reincidencia_justificacion_antiguedad_longitud'),
+    ('ck_reincidencia_tecnico_justificacion_longitud')
   ) AS expected(constraint_name)
   LEFT JOIN pg_constraint AS constraint_data
   JOIN pg_namespace AS namespace_data
@@ -138,6 +151,22 @@ BEGIN
   WHERE constraint_data.oid IS NULL;
   IF missing_count <> 0 THEN
     RAISE EXCEPTION 'Faltan checks del flujo revisado de reincidencias';
+  END IF;
+
+  SELECT count(*) INTO actual_count
+  FROM pg_constraint AS constraint_data
+  JOIN pg_namespace AS namespace_data
+    ON namespace_data.oid = constraint_data.connamespace
+  WHERE namespace_data.nspname = current_schema()
+    AND constraint_data.convalidated
+    AND constraint_data.conname IN (
+      'ck_reincidencia_causa_estado',
+      'ck_reincidencia_motivo_descarte_longitud',
+      'ck_reincidencia_justificacion_antiguedad_longitud',
+      'ck_reincidencia_tecnico_justificacion_longitud'
+    );
+  IF actual_count <> 4 THEN
+    RAISE EXCEPTION 'Los checks finales de reincidencias no estÃ¡n validados';
   END IF;
 
   SELECT count(*) INTO actual_count
