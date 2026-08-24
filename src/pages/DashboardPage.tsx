@@ -7,6 +7,7 @@ import { KpiPeriodToolbar } from "../components/kpis/KpiPeriodToolbar";
 import { KpiRanking } from "../components/kpis/KpiRanking";
 import { KpiScoreCards } from "../components/kpis/KpiScoreCards";
 import { KpiTrend } from "../components/kpis/KpiTrend";
+import { KpiManagementPanel } from "../components/kpis/KpiManagementPanel";
 import { useKpiDashboard } from "../hooks/useKpiDashboard";
 import { technicians } from "../mocks/data";
 import type { Work } from "../models/app";
@@ -20,6 +21,7 @@ export function DashboardPage({ works, onGoRecurrence, kpiApi = defaultKpiApi }:
   const lead = data?.items[0];
   return <>
     <KpiPeriodToolbar period={dashboard.period} setGranularity={dashboard.setGranularity} previous={dashboard.previous} next={dashboard.next} />
+    {data && <KpiManagementPanel api={kpiApi} periodStart={dashboard.period.periodStart} capabilities={data.capabilities} onChanged={dashboard.retry} />}
     {dashboard.state.status === "loading" && !data && <div className="kpi-message" role="status">Calculando indicadores del periodo…</div>}
     {dashboard.state.status === "error" && <div className="kpi-message kpi-message--error" role="status" aria-live="polite"><span>{dashboard.state.message}</span><button onClick={dashboard.retry}>Reintentar</button></div>}
     {dashboard.state.status === "empty" && <div className="kpi-message">Todavía no hay resultados KPI para este periodo.</div>}

@@ -1,0 +1,9 @@
+import { useState } from "react";
+import type { KpiApi } from "../../api/kpis";
+export function KpiCloseDialog({ api, periodStart, canClose, canRecalculate, onSaved }: { api: KpiApi; periodStart: string; canClose: boolean; canRecalculate: boolean; onSaved(): void }) {
+  const [validation, setValidation] = useState<unknown>(null); const [reason, setReason] = useState(""); const [error, setError] = useState("");
+  const validate = async () => { setError(""); try { setValidation(await api.validateWeek(periodStart)); } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo validar la semana"); } };
+  const close = async () => { try { await api.closeWeek(periodStart); onSaved(); } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo cerrar la semana"); } };
+  const recalculate = async () => { try { await api.recalculateWeek(periodStart, reason); onSaved(); } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo recalcular la semana"); } };
+  return <div className="kpi-management-form"><p>Primero valida la cobertura y las metas de la semana.</p><button className="button button--ghost" onClick={validate}>Validar semana</button>{validation !== null && <div className="kpi-validation" role="status">Validación completa. Revisa las advertencias antes de confirmar.</div>}{validation !== null && canClose && <button className="button button--primary" onClick={close}>Confirmar cierre</button>}{canRecalculate && <label className="field"><span>Motivo del recálculo</span><input value={reason} onChange={(event) => setReason(event.target.value)} minLength={10} /></label>}{canRecalculate && <button className="button button--dark" disabled={reason.trim().length < 10} onClick={recalculate}>Recalcular semana</button>}{error && <p className="form-error" role="alert">{error}</p>}</div>;
+}
