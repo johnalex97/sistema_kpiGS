@@ -21,8 +21,16 @@ if (url.pathname.slice(1) !== "Sistema_kpiGS") {
   throw new Error('La verificación solo puede ejecutarse sobre "Sistema_kpiGS"');
 }
 
+const schema = url.searchParams.get("schema") ?? undefined;
+if (schema !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(schema)) {
+  throw new Error("El esquema PostgreSQL no es válido");
+}
+
 const sql = await readFile(resolve(process.cwd(), scriptPath), "utf8");
-const client = new pg.Client({ connectionString });
+const client = new pg.Client({
+  connectionString,
+  ...(schema !== undefined && { options: `-c search_path=${schema}` }),
+});
 
 try {
   await client.connect();
