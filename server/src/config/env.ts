@@ -65,6 +65,14 @@ const environmentSchema = z.object({
     .max(10_080)
     .default(60),
   RECURRENCE_WARNING_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  KPI_TIME_ZONE: z.string().default("America/Tegucigalpa").refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Debe ser una zona horaria IANA válida"),
 });
 
 export type EnvironmentInput = Record<string, string | undefined>;
@@ -86,6 +94,7 @@ export interface Environment {
   EVIDENCE_MAX_BYTES: number;
   EVIDENCE_TEMP_MAX_AGE_MINUTES: number;
   RECURRENCE_WARNING_DAYS: number;
+  KPI_TIME_ZONE: string;
 }
 
 function isPathInside(pathname: string, parentPath: string): boolean {
@@ -201,6 +210,7 @@ export function parseEnvironment(input: EnvironmentInput): Environment {
     EVIDENCE_MAX_BYTES: result.data.EVIDENCE_MAX_BYTES,
     EVIDENCE_TEMP_MAX_AGE_MINUTES: result.data.EVIDENCE_TEMP_MAX_AGE_MINUTES,
     RECURRENCE_WARNING_DAYS: result.data.RECURRENCE_WARNING_DAYS,
+    KPI_TIME_ZONE: result.data.KPI_TIME_ZONE,
   };
 }
 

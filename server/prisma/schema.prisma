@@ -786,35 +786,65 @@ model MetaTecnico {
 }
 
 model ResultadoKPI {
-  id                      String   @id @default(uuid()) @db.Uuid
-  tecnicoId               String   @map("tecnico_id") @db.Uuid
-  configuracionId         String   @map("configuracion_id") @db.Uuid
-  periodStart             DateTime @map("period_start") @db.Date
-  periodEnd               DateTime @map("period_end") @db.Date
-  completedJobs           Int      @map("completed_jobs")
-  appliedTarget           Int      @map("applied_target")
-  registeredMinutes       Int      @map("registered_minutes")
-  productiveMinutes       Int      @map("productive_minutes")
-  onTimeJobs              Int      @map("on_time_jobs")
-  attributableRecurrences Int      @map("attributable_recurrences")
-  productivityScore       Decimal  @map("productivity_score") @db.Decimal(5, 2)
-  complianceScore         Decimal  @map("compliance_score") @db.Decimal(5, 2)
-  efficiencyScore         Decimal  @map("efficiency_score") @db.Decimal(5, 2)
-  qualityScore            Decimal  @map("quality_score") @db.Decimal(5, 2)
-  overallScore            Decimal  @map("overall_score") @db.Decimal(5, 2)
-  productivityWeight      Decimal  @map("productivity_weight") @db.Decimal(5, 4)
-  complianceWeight        Decimal  @map("compliance_weight") @db.Decimal(5, 4)
-  efficiencyWeight        Decimal  @map("efficiency_weight") @db.Decimal(5, 4)
-  qualityWeight           Decimal  @map("quality_weight") @db.Decimal(5, 4)
-  calculationMetadata     Json?    @map("calculation_metadata") @db.JsonB
-  calculatedAt            DateTime @default(now()) @map("calculated_at") @db.Timestamptz(3)
+  id                            String   @id @default(uuid()) @db.Uuid
+  tecnicoId                     String   @map("tecnico_id") @db.Uuid
+  configuracionId               String   @map("configuracion_id") @db.Uuid
+  periodStart                   DateTime @map("period_start") @db.Date
+  periodEnd                     DateTime @map("period_end") @db.Date
+  completedCredits              Decimal  @map("completed_credits") @db.Decimal(12, 4)
+  appliedTarget                 Int      @map("applied_target")
+  registeredMinutes             Int      @map("registered_minutes")
+  productiveMinutes             Int      @map("productive_minutes")
+  eligibleCredits               Decimal  @map("eligible_credits") @db.Decimal(12, 4)
+  onTimeEligibleCredits         Decimal  @map("on_time_eligible_credits") @db.Decimal(12, 4)
+  attributableRecurrenceCredits Decimal  @map("attributable_recurrence_credits") @db.Decimal(12, 4)
+  productivityScore             Decimal  @map("productivity_score") @db.Decimal(5, 2)
+  complianceScore               Decimal? @map("compliance_score") @db.Decimal(5, 2)
+  efficiencyScore               Decimal  @map("efficiency_score") @db.Decimal(5, 2)
+  qualityScore                  Decimal? @map("quality_score") @db.Decimal(5, 2)
+  overallScore                  Decimal  @map("overall_score") @db.Decimal(5, 2)
+  productivityWeight            Decimal  @map("productivity_weight") @db.Decimal(5, 4)
+  complianceWeight              Decimal  @map("compliance_weight") @db.Decimal(5, 4)
+  efficiencyWeight              Decimal  @map("efficiency_weight") @db.Decimal(5, 4)
+  qualityWeight                 Decimal  @map("quality_weight") @db.Decimal(5, 4)
+  productivityEffectiveWeight   Decimal  @map("productivity_effective_weight") @db.Decimal(5, 4)
+  complianceEffectiveWeight     Decimal  @map("compliance_effective_weight") @db.Decimal(5, 4)
+  efficiencyEffectiveWeight     Decimal  @map("efficiency_effective_weight") @db.Decimal(5, 4)
+  qualityEffectiveWeight        Decimal  @map("quality_effective_weight") @db.Decimal(5, 4)
+  complianceApplicability       String   @default("APPLICABLE") @map("compliance_applicability") @db.VarChar(20)
+  qualityApplicability          String   @default("APPLICABLE") @map("quality_applicability") @db.VarChar(20)
+  revision                      Int      @default(1)
+  isCurrent                     Boolean  @default(true) @map("is_current")
+  calculationType               String   @default("OFFICIAL") @map("calculation_type") @db.VarChar(30)
+  calculationReason             String?  @map("calculation_reason") @db.VarChar(500)
+  calculatedById                String?  @map("calculated_by_id") @db.Uuid
+  previousResultId              String?  @map("previous_result_id") @db.Uuid
+  calculationMetadata           Json?    @map("calculation_metadata") @db.JsonB
+  calculatedAt                  DateTime @default(now()) @map("calculated_at") @db.Timestamptz(3)
 
   tecnico       Tecnico          @relation(fields: [tecnicoId], references: [id], onDelete: Restrict)
   configuracion ConfiguracionKPI @relation(fields: [configuracionId], references: [id], onDelete: Restrict)
 
-  @@unique([tecnicoId, periodStart, periodEnd, configuracionId])
+  @@unique([tecnicoId, periodStart, periodEnd, revision])
   @@index([periodStart, periodEnd])
   @@map("resultado_kpi")
+}
+
+model SolicitudRevisionKPI {
+  id                String    @id @default(uuid()) @db.Uuid
+  reincidenciaId    String    @map("reincidencia_id") @db.Uuid
+  recurrenceVersion Int       @map("recurrence_version")
+  originalOrderId   String    @map("original_order_id") @db.Uuid
+  status            String    @default("PENDING") @db.VarChar(20)
+  attempts          Int       @default(0)
+  lastErrorCode     String?   @map("last_error_code") @db.VarChar(80)
+  requestedById     String?   @map("requested_by_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  processedAt       DateTime? @map("processed_at") @db.Timestamptz(3)
+
+  @@unique([reincidenciaId, recurrenceVersion])
+  @@index([status, createdAt])
+  @@map("solicitud_revision_kpi")
 }
 
 model Auditoria {

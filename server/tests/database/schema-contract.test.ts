@@ -40,6 +40,7 @@ const requiredModels = [
   "ConfiguracionKPI",
   "MetaTecnico",
   "ResultadoKPI",
+  "SolicitudRevisionKPI",
   "Auditoria",
   "Notificacion",
 ] as const;
@@ -88,6 +89,21 @@ describe("Prisma schema contract", () => {
     );
     expect(Object.values(Prisma.ModelName)).toEqual(
       expect.arrayContaining(["SecuenciaReincidencia", "ReincidenciaNota"]),
+    );
+  });
+
+  it("exposes versioned decimal KPI result fields", () => {
+    expect(Object.values(Prisma.ResultadoKPIScalarFieldEnum)).toEqual(
+      expect.arrayContaining([
+        "completedCredits",
+        "eligibleCredits",
+        "onTimeEligibleCredits",
+        "attributableRecurrenceCredits",
+        "revision",
+        "isCurrent",
+        "calculationType",
+        "previousResultId",
+      ]),
     );
   });
 

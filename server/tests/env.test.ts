@@ -42,7 +42,14 @@ describe("parseEnvironment", () => {
       EVIDENCE_MAX_BYTES: 10_485_760,
       EVIDENCE_TEMP_MAX_AGE_MINUTES: 60,
       RECURRENCE_WARNING_DAYS: 30,
+      KPI_TIME_ZONE: "America/Tegucigalpa",
     });
+  });
+
+  it("defaults the KPI timezone and rejects unknown IANA zones", () => {
+    expect(parseEnvironment(base).KPI_TIME_ZONE).toBe("America/Tegucigalpa");
+    expect(() => parseEnvironment({ ...base, KPI_TIME_ZONE: "Mars/Olympus" }))
+      .toThrow("KPI_TIME_ZONE");
   });
 
   it("applies safe evidence storage defaults", () => {

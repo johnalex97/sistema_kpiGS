@@ -27,8 +27,13 @@ const permissionData = [
   { code: "RECURRENCES_VIEW_OWN", resource: "recurrences", action: "view_own" },
   { code: "RECURRENCES_REPORT_OWN", resource: "recurrences", action: "report_own" },
   { code: "RECURRENCES_REVIEW", resource: "recurrences", action: "review" },
-  { code: "KPIS_VIEW_OWN", resource: "kpis", action: "view_own" },
-  { code: "KPIS_VIEW_TEAM", resource: "kpis", action: "view_team" },
+  { code: "KPI_VIEW_OWN", resource: "kpis", action: "view_own" },
+  { code: "KPI_VIEW_ALL", resource: "kpis", action: "view_all" },
+  { code: "KPI_MANAGE_TARGETS", resource: "kpis", action: "manage_targets" },
+  { code: "KPI_MANAGE_CONFIGURATION", resource: "kpis", action: "manage_configuration" },
+  { code: "KPI_CLOSE_WEEK", resource: "kpis", action: "close_week" },
+  { code: "KPI_RECALCULATE", resource: "kpis", action: "recalculate" },
+  { code: "KPI_VIEW_AUDIT", resource: "kpis", action: "view_audit" },
   { code: "AUDIT_VIEW", resource: "audit", action: "view" },
 ] as const;
 
@@ -125,7 +130,12 @@ export async function seedCatalogs(
       "EVIDENCES_MANAGE",
       "RECURRENCES_VIEW_ALL",
       "RECURRENCES_REVIEW",
-      "KPIS_VIEW_TEAM",
+      "KPI_VIEW_ALL",
+      "KPI_MANAGE_TARGETS",
+      "KPI_MANAGE_CONFIGURATION",
+      "KPI_CLOSE_WEEK",
+      "KPI_RECALCULATE",
+      "KPI_VIEW_AUDIT",
     ],
     TECHNICIAN: [
       "CLIENTS_VIEW",
@@ -137,7 +147,7 @@ export async function seedCatalogs(
       "EVIDENCES_UPLOAD",
       "RECURRENCES_VIEW_OWN",
       "RECURRENCES_REPORT_OWN",
-      "KPIS_VIEW_OWN",
+      "KPI_VIEW_OWN",
     ],
   };
 

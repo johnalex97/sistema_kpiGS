@@ -231,19 +231,19 @@ export async function seedQuality(
   await database.configuracionKPI.upsert({
     where: { version: 1 },
     update: {
-      productivityWeight: "0.3000",
+      productivityWeight: "0.2000",
       complianceWeight: "0.2500",
-      efficiencyWeight: "0.2000",
-      qualityWeight: "0.2500",
+      efficiencyWeight: "0.2500",
+      qualityWeight: "0.3000",
       isActive: true,
     },
     create: {
       version: 1,
-      validFrom: new Date("2026-01-01T00:00:00.000Z"),
-      productivityWeight: "0.3000",
+      validFrom: new Date("2025-12-29T00:00:00.000Z"),
+      productivityWeight: "0.2000",
       complianceWeight: "0.2500",
-      efficiencyWeight: "0.2000",
-      qualityWeight: "0.2500",
+      efficiencyWeight: "0.2500",
+      qualityWeight: "0.3000",
       description: "Configuración KPI inicial de demostración",
       createdById: identity.adminUserId,
     },
@@ -258,22 +258,22 @@ export async function seedQuality(
       where: {
         tecnicoId_periodStart_periodEnd: {
           tecnicoId,
-          periodStart: new Date("2026-07-01T00:00:00.000Z"),
-          periodEnd: new Date("2026-07-31T00:00:00.000Z"),
+          periodStart: new Date("2026-07-27T00:00:00.000Z"),
+          periodEnd: new Date("2026-08-02T00:00:00.000Z"),
         },
       },
       update: {
-        targetJobs: 40,
-        targetProductiveMinutes: 7200,
+        targetJobs: 10,
+        targetProductiveMinutes: 1800,
       },
       create: {
         tecnicoId,
-        periodStart: new Date("2026-07-01T00:00:00.000Z"),
-        periodEnd: new Date("2026-07-31T00:00:00.000Z"),
-        targetJobs: 40,
-        targetProductiveMinutes: 7200,
+        periodStart: new Date("2026-07-27T00:00:00.000Z"),
+        periodEnd: new Date("2026-08-02T00:00:00.000Z"),
+        targetJobs: 10,
+        targetProductiveMinutes: 1800,
         createdById: identity.supervisorUserId,
-        observation: "Meta mensual ficticia",
+        observation: "Meta semanal ficticia",
       },
     });
   }

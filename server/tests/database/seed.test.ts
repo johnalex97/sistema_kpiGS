@@ -258,6 +258,36 @@ describe("database seed", () => {
     ]);
   });
 
+  it("seeds approved KPI weights, weekly goals, and role permissions", async () => {
+    await seedDatabase(database);
+    const configuration = await database.configuracionKPI.findUniqueOrThrow({ where: { version: 1 } });
+    expect([
+      configuration.productivityWeight.toFixed(4),
+      configuration.complianceWeight.toFixed(4),
+      configuration.efficiencyWeight.toFixed(4),
+      configuration.qualityWeight.toFixed(4),
+    ]).toEqual(["0.2000", "0.2500", "0.2500", "0.3000"]);
+    const goals = await database.metaTecnico.findMany();
+    expect(goals.length).toBeGreaterThan(0);
+    expect(goals.every((goal) =>
+      (goal.periodEnd.getTime() - goal.periodStart.getTime()) / 86_400_000 === 6,
+    )).toBe(true);
+    const supervisor = await database.rol.findUniqueOrThrow({
+      where: { code: "SUPERVISOR" },
+      include: { permissions: { include: { permiso: true } } },
+    });
+    expect(supervisor.permissions.map(({ permiso }) => permiso.code)).toEqual(
+      expect.arrayContaining([
+        "KPI_VIEW_ALL",
+        "KPI_MANAGE_TARGETS",
+        "KPI_MANAGE_CONFIGURATION",
+        "KPI_CLOSE_WEEK",
+        "KPI_RECALCULATE",
+        "KPI_VIEW_AUDIT",
+      ]),
+    );
+  });
+
   it("raises the seeded annual recurrence sequence without regressing it", async () => {
     await database.secuenciaReincidencia.deleteMany({ where: { year: 2026 } });
 
