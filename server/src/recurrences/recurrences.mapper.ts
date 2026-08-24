@@ -57,7 +57,7 @@ export function mapRecurrenceSummary(record: RecurrenceSummaryRecord): PublicRec
 
 export function mapRecurrenceDetail(
   record: RecurrenceDetailRecord,
-  evidenceVisibility: "ALL" | "TECHNICIAN" = "ALL",
+  evidenceVisibility: "ALL" | "TECHNICIAN" = "TECHNICIAN",
 ): PublicRecurrenceDetail {
   const qualitySnapshots = record.tecnicos.filter((technician) => technician.affectsQuality);
   if (record.responsibility !== "TECHNICAL_WORK" && qualitySnapshots.length > 0) {

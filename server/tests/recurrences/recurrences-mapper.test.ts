@@ -30,6 +30,26 @@ function summaryRecord(): RecurrenceSummaryRecord {
 }
 
 describe("recurrence public mappers", () => {
+  it("fails closed to technician evidence visibility when policy is omitted", () => {
+    const record = {
+      ...summaryRecord(),
+      analysis: "Análisis técnico",
+      correctiveAction: "Reparar",
+      preventiveAction: "Verificar montaje",
+      observations: null,
+      ageOverrideReason: null,
+      dismissalReason: null,
+      closedAt: null,
+      dismissedAt: null,
+      ordenes: [],
+      notas: [],
+      tecnicos: [{ participation: "ORIGINAL_RESPONSIBLE", affectsQuality: true, justification: "Trabajo técnico deficiente", tecnico: { id: "tech-1", code: "TEC-001", fullName: "Ana" } }],
+      evidencias: [{ id: "evidence-1", originalName: "internal.pdf", mimeType: "application/pdf", sizeBytes: 42n, accessLevel: "INTERNAL", createdAt: new Date("2026-08-02T12:00:00.000Z") }],
+    } as RecurrenceDetailRecord;
+
+    expect(mapRecurrenceDetail(record).evidences).toEqual([]);
+  });
+
   it("serializes decimal, BigInt, and dates through explicit public fields", () => {
     const record = {
       ...summaryRecord(),
@@ -49,7 +69,7 @@ describe("recurrence public mappers", () => {
     } as RecurrenceDetailRecord;
 
     const summary = mapRecurrenceSummary(summaryRecord());
-    const detail = mapRecurrenceDetail(record);
+    const detail = mapRecurrenceDetail(record, "ALL");
 
     expect(summary).toMatchObject({ estimatedCost: "123.45", detectedAt: "2026-08-01T12:00:00.000Z" });
     expect(detail.visits[0]).toMatchObject({ order: { id: "order-2", orderNumber: "OT-002" }, additionalMinutes: 65 });
