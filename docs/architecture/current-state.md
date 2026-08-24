@@ -124,7 +124,7 @@ Backend, ejecutado desde `server/`:
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 8 pruebas de reconciliación pura |
 | `npm run evidences:verify` | Correcto con una raíz preaprovisionada: `Matched 0`, `Orphan files 0`, `Missing files 0`; una raíz explícita ausente terminó con código `1`, mensaje operacional redactado y sin crearla |
-| Reincidencias unitarias | Correcto; 62 pruebas en 5 archivos |
+| Reincidencias unitarias | Correcto; 63 pruebas en 5 archivos |
 | Reincidencias PostgreSQL y HTTP | Correcto; 90 pruebas en 5 archivos |
 | Regresión HTTP de evidencias | Correcto; 8 pruebas |
 | Seguridad, errores y servidor | Correcto; 12 pruebas |
@@ -132,8 +132,8 @@ Backend, ejecutado desde `server/`:
 | PostgreSQL | Las suites anteriores ejecutan contra `schema=test`; se conserva la advertencia deprecada conocida de `pg` sobre `client.query()` concurrente, sin fallo |
 | `npm run build` | Correcto |
 | `npm run db:format`, `db:validate`, `db:generate` | Correctos; schema válido y cliente regenerado |
-| Seed | El seed sin cuenta administrativa se ejecutó dos veces en `public` y dos en `test`, con conteos idénticos: 3 roles, 20 permisos, 41 asignaciones rol-permiso, 3 técnicos, 2 clientes, 3 órdenes, 2 actividades y 2 reincidencias |
-| `npm run db:verify` | 32 tablas de dominio, 37 checks, 21 índices y 2 secuencias verificados |
+| Seed | El seed sin cuenta administrativa se ejecutó dos veces en `public` y dos en `test`, con conteos idénticos: 3 roles, 23 permisos, 47 asignaciones rol-permiso, 3 técnicos, 2 clientes, 3 órdenes, 2 actividades y 2 reincidencias |
+| `npm run db:verify` | 34 tablas de dominio, 46 checks, 27 índices y 2 secuencias verificados |
 | `npx prisma migrate status` | Correcto; diez migraciones aplicadas en `public` y `test` |
 | Smoke compilado de evidencias | Carga 201; descarga 200; archivado 200; exceso 413; contenido disfrazado 422; técnico ajeno 404; archivo físico ausente 503; sin exponer claves ni raíces privadas |
 | Smoke compilado de actividades | Health 200; catálogo 200; pendiente 201; iniciar/pausar/reanudar/completar 200; manual 201; solapamiento 409; participante 403; ajuste y detalle 200; versiones `1→2→3→4→5` |
@@ -163,7 +163,7 @@ Backend, ejecutado desde `server/`:
 
 El backend vive en `server/` y utiliza Node.js, TypeScript, Express, Prisma y
 PostgreSQL 18. La API REST está versionada bajo `/api/v1`. La base
-`"Sistema_kpiGS"` tiene 32 tablas de dominio, diez migraciones, seed idempotente
+`"Sistema_kpiGS"` tiene 34 tablas de dominio, diez migraciones, seed idempotente
 y un esquema `test` aislado.
 
 El módulo `clients` sigue la cadena completa route → middleware → controller →
