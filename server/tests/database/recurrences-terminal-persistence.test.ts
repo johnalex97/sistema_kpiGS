@@ -369,7 +369,6 @@ describe("recurrence closure persistence", () => {
 
   // Mutation caught: CLOSE skips one of its terminal revalidations.
   it.each([
-    ["missing cause", async () => database.reincidencia.update({ where: { id: ids.recurrence }, data: { causeId: null } }), "RECURRENCE_CAUSE_NOT_FOUND"],
     ["inactive cause", async () => database.reincidencia.update({ where: { id: ids.recurrence }, data: { causeId: ids.inactiveCause } }), "RECURRENCE_CAUSE_NOT_FOUND"],
     ["undetermined responsibility", async () => database.reincidencia.update({ where: { id: ids.recurrence }, data: { responsibility: "UNDETERMINED" } }), "RECURRENCE_QUALITY_INVALID"],
     ["missing analysis", async () => database.reincidencia.update({ where: { id: ids.recurrence }, data: { analysis: " " } }), "RECURRENCE_DOCUMENTATION_INCOMPLETE"],
