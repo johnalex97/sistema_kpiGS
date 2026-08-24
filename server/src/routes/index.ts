@@ -13,6 +13,7 @@ import { createEvidencesRouter } from "../evidences/evidences.routes.js";
 import type { EvidenceStorage } from "../evidences/evidences.storage.js";
 import { createRecurrencesRouter } from "../recurrences/recurrences.routes.js";
 import { createHealthRouter } from "./health.routes.js";
+import { createKpiCloseRepository } from "../kpis/kpis.close.repository.js";
 
 export function createApiRouter(
   env: Environment,
@@ -21,6 +22,7 @@ export function createApiRouter(
   logger: Logger,
 ) {
   const router = Router();
+  const kpiCloseRepository = createKpiCloseRepository(database, env.KPI_TIME_ZONE);
   const authService = createAuthService({
     repository: createAuthRepository(database),
     now: () => new Date(),
@@ -40,7 +42,12 @@ export function createApiRouter(
   );
   router.use("/orders", createOrdersRouter(env, database, authService));
   router.use(createActivitiesRouter(env, database, authService));
-  router.use("/recurrences", createRecurrencesRouter(env, database, authService));
+  router.use("/recurrences", createRecurrencesRouter(
+    env,
+    database,
+    authService,
+    (limit, now) => kpiCloseRepository.processRevisionRequests(limit, now),
+  ));
   router.use(createEvidencesRouter(env, database, authService, evidenceStorage, logger));
   return router;
 }

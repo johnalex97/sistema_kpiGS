@@ -112,6 +112,34 @@ interface QualitySnapshot {
   justification: string | null;
 }
 
+async function enqueueKpiRevision(
+  transaction: Prisma.TransactionClient,
+  input: {
+    recurrenceId: string;
+    recurrenceVersion: number;
+    originalOrderId: string;
+    requestedById: string;
+    enabled: boolean;
+  },
+): Promise<string | null> {
+  if (!input.enabled) return null;
+  const request = await transaction.solicitudRevisionKPI.upsert({
+    where: { reincidenciaId_recurrenceVersion: {
+      reincidenciaId: input.recurrenceId,
+      recurrenceVersion: input.recurrenceVersion,
+    } },
+    update: {},
+    create: {
+      reincidenciaId: input.recurrenceId,
+      recurrenceVersion: input.recurrenceVersion,
+      originalOrderId: input.originalOrderId,
+      requestedById: input.requestedById,
+    },
+    select: { id: true },
+  });
+  return request.id;
+}
+
 const mutableStatuses = ["OPEN", "ANALYSIS", "CORRECTION"] as const;
 const maximumRelationAttempts = 3;
 
@@ -590,6 +618,14 @@ async function analyzeInTransaction(
     },
   });
   if (updated.count !== 1) reject("VERSION_CONFLICT");
+  await enqueueKpiRevision(transaction, {
+    recurrenceId,
+    recurrenceVersion: input.version + 1,
+    originalOrderId: record.originalOrderId,
+    requestedById: actorUser.id,
+    enabled: record.responsibility === "TECHNICAL_WORK"
+      && originals.some(({ affectsQuality }) => affectsQuality),
+  });
 
   const afterRecord = {
     ...record,
@@ -660,6 +696,7 @@ async function correctInTransaction(
   if (!userIsActive(actorUser)) reject("RECURRENCE_NOT_FOUND");
   const record = await transaction.reincidencia.findUnique({ where: { id: recurrenceId }, select: {
     status: true,
+    originalOrderId: true,
     version: true,
     correctiveAction: true,
     preventiveAction: true,
@@ -902,6 +939,7 @@ async function dismissInTransaction(
   const record = await transaction.reincidencia.findUnique({
     where: { id: recurrenceId },
     select: {
+      originalOrderId: true,
       status: true,
       version: true,
       dismissalReason: true,
@@ -1150,6 +1188,7 @@ async function adjustInTransaction(
   const locked = await lockRecurrence(transaction, recurrenceId);
   if (locked === null) reject("RECURRENCE_NOT_FOUND");
   const record = await transaction.reincidencia.findUnique({ where: { id: recurrenceId }, select: {
+    originalOrderId: true,
     status: true,
     version: true,
     causeId: true,
@@ -1243,6 +1282,19 @@ async function adjustInTransaction(
       affectsQuality: decision.affectsQuality,
       justification: decision.affectsQuality ? normalizedOptional(decision.justification) : null,
     };
+  });
+  const qualityChanged = nextResponsibility !== record.responsibility
+    || afterDecisions.some((decision) => {
+      const before = originals.find(({ technicianId }) => technicianId === decision.technicianId);
+      return before?.affectsQuality !== decision.affectsQuality;
+    });
+  await enqueueKpiRevision(transaction, {
+    recurrenceId,
+    recurrenceVersion: input.version + 1,
+    originalOrderId: record.originalOrderId,
+    requestedById: actorUser.id,
+    enabled: qualityChanged && nextResponsibility === "TECHNICAL_WORK"
+      && afterDecisions.some(({ affectsQuality }) => affectsQuality),
   });
   await transaction.auditoria.create({ data: {
     userId: actorUser.id,

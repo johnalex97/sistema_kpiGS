@@ -18,6 +18,7 @@ export function createRecurrencesRouter(
   env: Environment,
   database: PrismaClient,
   authService: AuthService,
+  processRevisionRequests: (limit: number, now: Date) => Promise<unknown> = async () => undefined,
 ) {
   const router = Router();
   const authentication = createAuthenticationMiddleware(authService);
@@ -30,6 +31,7 @@ export function createRecurrencesRouter(
       },
       () => new Date(),
       env.RECURRENCE_WARNING_DAYS,
+      processRevisionRequests,
     ),
   );
   const readSecurity = [

@@ -237,6 +237,18 @@ describe("RecurrenceService read permission matrix", () => {
   });
 });
 
+describe("RecurrenceService KPI revision processing", () => {
+  it("processes durable revision requests after a successful close without failing the recurrence", async () => {
+    const repository = repositoryWith();
+    const processRevisionRequests = vi.fn(async () => { throw new Error("temporary KPI failure"); });
+    const recurrenceService = createRecurrenceService(repository, () => fixedNow, 30, processRevisionRequests);
+
+    await expect(recurrenceService.close(recurrenceId, closeInput, actor(["RECURRENCES_REVIEW"])))
+      .resolves.toMatchObject({ id: recurrenceId });
+    expect(processRevisionRequests).toHaveBeenCalledWith(10, fixedNow);
+  });
+});
+
 describe("RecurrenceService write permission matrix", () => {
   const managementOperations = [
     ["analyze", (service: ReturnType<typeof createRecurrenceService>, currentActor: RecurrenceActorContext) => service.analyze(recurrenceId, analyzeInput, currentActor)],

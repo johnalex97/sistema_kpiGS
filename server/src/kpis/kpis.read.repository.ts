@@ -1,10 +1,10 @@
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
 import { ApiError } from "../utils/api-error.js";
 import type { KpiFactsRepository } from "./kpis.repository.types.js";
 
 const dateOnly = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
-export function createKpiReadRepository(database: PrismaClient): KpiFactsRepository {
+export function createKpiReadRepository(database: PrismaClient | Prisma.TransactionClient): KpiFactsRepository {
   return {
     async loadWeeklySources(week, scope) {
       const periodStart = dateOnly(week.periodStart);

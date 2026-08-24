@@ -146,12 +146,23 @@ export function createRecurrenceService(
   repository: RecurrencesRepository,
   now: () => Date,
   warningDays: number,
+  processRevisionRequests: (limit: number, now: Date) => Promise<unknown> = async () => undefined,
 ): RecurrenceService {
   async function mutate(
     actor: RecurrenceActorContext,
     operation: (timestamp: Date) => Promise<RecurrenceMutationResult>,
   ): Promise<PublicRecurrenceDetail> {
     return publicOperation(async () => mapMutationResult(await operation(now()), actor));
+  }
+
+  async function mutateAndProcess(
+    actor: RecurrenceActorContext,
+    operation: (timestamp: Date) => Promise<RecurrenceMutationResult>,
+  ): Promise<PublicRecurrenceDetail> {
+    const timestamp = now();
+    const result = await publicOperation(async () => mapMutationResult(await operation(timestamp), actor));
+    try { await processRevisionRequests(10, timestamp); } catch { /* durable request is retried later */ }
+    return result;
   }
 
   return {
@@ -215,12 +226,12 @@ export function createRecurrenceService(
 
     async close(id, input, actor) {
       requireReview(actor);
-      return mutate(actor, (timestamp) => repository.closeRecurrence(id, input, actor, timestamp));
+      return mutateAndProcess(actor, (timestamp) => repository.closeRecurrence(id, input, actor, timestamp));
     },
 
     async adjust(id, input, actor) {
       requireReview(actor);
-      return mutate(actor, (timestamp) => repository.adjustClosedRecurrence(id, input, actor, timestamp));
+      return mutateAndProcess(actor, (timestamp) => repository.adjustClosedRecurrence(id, input, actor, timestamp));
     },
   };
 }

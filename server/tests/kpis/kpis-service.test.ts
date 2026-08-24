@@ -63,4 +63,16 @@ describe("KPI preview service", () => {
       userId: "tech", technicianId: "a", permissions: ["KPI_VIEW_OWN"], requestId: "request",
     })).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
   });
+
+  it("requires the close permission and delegates an official weekly close", async () => {
+    const closeWeek = vi.fn(async () => ({ kind: "CLOSED" as const, results: [], warnings: [] }));
+    const service = createKpiService({ loadWeeklySources: vi.fn(async () => rows), closeWeek }, "America/Tegucigalpa");
+    const actor = { userId: "admin", technicianId: null, permissions: ["KPI_CLOSE_WEEK"], requestId: "request" };
+    await service.closeWeek("2026-08-24", actor);
+    expect(closeWeek).toHaveBeenCalledWith(expect.objectContaining({
+      week: expect.objectContaining({ periodStart: "2026-08-24" }), actor,
+    }));
+    await expect(service.closeWeek("2026-08-24", { ...actor, permissions: [] }))
+      .rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+  });
 });
