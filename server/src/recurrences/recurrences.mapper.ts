@@ -60,10 +60,13 @@ export function mapRecurrenceDetail(
   evidenceVisibility: "ALL" | "TECHNICIAN" = "TECHNICIAN",
 ): PublicRecurrenceDetail {
   const qualitySnapshots = record.tecnicos.filter((technician) => technician.affectsQuality);
-  if (record.responsibility !== "TECHNICAL_WORK" && qualitySnapshots.length > 0) {
+  if (record.status === "DISMISSED" && qualitySnapshots.length > 0) {
+    throw new Error("Una reincidencia descartada no puede afectar calidad");
+  }
+  if (record.status !== "DISMISSED" && record.responsibility !== "TECHNICAL_WORK" && qualitySnapshots.length > 0) {
     throw new Error("La responsabilidad no técnica no puede afectar calidad");
   }
-  if (record.responsibility === "TECHNICAL_WORK" && qualitySnapshots.length === 0) {
+  if (record.status !== "DISMISSED" && record.responsibility === "TECHNICAL_WORK" && qualitySnapshots.length === 0) {
     throw new Error("El trabajo técnico exige una afectación de calidad justificada");
   }
   return {

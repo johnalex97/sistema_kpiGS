@@ -322,6 +322,7 @@ describe("RecurrenceService public failure policy", () => {
     ["INVALID_RECURRENCE_TRANSITION", 409, "INVALID_RECURRENCE_TRANSITION", "La transición de estado no es válida"],
     ["RECURRENCE_ORDER_MISMATCH", 409, "RECURRENCE_ORDER_MISMATCH", "Las órdenes no pertenecen al mismo cliente y sucursal"],
     ["RECURRENCE_DUPLICATE", 409, "RECURRENCE_DUPLICATE", "La reincidencia o visita ya existe"],
+    ["RECURRENCE_NUMBER_EXHAUSTED", 409, "RECURRENCE_NUMBER_EXHAUSTED", "La numeraciÃ³n anual de reincidencias estÃ¡ agotada"],
     ["RECURRENCE_VISIT_DUPLICATE", 409, "RECURRENCE_DUPLICATE", "La reincidencia o visita ya existe"],
     ["RECURRENCE_QUALITY_INVALID", 422, "RECURRENCE_DOCUMENTATION_INCOMPLETE", "La documentación de la reincidencia está incompleta"],
     ["RECURRENCE_DOCUMENTATION_INCOMPLETE", 422, "RECURRENCE_DOCUMENTATION_INCOMPLETE", "La documentación de la reincidencia está incompleta"],

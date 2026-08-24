@@ -112,6 +112,16 @@ describe("recurrence request schemas", () => {
     })).toMatchObject({ observations: "Observación corregida" });
   });
 
+  // Mutation caught: treating the analysis-only age override as an adjustment
+  // turns an otherwise empty patch into an audited version increment.
+  it("rejects ageOverrideReason from the closed-case adjustment allowlist", () => {
+    expect(() => adjustRecurrenceSchema.parse({
+      version: 1,
+      reason: "A sufficiently documented adjustment reason",
+      ageOverrideReason: "This explanation belongs to analysis only.",
+    })).toThrow();
+  });
+
   it("accepts UUID client and branch list filters and rejects malformed identifiers", () => {
     expect(recurrenceListQuerySchema.parse({ clientId, branchId })).toMatchObject({
       clientId,

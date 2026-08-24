@@ -58,7 +58,7 @@ export interface CloseRecurrenceInput { version: number; }
 export type AdjustRecurrenceInput = {
   version: number;
   reason: string;
-} & Partial<Omit<AnalyzeRecurrenceInput, "version">>
+} & Partial<Omit<AnalyzeRecurrenceInput, "version" | "ageOverrideReason">>
   & Partial<Omit<CorrectRecurrenceInput, "version">>;
 
 export interface RecurrenceListFilters {

@@ -37,10 +37,12 @@ const ids = {
   branch: "84000000-0000-4000-8000-000000000022",
   otherBranch: "84000000-0000-4000-8000-000000000023",
   serviceType: "84000000-0000-4000-8000-000000000024",
+  cause: "84000000-0000-4000-8000-000000000025",
   originalOrder: "84000000-0000-4000-8000-00000000003a",
   correctionOrder: "84000000-0000-4000-8000-00000000003b",
   secondOriginalOrder: "84000000-0000-4000-8000-00000000003c",
   secondCorrectionOrder: "84000000-0000-4000-8000-00000000003d",
+  absentOrder: "84000000-0000-4000-8000-00000000003e",
 } as const;
 
 const actor: RecurrenceActorContext = {
@@ -88,6 +90,7 @@ async function cleanupFixtureData(): Promise<void> {
     },
   });
   await database.tipoServicio.deleteMany({ where: { id: ids.serviceType } });
+  await database.causaReincidencia.deleteMany({ where: { id: ids.cause } });
   await database.sucursalCliente.deleteMany({ where: { id: { in: [ids.branch, ids.otherBranch] } } });
   await database.cliente.deleteMany({ where: { id: ids.client } });
   await database.usuario.deleteMany({ where: { id: { in: [ids.reporterUser, ids.reviewerUser] } } });
@@ -121,6 +124,9 @@ async function createFixture(): Promise<void> {
   await database.tipoServicio.create({
     data: { id: ids.serviceType, code: "RPT-SERVICE", name: "Report service" },
   });
+  await database.causaReincidencia.create({
+    data: { id: ids.cause, code: "RPT-CAUSE", name: "Report fixture cause" },
+  });
   await database.ordenTrabajo.createMany({
     data: [
       { id: ids.originalOrder, orderNumber: "OT-RPT-0001", sucursalId: ids.branch, tipoServicioId: ids.serviceType, status: "COMPLETED", endedAt: new Date("2026-08-10T12:00:00.000Z"), reportedProblem: "Original problem" },
@@ -135,12 +141,29 @@ async function createFixture(): Promise<void> {
       { ordenId: ids.originalOrder, tecnicoId: ids.principalTechnician, role: "SUPPORT", assignedAt: new Date("2026-07-01T08:00:00.000Z"), unassignedAt: new Date("2026-07-02T08:00:00.000Z") },
       { ordenId: ids.originalOrder, tecnicoId: ids.originalParticipant, role: "SUPPORT", assignedAt: new Date("2026-08-02T08:00:00.000Z"), unassignedAt: new Date("2026-08-03T08:00:00.000Z") },
       { ordenId: ids.originalOrder, tecnicoId: ids.originalParticipant, role: "SUPPORT", assignedAt: new Date("2026-08-04T08:00:00.000Z"), unassignedAt: new Date("2026-08-05T08:00:00.000Z") },
+      { ordenId: ids.originalOrder, tecnicoId: ids.reporterTechnician, role: "SUPPORT", assignedAt: new Date("2026-08-06T08:00:00.000Z"), unassignedAt: new Date("2026-08-07T08:00:00.000Z") },
       { ordenId: ids.correctionOrder, tecnicoId: ids.reporterTechnician, role: "SUPPORT", assignedAt: new Date("2026-08-13T08:00:00.000Z"), unassignedAt: new Date("2026-08-14T08:00:00.000Z") },
       { ordenId: ids.correctionOrder, tecnicoId: ids.correctionParticipant, role: "PRIMARY", assignedAt: new Date("2026-08-13T08:00:00.000Z") },
       { ordenId: ids.correctionOrder, tecnicoId: ids.originalParticipant, role: "SUPPORT", assignedAt: new Date("2026-09-01T08:00:00.000Z") },
       { ordenId: ids.secondOriginalOrder, tecnicoId: ids.principalTechnician, role: "PRIMARY", assignedAt: new Date("2026-08-01T08:00:00.000Z") },
+      { ordenId: ids.secondOriginalOrder, tecnicoId: ids.reporterTechnician, role: "SUPPORT", assignedAt: new Date("2026-08-02T08:00:00.000Z") },
       { ordenId: ids.secondCorrectionOrder, tecnicoId: ids.reporterTechnician, role: "PRIMARY", assignedAt: new Date("2026-08-13T08:00:00.000Z") },
     ],
+  });
+}
+
+async function createBlockingPair(): Promise<void> {
+  await database.reincidencia.create({
+    data: {
+      recurrenceNumber: "RI-2038-0001",
+      originalOrderId: ids.originalOrder,
+      reportedById: ids.reviewerUser,
+      status: "OPEN",
+      detectedProblem: "Existing open report used to test concealment",
+      ordenes: {
+        create: { ordenId: ids.correctionOrder, visitNumber: 1 },
+      },
+    },
   });
 }
 
@@ -352,11 +375,12 @@ describe("recurrence atomic report persistence", () => {
     ]);
     expect(result.recurrence.tecnicos).toEqual([
       expect.objectContaining({ participation: "CORRECTION_PARTICIPANT", tecnico: expect.objectContaining({ id: ids.reporterTechnician }) }),
+      expect.objectContaining({ participation: "ORIGINAL_PARTICIPANT", tecnico: expect.objectContaining({ id: ids.reporterTechnician }) }),
       expect.objectContaining({ participation: "ORIGINAL_RESPONSIBLE", tecnico: expect.objectContaining({ id: ids.principalTechnician }) }),
       expect.objectContaining({ participation: "ORIGINAL_PARTICIPANT", tecnico: expect.objectContaining({ id: ids.originalParticipant }) }),
       expect.objectContaining({ participation: "CORRECTION_PARTICIPANT", tecnico: expect.objectContaining({ id: ids.correctionParticipant }) }),
     ]);
-    expect(result.recurrence.tecnicos).toHaveLength(4);
+    expect(result.recurrence.tecnicos).toHaveLength(5);
 
     const audit = await database.auditoria.findFirstOrThrow({
       where: { entity: "Reincidencia", entityId: result.recurrence.id, action: "RECURRENCE_REPORTED" },
@@ -377,12 +401,33 @@ describe("recurrence atomic report persistence", () => {
         visitNumber: 1,
         team: [
           { technicianId: ids.reporterTechnician, participation: "CORRECTION_PARTICIPANT" },
+          { technicianId: ids.reporterTechnician, participation: "ORIGINAL_PARTICIPANT" },
           { technicianId: ids.principalTechnician, participation: "ORIGINAL_RESPONSIBLE" },
           { technicianId: ids.originalParticipant, participation: "ORIGINAL_PARTICIPANT" },
           { technicianId: ids.correctionParticipant, participation: "CORRECTION_PARTICIPANT" },
         ],
       },
     });
+  });
+
+  // Mutation caught: allowing the counter to reach 10000 produces a malformed
+  // RI-AAAA-NNNN value and leaks a database check failure as a generic 500.
+  it("returns a typed exhaustion result without consuming annual number 10000", async () => {
+    await database.secuenciaReincidencia.create({ data: { year: 2026, lastNumber: 9_999 } });
+    const before = {
+      recurrences: await database.reincidencia.count({ where: { originalOrderId: ids.originalOrder } }),
+      audits: await database.auditoria.count({ where: { action: "RECURRENCE_REPORTED" } }),
+    };
+
+    const result = await createRecurrencesReportRepository(database).reportRecurrence(input(), actor, now);
+
+    expect(result).toEqual({ kind: "RECURRENCE_NUMBER_EXHAUSTED" });
+    await expect(database.secuenciaReincidencia.findUnique({ where: { year: 2026 } }))
+      .resolves.toMatchObject({ lastNumber: 9_999 });
+    await expect(database.reincidencia.count({ where: { originalOrderId: ids.originalOrder } }))
+      .resolves.toBe(before.recurrences);
+    await expect(database.auditoria.count({ where: { action: "RECURRENCE_REPORTED" } }))
+      .resolves.toBe(before.audits);
   });
 
   // Mutation caught: returning physical raw enum labels breaks downstream state-machine comparisons.
@@ -392,6 +437,7 @@ describe("recurrence atomic report persistence", () => {
         recurrenceNumber: "RI-2040-0001",
         originalOrderId: ids.originalOrder,
         reportedById: ids.reporterUser,
+        causeId: ids.cause,
         status: "ANALYSIS",
         detectedProblem: "Lock helper fixture",
       },
@@ -425,10 +471,6 @@ describe("recurrence atomic report persistence", () => {
       await database.ordenTrabajo.update({ where: { id: ids.correctionOrder }, data: { status: "CANCELLED" } });
       return input();
     }],
-    ["a soft-deleted correction", async () => {
-      await database.ordenTrabajo.update({ where: { id: ids.correctionOrder }, data: { deletedAt: now } });
-      return input();
-    }],
     ["orders from different exact branches", async () => {
       await database.ordenTrabajo.update({ where: { id: ids.correctionOrder }, data: { sucursalId: ids.otherBranch } });
       return input();
@@ -446,6 +488,50 @@ describe("recurrence atomic report persistence", () => {
     expect(await database.secuenciaReincidencia.findUnique({ where: { year: 2026 } })).toBeNull();
   });
 
+  // Mutation caught: duplicate/mismatch checks before visibility reveal hidden,
+  // deleted, or unowned orders and may consume report-side writes.
+  it.each([
+    ["an absent order", async () => input(ids.originalOrder, ids.absentOrder)],
+    ["a soft-deleted order with an open duplicate", async () => {
+      await createBlockingPair();
+      await database.ordenTrabajo.update({
+        where: { id: ids.correctionOrder },
+        data: { deletedAt: now },
+      });
+      return input();
+    }],
+    ["an original order outside the technician scope", async () => {
+      await database.ordenTecnico.deleteMany({
+        where: { ordenId: ids.originalOrder, tecnicoId: ids.reporterTechnician },
+      });
+      return input();
+    }],
+    ["a correction order outside the technician scope with an open duplicate", async () => {
+      await createBlockingPair();
+      await database.ordenTecnico.deleteMany({
+        where: { ordenId: ids.correctionOrder, tecnicoId: ids.reporterTechnician },
+      });
+      return input();
+    }],
+  ] as const)("conceals %s before duplicate or mismatch evaluation", async (_label, arrange) => {
+    const reportInput = await arrange();
+    const before = {
+      recurrences: await database.reincidencia.count({ where: { originalOrderId: ids.originalOrder } }),
+      audits: await database.auditoria.count({ where: { action: "RECURRENCE_REPORTED" } }),
+      sequence: await database.secuenciaReincidencia.findUnique({ where: { year: 2026 } }),
+    };
+
+    const result = await createRecurrencesReportRepository(database).reportRecurrence(reportInput, actor, now);
+
+    expect(result).toEqual({ kind: "RECURRENCE_ORDER_NOT_FOUND" });
+    await expect(database.reincidencia.count({ where: { originalOrderId: ids.originalOrder } }))
+      .resolves.toBe(before.recurrences);
+    await expect(database.auditoria.count({ where: { action: "RECURRENCE_REPORTED" } }))
+      .resolves.toBe(before.audits);
+    await expect(database.secuenciaReincidencia.findUnique({ where: { year: 2026 } }))
+      .resolves.toEqual(before.sequence);
+  });
+
   // Mutation caught: checking only current correction assignments rejects valid historical participation or leaks authorization details.
   it("requires correction participation unless RECURRENCES_REVIEW safely bypasses it", async () => {
     const unauthorized = await createRecurrencesReportRepository(database).reportRecurrence(
@@ -453,7 +539,7 @@ describe("recurrence atomic report persistence", () => {
       { ...actor, technicianId: ids.originalParticipant },
       now,
     );
-    expect(unauthorized).toEqual({ kind: "RECURRENCE_ORDER_MISMATCH" });
+    expect(unauthorized).toEqual({ kind: "RECURRENCE_ORDER_NOT_FOUND" });
     expect(await database.secuenciaReincidencia.findUnique({ where: { year: 2026 } })).toBeNull();
 
     const reviewed = await createRecurrencesReportRepository(database).reportRecurrence(
@@ -476,7 +562,7 @@ describe("recurrence atomic report persistence", () => {
           status,
           detectedProblem: `${status} history`,
           detectedAt: new Date("2030-01-01T00:00:00.000Z"),
-          ...(status === "CLOSED" ? { closedAt: new Date("2030-01-02T00:00:00.000Z"), closedById: ids.reviewerUser } : { dismissedAt: new Date("2030-01-02T00:00:00.000Z"), dismissedById: ids.reviewerUser, dismissalReason: "Not a recurrence" }),
+          ...(status === "CLOSED" ? { causeId: ids.cause, closedAt: new Date("2030-01-02T00:00:00.000Z"), closedById: ids.reviewerUser } : { dismissedAt: new Date("2030-01-02T00:00:00.000Z"), dismissedById: ids.reviewerUser, dismissalReason: "Not a recurrence" }),
         },
       });
       await database.reincidenciaOrden.create({ data: { reincidenciaId: recurrence.id, ordenId: ids.correctionOrder, visitNumber: 1 } });

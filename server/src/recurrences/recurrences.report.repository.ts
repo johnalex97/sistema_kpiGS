@@ -71,6 +71,7 @@ async function allocateAnnualNumber(
   `;
   const lastNumber = rows[0]?.lastNumber;
   if (lastNumber === undefined) throw new Error("Annual recurrence number was not allocated");
+  if (lastNumber > 9_999) reject("RECURRENCE_NUMBER_EXHAUSTED");
   return `RI-${year}-${String(lastNumber).padStart(4, "0")}`;
 }
 
@@ -100,6 +101,25 @@ async function pairHasBlockingRecurrence(
     select: { id: true },
   });
   return duplicate !== null;
+}
+
+async function technicianCanSeeOrderPair(
+  transaction: Prisma.TransactionClient,
+  technicianId: string,
+  originalOrderId: string,
+  correctionOrderId: string,
+  detectedAt: Date,
+): Promise<boolean> {
+  const assignments = await transaction.ordenTecnico.findMany({
+    where: {
+      tecnicoId: technicianId,
+      ordenId: { in: [originalOrderId, correctionOrderId] },
+      assignedAt: { lte: detectedAt },
+    },
+    select: { ordenId: true },
+    distinct: ["ordenId"],
+  });
+  return new Set(assignments.map(({ ordenId }) => ordenId)).size === 2;
 }
 
 interface SnapshotMember {
@@ -182,10 +202,6 @@ async function reportRecurrenceInTransaction(
   await options.hooks?.beforePairLock?.(hookContext);
   await lockOrderPair(transaction, canonicalInput.originalOrderId, canonicalInput.correctionOrderId);
   await options.hooks?.afterPairLock?.(hookContext);
-  await options.hooks?.beforeDuplicateLookup?.(hookContext);
-  const duplicate = await pairHasBlockingRecurrence(transaction, canonicalInput);
-  await options.hooks?.afterDuplicateLookup?.({ ...hookContext, duplicate });
-  if (duplicate) reject("RECURRENCE_DUPLICATE");
 
   const lockedOrders = await lockOrdersInOrder(transaction, [
     canonicalInput.originalOrderId,
@@ -196,13 +212,35 @@ async function reportRecurrenceInTransaction(
   }
   const original = lockedOrders.find(({ id }) => id === canonicalInput.originalOrderId);
   const correction = lockedOrders.find(({ id }) => id === canonicalInput.correctionOrderId);
+  if (original === undefined || correction === undefined) {
+    reject("RECURRENCE_ORDER_NOT_FOUND");
+  }
+  if (original.deletedAt !== null || correction.deletedAt !== null) {
+    reject("RECURRENCE_ORDER_NOT_FOUND");
+  }
+  if (canonicalInput.originalOrderId === canonicalInput.correctionOrderId) {
+    reject("RECURRENCE_ORDER_MISMATCH");
+  }
+  const actorCanReview = actor.permissions.includes("RECURRENCES_REVIEW");
+  const actorCanSeeOrders = actorCanReview || (
+    actor.technicianId !== null
+    && await technicianCanSeeOrderPair(
+      transaction,
+      actor.technicianId,
+      original.id,
+      correction.id,
+      now,
+    )
+  );
+  if (!actorCanSeeOrders) reject("RECURRENCE_ORDER_NOT_FOUND");
+
+  await options.hooks?.beforeDuplicateLookup?.(hookContext);
+  const duplicate = await pairHasBlockingRecurrence(transaction, canonicalInput);
+  await options.hooks?.afterDuplicateLookup?.({ ...hookContext, duplicate });
+  if (duplicate) reject("RECURRENCE_DUPLICATE");
+
   if (
-    canonicalInput.originalOrderId === canonicalInput.correctionOrderId
-    || original === undefined
-    || correction === undefined
-    || original.deletedAt !== null
-    || correction.deletedAt !== null
-    || original.status !== "COMPLETED"
+    original.status !== "COMPLETED"
     || original.endedAt === null
     || correction.status === "CANCELLED"
     || original.branchId !== correction.branchId
@@ -218,11 +256,10 @@ async function reportRecurrenceInTransaction(
     now,
   );
   if (team === null) reject("RECURRENCE_ORDER_MISMATCH");
-  const actorCanReview = actor.permissions.includes("RECURRENCES_REVIEW");
   const actorParticipates = actor.technicianId !== null
     && team.some(({ technicianId, participation }) =>
       technicianId === actor.technicianId && participation === "CORRECTION_PARTICIPANT");
-  if (!actorCanReview && !actorParticipates) reject("RECURRENCE_ORDER_MISMATCH");
+  if (!actorCanReview && !actorParticipates) reject("RECURRENCE_ORDER_NOT_FOUND");
 
   const recurrence = await transaction.reincidencia.create({
     data: {

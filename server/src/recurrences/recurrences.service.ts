@@ -46,6 +46,7 @@ export interface RecurrenceService {
 
 const errors: Record<RecurrenceFailureKind, () => ApiError> = {
   RECURRENCE_NOT_FOUND: () => recurrenceNotFound(),
+  RECURRENCE_NUMBER_EXHAUSTED: () => new ApiError(409, "La numeraciÃ³n anual de reincidencias estÃ¡ agotada", "RECURRENCE_NUMBER_EXHAUSTED"),
   RECURRENCE_DUPLICATE: () => new ApiError(409, "La reincidencia o visita ya existe", "RECURRENCE_DUPLICATE"),
   RECURRENCE_ORDER_MISMATCH: () => new ApiError(409, "Las órdenes no pertenecen al mismo cliente y sucursal", "RECURRENCE_ORDER_MISMATCH"),
   RECURRENCE_ORDER_NOT_FOUND: () => new ApiError(404, "La orden solicitada no existe", "ORDER_NOT_FOUND"),

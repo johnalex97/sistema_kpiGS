@@ -101,4 +101,43 @@ describe("recurrence public mappers", () => {
 
     expect(() => mapRecurrenceDetail(record)).toThrow("La responsabilidad no técnica no puede afectar calidad");
   });
+
+  // Mutation caught: applying the active technical-work invariant to a dismissed
+  // case makes the successful dismissal response and every later detail read fail.
+  it("allows dismissed technical work only after every quality flag is cleared", () => {
+    const dismissed = {
+      ...summaryRecord(),
+      status: "DISMISSED",
+      analysis: "Technical analysis",
+      correctiveAction: null,
+      preventiveAction: null,
+      observations: null,
+      ageOverrideReason: null,
+      dismissalReason: "The report was dismissed by supervision.",
+      closedAt: null,
+      dismissedAt: new Date("2026-08-02T12:00:00.000Z"),
+      ordenes: [],
+      notas: [],
+      evidencias: [],
+      tecnicos: [{
+        participation: "ORIGINAL_RESPONSIBLE",
+        affectsQuality: false,
+        justification: null,
+        tecnico: { id: "tech-1", code: "TEC-001", fullName: "Ana" },
+      }],
+    } as RecurrenceDetailRecord;
+
+    expect(mapRecurrenceDetail(dismissed)).toMatchObject({
+      status: "DISMISSED",
+      technicians: [{ affectsQuality: false, justification: null }],
+    });
+    expect(() => mapRecurrenceDetail({
+      ...dismissed,
+      tecnicos: [{
+        ...dismissed.tecnicos[0]!,
+        affectsQuality: true,
+        justification: "Attribution that dismissal must clear.",
+      }],
+    })).toThrow("Una reincidencia descartada no puede afectar calidad");
+  });
 });

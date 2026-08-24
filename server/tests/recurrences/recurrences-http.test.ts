@@ -57,6 +57,12 @@ const ids = {
   correctionDismiss: randomUUID(),
   mismatchCorrection: randomUUID(),
   privacyRecurrence: randomUUID(),
+  hiddenOriginal: randomUUID(),
+  hiddenCorrection: randomUUID(),
+  hiddenRecurrence: randomUUID(),
+  deletedOriginal: randomUUID(),
+  deletedCorrection: randomUUID(),
+  deletedRecurrence: randomUUID(),
 } as const;
 const orderIds = [
   ids.originalMain,
@@ -65,6 +71,10 @@ const orderIds = [
   ids.originalDismiss,
   ids.correctionDismiss,
   ids.mismatchCorrection,
+  ids.hiddenOriginal,
+  ids.hiddenCorrection,
+  ids.deletedOriginal,
+  ids.deletedCorrection,
 ] as const;
 
 let app: ReturnType<typeof createApp>;
@@ -139,7 +149,11 @@ async function finalStorageKeys(): Promise<string[]> {
 
 async function cleanupFixture(): Promise<void> {
   const recurrences = await database.reincidencia.findMany({
-    where: { originalOrderId: { in: [ids.originalMain, ids.originalDismiss] } },
+    where: {
+      originalOrderId: {
+        in: [ids.originalMain, ids.originalDismiss, ids.hiddenOriginal, ids.deletedOriginal],
+      },
+    },
     select: { id: true },
   });
   const recurrenceIds = recurrences.map(({ id }) => id);
@@ -261,6 +275,10 @@ beforeAll(async () => {
       { id: ids.originalDismiss, orderNumber: `OT-RH-${suffix}-04`, sucursalId: ids.branch, tipoServicioId: ids.serviceType, status: "COMPLETED", endedAt: daysAgo(6), reportedProblem: "Trabajo original descartable" },
       { id: ids.correctionDismiss, orderNumber: `OT-RH-${suffix}-05`, sucursalId: ids.branch, tipoServicioId: ids.serviceType, status: "COMPLETED", endedAt: daysAgo(1), reportedProblem: "Corrección descartable" },
       { id: ids.mismatchCorrection, orderNumber: `OT-RH-${suffix}-06`, sucursalId: ids.otherBranch, tipoServicioId: ids.serviceType, status: "COMPLETED", endedAt: daysAgo(1), reportedProblem: "Corrección en otra sucursal" },
+      { id: ids.hiddenOriginal, orderNumber: `OT-RH-${suffix}-07`, sucursalId: ids.branch, tipoServicioId: ids.serviceType, status: "COMPLETED", endedAt: daysAgo(6), reportedProblem: "Hidden original work" },
+      { id: ids.hiddenCorrection, orderNumber: `OT-RH-${suffix}-08`, sucursalId: ids.branch, tipoServicioId: ids.serviceType, status: "COMPLETED", endedAt: daysAgo(1), reportedProblem: "Correction outside technician scope" },
+      { id: ids.deletedOriginal, orderNumber: `OT-RH-${suffix}-09`, sucursalId: ids.branch, tipoServicioId: ids.serviceType, status: "COMPLETED", endedAt: daysAgo(6), reportedProblem: "Original work for soft-delete case" },
+      { id: ids.deletedCorrection, orderNumber: `OT-RH-${suffix}-10`, sucursalId: ids.branch, tipoServicioId: ids.serviceType, status: "COMPLETED", endedAt: daysAgo(1), deletedAt: daysAgo(0.25), reportedProblem: "Soft-deleted correction" },
     ],
   });
   await database.ordenTecnico.createMany({
@@ -272,6 +290,36 @@ beforeAll(async () => {
       { ordenId: ids.originalDismiss, tecnicoId: ids.reporterTechnician, role: "PRIMARY", assignedAt: daysAgo(9), unassignedAt: daysAgo(5) },
       { ordenId: ids.correctionDismiss, tecnicoId: ids.foreignTechnician, role: "PRIMARY", assignedAt: daysAgo(3), unassignedAt: daysAgo(0.5) },
       { ordenId: ids.mismatchCorrection, tecnicoId: ids.reporterTechnician, role: "PRIMARY", assignedAt: daysAgo(3), unassignedAt: daysAgo(0.5) },
+      { ordenId: ids.hiddenOriginal, tecnicoId: ids.reporterTechnician, role: "PRIMARY", assignedAt: daysAgo(9), unassignedAt: daysAgo(5) },
+      { ordenId: ids.hiddenCorrection, tecnicoId: ids.foreignTechnician, role: "PRIMARY", assignedAt: daysAgo(3), unassignedAt: daysAgo(0.5) },
+      { ordenId: ids.deletedOriginal, tecnicoId: ids.reporterTechnician, role: "PRIMARY", assignedAt: daysAgo(9), unassignedAt: daysAgo(5) },
+      { ordenId: ids.deletedCorrection, tecnicoId: ids.reporterTechnician, role: "PRIMARY", assignedAt: daysAgo(3), unassignedAt: daysAgo(0.5) },
+    ],
+  });
+  await database.reincidencia.createMany({
+    data: [
+      {
+        id: ids.hiddenRecurrence,
+        recurrenceNumber: `RI-2995-${String(parseInt(suffix, 16) % 10_000).padStart(4, "0")}`,
+        originalOrderId: ids.hiddenOriginal,
+        reportedById: users.supervisor.id,
+        status: "OPEN",
+        detectedProblem: "Existing hidden-pair report",
+      },
+      {
+        id: ids.deletedRecurrence,
+        recurrenceNumber: `RI-2996-${String(parseInt(suffix, 16) % 10_000).padStart(4, "0")}`,
+        originalOrderId: ids.deletedOriginal,
+        reportedById: users.supervisor.id,
+        status: "OPEN",
+        detectedProblem: "Existing soft-deleted-pair report",
+      },
+    ],
+  });
+  await database.reincidenciaOrden.createMany({
+    data: [
+      { reincidenciaId: ids.hiddenRecurrence, ordenId: ids.hiddenCorrection, visitNumber: 1 },
+      { reincidenciaId: ids.deletedRecurrence, ordenId: ids.deletedCorrection, visitNumber: 1 },
     ],
   });
 
@@ -353,6 +401,39 @@ describe("recurrences HTTP security", () => {
 });
 
 describe("recurrences DB-backed HTTP contract", () => {
+  // Mutation caught: checking pair duplication or business compatibility before
+  // order visibility lets a report endpoint disclose hidden order existence.
+  it("conceals absent, nonparticipant, and soft-deleted orders without report mutations", async () => {
+    const reporter = await authenticatedAgent(users.reporter);
+    const year = new Date().getUTCFullYear();
+    const before = {
+      recurrences: await database.reincidencia.count(),
+      audits: await database.auditoria.count({ where: { action: "RECURRENCE_REPORTED" } }),
+      sequence: await database.secuenciaReincidencia.findUnique({ where: { year } }),
+    };
+    const report = (originalOrderId: string, correctionOrderId: string) => reporter
+      .post("/api/v1/recurrences")
+      .set("Origin", allowedOrigin)
+      .send({
+        originalOrderId,
+        correctionOrderId,
+        detectedProblem: "Concealed order report attempt",
+      });
+
+    const absent = await report(ids.hiddenOriginal, randomUUID()).expect(404);
+    const nonparticipant = await report(ids.hiddenOriginal, ids.hiddenCorrection).expect(404);
+    const softDeleted = await report(ids.deletedOriginal, ids.deletedCorrection).expect(404);
+
+    expect(withoutRequestId(nonparticipant)).toEqual(withoutRequestId(absent));
+    expect(withoutRequestId(softDeleted)).toEqual(withoutRequestId(absent));
+    expect(errorCode(absent)).toBe("ORDER_NOT_FOUND");
+    await expect(database.reincidencia.count()).resolves.toBe(before.recurrences);
+    await expect(database.auditoria.count({ where: { action: "RECURRENCE_REPORTED" } }))
+      .resolves.toBe(before.audits);
+    await expect(database.secuenciaReincidencia.findUnique({ where: { year } }))
+      .resolves.toEqual(before.sequence);
+  });
+
   it("reports, reviews, corrects, documents, closes and adjusts a visible case", async () => {
     const reporter = await authenticatedAgent(users.reporter);
     const foreign = await authenticatedAgent(users.foreign);
@@ -623,6 +704,27 @@ describe("recurrences DB-backed HTTP contract", () => {
     expect(closed.body.data).toMatchObject({ status: "CLOSED", version: 6 });
     assertNoPrivateRecurrenceFields(closed.body);
 
+    const adjustmentAuditsBeforeRejectedField = await database.auditoria.count({
+      where: { entity: "Reincidencia", entityId: recurrenceId, action: "RECURRENCE_ADJUSTED" },
+    });
+    const rejectedAgeOverride = await supervisor
+      .post(`/api/v1/recurrences/${recurrenceId}/adjust`)
+      .set("Origin", allowedOrigin)
+      .send({
+        version: 6,
+        reason: "Attempt to modify a field outside the adjustment allowlist.",
+        ageOverrideReason: "Age can only be justified while analyzing the case.",
+      })
+      .expect(400);
+    expect(errorCode(rejectedAgeOverride)).toBe("VALIDATION_ERROR");
+    await expect(database.reincidencia.findUniqueOrThrow({
+      where: { id: recurrenceId },
+      select: { version: true, ageOverrideReason: true },
+    })).resolves.toEqual({ version: 6, ageOverrideReason: null });
+    await expect(database.auditoria.count({
+      where: { entity: "Reincidencia", entityId: recurrenceId, action: "RECURRENCE_ADJUSTED" },
+    })).resolves.toBe(adjustmentAuditsBeforeRejectedField);
+
     const adjusted = await supervisor
       .post(`/api/v1/recurrences/${recurrenceId}/adjust`)
       .set("Origin", allowedOrigin)
@@ -643,7 +745,7 @@ describe("recurrences DB-backed HTTP contract", () => {
     assertNoPrivateRecurrenceFields(adjusted.body);
   });
 
-  it("allows management with a technician profile to report and dismiss outside its own scope", async () => {
+  it("dismisses an analyzed technical-work case and keeps its post-read quality-neutral", async () => {
     const supervisor = await authenticatedAgent(users.supervisor);
     const reported = await supervisor
       .post("/api/v1/recurrences")
@@ -656,18 +758,54 @@ describe("recurrences DB-backed HTTP contract", () => {
       .expect(201);
     expect(reported.body.data).toMatchObject({ status: "OPEN", version: 1 });
 
+    const analyzed = await supervisor
+      .post(`/api/v1/recurrences/${reported.body.data.id}/analysis`)
+      .set("Origin", allowedOrigin)
+      .send({
+        version: 1,
+        causeId: ids.cause,
+        impact: "MEDIUM",
+        responsibility: "TECHNICAL_WORK",
+        analysis: "The report was classified before supervision identified the duplicate.",
+        qualityDecisions: [{
+          technicianId: ids.reporterTechnician,
+          affectsQuality: true,
+          justification: "The preliminary classification attributed the original work.",
+        }],
+      })
+      .expect(200);
+    expect(analyzed.body.data).toMatchObject({ status: "ANALYSIS", version: 2 });
+
     const dismissed = await supervisor
       .post(`/api/v1/recurrences/${reported.body.data.id}/dismiss`)
       .set("Origin", allowedOrigin)
-      .send({ version: 1, reason: "El reporte fue confirmado como un incidente duplicado." })
+      .send({ version: 2, reason: "El reporte fue confirmado como un incidente duplicado." })
       .expect(200);
     expect(dismissed.body.data).toMatchObject({
       id: reported.body.data.id,
       status: "DISMISSED",
-      version: 2,
+      version: 3,
       dismissalReason: "El reporte fue confirmado como un incidente duplicado.",
+      technicians: expect.arrayContaining([
+        expect.objectContaining({ affectsQuality: false, justification: null }),
+      ]),
     });
+    const postRead = await supervisor
+      .get(`/api/v1/recurrences/${reported.body.data.id}`)
+      .expect(200);
+    expect(postRead.body.data).toMatchObject({
+      id: reported.body.data.id,
+      status: "DISMISSED",
+      version: 3,
+      technicians: expect.arrayContaining([
+        expect.objectContaining({ affectsQuality: false, justification: null }),
+      ]),
+    });
+    await expect(database.reincidenciaTecnico.count({
+      where: { reincidenciaId: reported.body.data.id, affectsQuality: true },
+    })).resolves.toBe(0);
     assertNoPrivateRecurrenceFields(dismissed.body);
+    assertNoPrivateRecurrenceFields(postRead.body);
   });
 
   it("hides management INTERNAL evidence from technician detail and note hydration", async () => {

@@ -121,7 +121,6 @@ export const adjustRecurrenceSchema = withPairedCost(z.object({
   responsibility: analyzableResponsibilitySchema.optional(),
   analysis: requiredText(3, 10_000).optional(),
   qualityDecisions: analyzeFields.qualityDecisions.optional(),
-  ageOverrideReason: optionalText(500),
   correctiveAction: requiredText(3, 10_000).optional(),
   preventiveAction: nullableText(10_000),
   observations: nullableText(10_000),
