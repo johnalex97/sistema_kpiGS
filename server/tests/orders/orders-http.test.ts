@@ -168,6 +168,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  const activities = await database.actividad.findMany({
+    where: { ordenId: { in: createdOrderIds } },
+    select: { id: true },
+  });
+  const activityIds = activities.map(({ id }) => id);
+  await database.actividadTecnico.deleteMany({
+    where: { actividadId: { in: activityIds } },
+  });
+  await database.actividad.deleteMany({
+    where: { id: { in: activityIds } },
+  });
   await database.materialUtilizado.deleteMany({
     where: { ordenId: { in: createdOrderIds } },
   });
@@ -809,6 +820,29 @@ describe("orders HTTP lifecycle", () => {
     expect(materialRemoved.body).toMatchObject({
       message: "Material retirado",
       data: { version: 12, materials: [] },
+    });
+
+    const activityType = await database.tipoActividad.findFirstOrThrow({
+      where: { isActive: true, deletedAt: null },
+    });
+    await database.actividad.create({
+      data: {
+        sucursalId: branchId,
+        ordenId: created.id,
+        tipoActividadId: activityType.id,
+        status: "COMPLETED",
+        description: "Trabajo productivo validado para completar la orden",
+        startedAt: new Date("2026-08-15T16:00:00.000Z"),
+        endedAt: new Date("2026-08-15T16:30:00.000Z"),
+        productiveMinutes: 30,
+        tecnicos: {
+          create: {
+            tecnicoId: technicianIds.primary,
+            role: "RESPONSIBLE",
+            participationPercentage: 100,
+          },
+        },
+      },
     });
 
     const completed = await primary

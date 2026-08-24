@@ -81,10 +81,10 @@ describe("seeded database relations", () => {
       efficiency: configuration.efficiencyWeight.toString(),
       quality: configuration.qualityWeight.toString(),
     }).toEqual({
-      productivity: "0.3",
+      productivity: "0.2",
       compliance: "0.25",
-      efficiency: "0.2",
-      quality: "0.25",
+      efficiency: "0.25",
+      quality: "0.3",
     });
   });
 });

@@ -35,4 +35,32 @@ describe("KPI preview service", () => {
       { kind: "TECHNICIAN", technicianId: "a" },
     );
   });
+
+  it("allows target management only with its explicit permission", async () => {
+    const repository = {
+      loadWeeklySources: vi.fn(async () => rows),
+      listTargets: vi.fn(async () => []),
+    };
+    const service = createKpiService(repository, "America/Tegucigalpa");
+    await service.listTargets("2026-08-24", {
+      userId: "admin", technicianId: null, permissions: ["KPI_MANAGE_TARGETS"], requestId: "request",
+    });
+    await expect(service.listTargets("2026-08-24", {
+      userId: "tech", technicianId: "a", permissions: ["KPI_VIEW_OWN"], requestId: "request",
+    })).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+  });
+
+  it("allows configuration management only with its explicit permission", async () => {
+    const repository = {
+      loadWeeklySources: vi.fn(async () => rows),
+      listConfigurations: vi.fn(async () => []),
+    };
+    const service = createKpiService(repository, "America/Tegucigalpa");
+    await service.listConfigurations({
+      userId: "admin", technicianId: null, permissions: ["KPI_MANAGE_CONFIGURATION"], requestId: "request",
+    });
+    await expect(service.listConfigurations({
+      userId: "tech", technicianId: "a", permissions: ["KPI_VIEW_OWN"], requestId: "request",
+    })).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+  });
 });
