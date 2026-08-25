@@ -96,6 +96,46 @@ describe("páginas de autenticación", () => {
     expect(screen.getByLabelText("Nueva contraseña")).toHaveAttribute("aria-describedby", "new-password-error");
   });
 
+  it("traduce la política de nueva contraseña desde un error de validación del backend", async () => {
+    const user = userEvent.setup();
+    const changePassword = vi.fn().mockRejectedValue(new ApiClientError(
+      400,
+      "VALIDATION_ERROR",
+      "raw detail",
+      [{ field: "newPassword", code: "VALIDATION_ERROR", message: "PASSWORD_TOO_SHORT" }],
+    ));
+    renderWithAuth(<ForcedPasswordChangePage />, { changePassword, user: provisionalUser });
+
+    await user.type(screen.getByLabelText("Contraseña actual"), "Actual123!xxx");
+    await user.type(screen.getByLabelText("Nueva contraseña"), "Nueva123!xxxx");
+    await user.type(screen.getByLabelText("Confirmar contraseña"), "Nueva123!xxxx");
+    await user.click(screen.getByRole("button", { name: "Actualizar contraseña" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("La nueva contraseña debe tener al menos 12 caracteres.");
+    expect(screen.queryByText("raw detail")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Nueva contraseña")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Nueva contraseña")).toHaveAttribute("aria-describedby", "new-password-error");
+  });
+
+  it("prioriza el código de política entregado directamente por el campo de nueva contraseña", async () => {
+    const user = userEvent.setup();
+    const changePassword = vi.fn().mockRejectedValue(new ApiClientError(
+      400,
+      "VALIDATION_ERROR",
+      "raw detail",
+      [{ field: "newPassword", code: "PASSWORD_TOO_SHORT", message: "raw field detail" }],
+    ));
+    renderWithAuth(<ForcedPasswordChangePage />, { changePassword, user: provisionalUser });
+
+    await user.type(screen.getByLabelText("Contraseña actual"), "Actual123!xxx");
+    await user.type(screen.getByLabelText("Nueva contraseña"), "Nueva123!xxxx");
+    await user.type(screen.getByLabelText("Confirmar contraseña"), "Nueva123!xxxx");
+    await user.click(screen.getByRole("button", { name: "Actualizar contraseña" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("La nueva contraseña debe tener al menos 12 caracteres.");
+    expect(screen.queryByText("raw field detail")).not.toBeInTheDocument();
+  });
+
   it("mantiene disponible el cierre de sesión durante el cambio obligatorio", async () => {
     const user = userEvent.setup();
     const logout = vi.fn(async () => undefined);

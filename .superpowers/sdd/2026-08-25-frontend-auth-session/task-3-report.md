@@ -83,3 +83,23 @@
   gated at the root.
 - The password-policy messages reflect the six backend `PASSWORD_*` codes.
   Non-policy responses intentionally use safe, non-raw fallback text.
+
+## Review fix round 1
+
+- Root cause: `PasswordChangeForm` inspected only `ApiClientError.code`. The
+  real validation envelope can instead carry `VALIDATION_ERROR` at the top and
+  a `PASSWORD_*` code in `fieldErrors` for `newPassword` (either as `code` or,
+  for the service variant, as `message`). This selected the safe generic
+  fallback rather than the applicable policy guidance.
+- RED: added the exact `VALIDATION_ERROR` envelope with
+  `{ field: "newPassword", code: "VALIDATION_ERROR", message:
+  "PASSWORD_TOO_SHORT" }`; `npm test -- src/pages/auth-pages.test.tsx` failed
+  with the generic fallback. Added and re-ran the direct field-code variant;
+  both failures reproduced the same cause.
+- GREEN: the form now examines the error associated with `newPassword` in
+  order (`code`, then `message`), followed by the top-level code, and accepts a
+  candidate only when it is a key in `passwordMessages`. Thus raw text is never
+  rendered; `INVALID_CREDENTIALS`, field ARIA association, and the generic
+  safe fallback remain unchanged.
+- Evidence: focused `auth-pages` suite 15/15 passed; full `npm test` 54/54;
+  `npm run lint`, `npm run build`, and `git diff --check` all exited 0.

@@ -12,6 +12,12 @@ const passwordMessages: Record<string, string> = {
   PASSWORD_SPECIAL_REQUIRED: "Incluye al menos un carácter especial.",
 };
 
+function passwordPolicyCode(error: ApiClientError) {
+  const newPasswordError = error.fieldErrors.find((fieldError) => fieldError.field === "newPassword");
+  return [newPasswordError?.code, newPasswordError?.message, error.code]
+    .find((code) => Boolean(code && passwordMessages[code]));
+}
+
 interface PasswordChangeFormProps {
   mode: "forced" | "voluntary";
   onSubmit(input: ChangePasswordInput): Promise<void>;
@@ -40,9 +46,10 @@ export function PasswordChangeForm({ mode, onSubmit, onCancel }: PasswordChangeF
     try {
       await onSubmit({ currentPassword, newPassword });
     } catch (reason) {
-      if (reason instanceof ApiClientError && passwordMessages[reason.code]) {
+      const policyCode = reason instanceof ApiClientError ? passwordPolicyCode(reason) : undefined;
+      if (policyCode) {
         setErrorField("new");
-        setError(passwordMessages[reason.code]);
+        setError(passwordMessages[policyCode]);
       } else if (reason instanceof ApiClientError && reason.code === "INVALID_CREDENTIALS") {
         setErrorField("current");
         setError("La contraseña actual no es correcta.");
