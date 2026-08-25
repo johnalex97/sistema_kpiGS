@@ -64,4 +64,17 @@ describe("authApi", () => {
     await expect(authApi.logout()).resolves.toBeUndefined();
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/auth/logout"), expect.objectContaining({ method: "POST" }));
   });
+
+  it("no notifica un 401 de logout porque el proveedor lo resuelve localmente", async () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeUnauthorized(listener);
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
+      errors: [{ code: "UNAUTHORIZED", message: "Sesión requerida" }],
+    }), { status: 401, headers: { "Content-Type": "application/json" } }));
+
+    await authApi.logout().catch(() => undefined);
+
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+  });
 });

@@ -42,10 +42,17 @@ export function AuthProvider({ children, api = authApi }: PropsWithChildren<{ ap
       applyUser(nextUser);
     } catch (error) {
       if (version !== requestVersion.current) return;
-      setUser(null);
-      setStatus(error instanceof ApiClientError && error.status === 401 ? "anonymous" : "unavailable");
+      if (error instanceof ApiClientError && error.status === 401) {
+        setUser(null);
+        setStatus("anonymous");
+      } else if (user) {
+        setStatus("authenticated");
+      } else {
+        setUser(null);
+        setStatus("unavailable");
+      }
     }
-  }, [api, applyUser]);
+  }, [api, applyUser, user]);
 
   useEffect(() => {
     if (restoreStarted.current) return;
@@ -78,7 +85,7 @@ export function AuthProvider({ children, api = authApi }: PropsWithChildren<{ ap
     } catch (error) {
       if (!(error instanceof ApiClientError && error.status === 401)) throw error;
     }
-    if (version !== requestVersion.current && !expired.current) return;
+    if (version !== requestVersion.current) return;
     expired.current = false;
     setUser(null);
     setReturnPath(null);

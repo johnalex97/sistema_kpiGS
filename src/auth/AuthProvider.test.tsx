@@ -121,6 +121,27 @@ describe("AuthProvider", () => {
     expect(await screen.findByText("authenticated:Ada:true:none:none")).toBeInTheDocument();
   });
 
+  it("conserva una sesión autenticada cuando retry recibe 403", async () => {
+    const api = createApi();
+    let rejectRetry: (reason: Error) => void = () => undefined;
+    vi.mocked(api.me)
+      .mockResolvedValueOnce(user)
+      .mockImplementationOnce(() => new Promise<AuthUser>((_, reject) => {
+        rejectRetry = reject;
+      }));
+    render(<AuthProvider api={api}><Probe /></AuthProvider>);
+
+    await screen.findByText("authenticated:Ada:true:none:none");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("checking:Ada:true:none:none")).toBeInTheDocument();
+    await act(async () => {
+      rejectRetry(new ApiClientError(403, "FORBIDDEN", "No autorizado"));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent("authenticated:Ada:true:none:none");
+  });
+
   it("mantiene la sesión cuando logout falla fuera de 401", async () => {
     const api = createApi();
     vi.mocked(api.me).mockResolvedValue(user);
@@ -162,6 +183,33 @@ describe("AuthProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Logout" }));
 
     expect(await screen.findByText("anonymous:none:false:LOGGED_OUT:none")).toBeInTheDocument();
+  });
+
+  it("no deja que un logout obsoleto sobrescriba una expiración externa", async () => {
+    const api = createApi();
+    let resolveLogout: () => void = () => undefined;
+    vi.mocked(api.me).mockResolvedValue(user);
+    vi.mocked(api.logout).mockImplementation(() => new Promise<void>((resolve) => {
+      resolveLogout = resolve;
+    }));
+    window.history.replaceState({}, "", "/actividades");
+    render(<AuthProvider api={api}><Probe /></AuthProvider>);
+
+    await screen.findByText("authenticated:Ada:true:none:none");
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
+      errors: [{ code: "UNAUTHORIZED", message: "Sesión requerida" }],
+    }), { status: 401, headers: { "Content-Type": "application/json" } }));
+    await act(async () => {
+      await requestJson("/protected-resource").catch(() => undefined);
+    });
+    expect(await screen.findByText("anonymous:none:false:SESSION_EXPIRED:/actividades")).toBeInTheDocument();
+    await act(async () => {
+      resolveLogout();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent("anonymous:none:false:SESSION_EXPIRED:/actividades");
   });
 
   it("conserva el destino interno inicial durante expiraciones repetidas", async () => {

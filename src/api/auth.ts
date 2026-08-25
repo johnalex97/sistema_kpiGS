@@ -33,6 +33,6 @@ export const authApi: AuthApi = {
   },
 
   logout() {
-    return requestJson<void>("/auth/logout", { method: "POST" });
+    return requestJson<void>("/auth/logout", { method: "POST" }, { notifyUnauthorized: false });
   },
 };
