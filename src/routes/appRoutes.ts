@@ -14,6 +14,10 @@ const pageByPath: Record<PagePath, Page> = {
   "/reincidencias": "Reincidencias",
 };
 
+export function isKnownInternalPath(path: string): path is PagePath {
+  return Object.prototype.hasOwnProperty.call(pageByPath, path);
+}
+
 export function getPageFromPath(pathname: string): Page {
   return pageByPath[pathname as PagePath] ?? "Resumen";
 }
