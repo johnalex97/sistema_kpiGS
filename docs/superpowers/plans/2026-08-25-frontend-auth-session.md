@@ -31,7 +31,6 @@
 - Create: `src/api/http.test.ts`
 - Create: `src/api/auth.test.ts`
 - Modify: `src/api/http.ts`
-- Modify: `src/test/setup.ts`
 
 **Interfaces:**
 - Produces: `AuthUser`, `LoginInput`, `ChangePasswordInput`, `AuthApi`.
@@ -738,7 +737,6 @@ git commit -m "feat(auth): protect shell with identity and permissions"
 **Files:**
 - Create: `src/auth/auth-flow.integration.test.tsx`
 - Modify: `src/styles.css`
-- Modify: `src/test/setup.ts`
 - Modify: `README.md`
 - Modify: `docs/plans/implementation-plan.md`
 
@@ -874,7 +872,7 @@ preexistente debe revisarse y documentarse; no debe contener sesión o credencia
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/styles.css src/auth/auth-flow.integration.test.tsx src/test/setup.ts README.md docs/plans/implementation-plan.md
+git add src/styles.css src/auth/auth-flow.integration.test.tsx README.md docs/plans/implementation-plan.md
 git commit -m "test(auth): verify secure frontend session flow"
 ```
 
