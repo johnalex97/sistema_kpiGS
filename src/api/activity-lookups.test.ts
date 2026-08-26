@@ -182,7 +182,8 @@ describe("createActivityLookupApi", () => {
 
     const request = createActivityLookupApi().technicians("Ana", 1);
 
-    await expect(request).rejects.toMatchObject<ApiClientError>({
+    await expect(request).rejects.toBeInstanceOf(ApiClientError);
+    await expect(request).rejects.toMatchObject({
       status: 403,
       code: "FORBIDDEN",
       message: "No puede consultar técnicos",
