@@ -142,6 +142,15 @@ export interface ManualActivityInput extends CreateActivityInput {
   justification: string;
 }
 
+export type ActivityFormValue =
+  | ({ mode: "scheduled" } & CreateActivityInput)
+  | ({ mode: "manual" } & ManualActivityInput);
+
+export interface ActivityFormActor {
+  technicianId: string | null;
+  canManage: boolean;
+}
+
 export interface UpdateActivityInput {
   version: number;
   activityTypeId?: string;
