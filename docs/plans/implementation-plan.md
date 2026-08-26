@@ -216,6 +216,11 @@ Salida: interfaz existente conectada a datos persistentes.
 Estado: en progreso. El bloque KPI ya consume la API; actividades, jornada y
 otros paneles operativos conservan temporalmente sus fuentes locales.
 
+Subbloque de autenticación frontend: completado. La SPA restaura la sesión con
+`GET /api/v1/auth/me`, usa la cookie opaca `gs_session`, bloquea el contenido
+privado durante la comprobación y exige cambiar contraseñas provisionales antes
+de entrar al shell. Esta actualización no completa toda la fase 12.
+
 ## 13. Reportes y auditoría
 
 - Implementar filtros y reportes operativos.

@@ -522,10 +522,13 @@ La API tiene Helmet, CORS con allowlist, límites JSON, correlación, errores
 seguros, cierre controlado de Prisma, contraseñas `scrypt`, bloqueo temporal,
 sesiones opacas persistidas, permisos y auditoría sin secretos.
 
-El frontend todavía no muestra login ni consume la base o la API de negocio.
+La SPA restaura sesiones con `GET /api/v1/auth/me`, usa la cookie opaca
+`gs_session` y obliga el cambio de contraseña provisional. Los módulos
+operativos distintos del dashboard KPI siguen migrándose gradualmente en la
+fase 12.
 La autorización por propiedad ya se aplica en órdenes y actividades. El
 frontend no integra aún las APIs de actividades, evidencias ni reincidencias:
-continúan pendientes la pantalla de acceso, los puntajes KPI, reportes,
+continúan pendientes los puntajes KPI, reportes,
 exportaciones y la integración de los mocks con datos reales. No utilices el
 sistema para información sensible o datos personales reales hasta completar las
 fases funcionales y el despliegue HTTPS.

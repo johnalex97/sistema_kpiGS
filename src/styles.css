@@ -195,6 +195,8 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .auth-form input { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid #cfdde3; border-radius: 7px; color: var(--ink); background: #fff; font-size: 14px; }.auth-form input[aria-invalid="true"] { border-color: var(--coral); box-shadow: 0 0 0 3px rgba(227,109,90,.11); }
 .password-field { position: relative; }.password-field input { padding-right: 78px; }.password-field button { position: absolute; top: 5px; right: 5px; min-height: 34px; padding: 0 9px; border: 0; border-radius: 5px; color: #31576e; background: #edf4f6; cursor: pointer; font: 700 10px/1 "Consolas", monospace; }
 .auth-form__error { margin: 0; padding: 10px 11px; border-left: 3px solid var(--coral); border-radius: 4px; color: #a9483a; background: var(--coral-soft); font-size: 12px; line-height: 1.4; }
+.auth-notice { margin: 0 0 17px; padding: 10px 11px; border-left: 3px solid var(--teal); border-radius: 4px; color: #176e75; background: var(--teal-soft); font-size: 12px; line-height: 1.4; }
+.profile-dialog { overscroll-behavior: contain; }
 .auth-form__actions { display: flex; justify-content: flex-end; gap: 10px; }.auth-form__submit { width: 100%; min-height: 44px; }.auth-form button:disabled { cursor: wait; opacity: .7; }
 .auth-password-rules { padding: 13px; border: 1px solid #d9eaec; border-radius: 7px; color: #516f7d; background: #f3fbfb; font-size: 11px; line-height: 1.5; }.auth-password-rules strong { color: #23475c; }.auth-password-rules ul { margin: 7px 0 0; padding-left: 17px; }
 .auth-logout { margin-top: 19px; padding: 0; border: 0; color: #496b7d; background: transparent; cursor: pointer; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }

@@ -70,6 +70,7 @@ export function PasswordChangeForm({ mode, onSubmit, onCancel }: PasswordChangeF
         <label htmlFor="current-password">Contraseña actual</label>
         <PasswordField
           id="current-password"
+          name="currentPassword"
           value={currentPassword}
           onChange={(event) => setCurrentPassword(event.target.value)}
           aria-invalid={errorField === "current" && Boolean(error)}
@@ -82,6 +83,7 @@ export function PasswordChangeForm({ mode, onSubmit, onCancel }: PasswordChangeF
         <label htmlFor="new-password">Nueva contraseña</label>
         <PasswordField
           id="new-password"
+          name="newPassword"
           value={newPassword}
           onChange={(event) => setNewPassword(event.target.value)}
           aria-invalid={errorField === "new" && Boolean(error)}
@@ -94,6 +96,7 @@ export function PasswordChangeForm({ mode, onSubmit, onCancel }: PasswordChangeF
         <label htmlFor="confirmation-password">Confirmar contraseña</label>
         <PasswordField
           id="confirmation-password"
+          name="confirmationPassword"
           value={confirmation}
           onChange={(event) => setConfirmation(event.target.value)}
           aria-invalid={errorField === "confirmation" && Boolean(error)}
