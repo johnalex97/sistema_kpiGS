@@ -10,6 +10,15 @@ afterEach(() => {
 });
 
 describe("AppShell", () => {
+  it("expone un buscador preparado para consultas operativas", () => {
+    renderWithAuth(<AppShell />);
+
+    const search = screen.getByRole("textbox", { name: "Buscar orden, cliente o técnico" });
+    expect(search).toHaveAttribute("name", "query");
+    expect(search).toHaveAttribute("autocomplete", "off");
+    expect(search).toHaveAttribute("placeholder", "Buscar orden, cliente…");
+  });
+
   it("navega entre módulos y actualiza la URL", async () => {
     const user = userEvent.setup();
     renderWithAuth(<AppShell />);

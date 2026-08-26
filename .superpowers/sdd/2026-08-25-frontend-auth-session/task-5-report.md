@@ -53,3 +53,15 @@
 - The backend default test command follows its configured inclusion rules and
   excludes `auth-http`/`auth-service`; those suites require the explicit
   database test command documented above.
+
+## Review fix round 1
+
+- RED: AppShell search contract test failed because the input lacked
+  `name="query"`; it also lacked `autocomplete="off"` and used three dots.
+- GREEN: added the query name, disabled non-auth autocomplete, and the Unicode
+  ellipsis placeholder. Focused AppShell tests passed 8/8; full frontend tests
+  passed 62/62; lint passed.
+- Audit: removed `.search input` `outline: 0`, relying on the existing global
+  `:focus-visible` treatment. Both `.modal` and `.profile-dialog` now declare
+  `overscroll-behavior: contain`; static verification found no search outline
+  reset.
