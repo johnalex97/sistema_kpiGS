@@ -9,12 +9,13 @@ import type { Page } from "../models/app";
 
 interface SidebarProps {
   page: Page;
+  visiblePages: Page[];
   onChange: (page: Page) => void;
   open: boolean;
   onClose: () => void;
 }
 
-export function Sidebar({ page, onChange, open, onClose }: SidebarProps) {
+export function Sidebar({ page, visiblePages, onChange, open, onClose }: SidebarProps) {
   return (
     <>
       <div
@@ -32,7 +33,7 @@ export function Sidebar({ page, onChange, open, onClose }: SidebarProps) {
         </div>
         <nav aria-label="Navegación principal">
           <p className="nav-label">Espacio de trabajo</p>
-          {navItems.map(({ label, icon: Icon }) => (
+          {navItems.filter(({ label }) => visiblePages.includes(label)).map(({ label, icon: Icon }) => (
             <button
               type="button"
               key={label}

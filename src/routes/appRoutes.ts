@@ -14,6 +14,17 @@ const pageByPath: Record<PagePath, Page> = {
   "/reincidencias": "Reincidencias",
 };
 
+export const pagePermissions: Record<Page, string[]> = {
+  Resumen: ["KPI_VIEW_ALL", "KPI_VIEW_OWN"],
+  Actividades: ["ACTIVITIES_VIEW_ALL", "ACTIVITIES_CREATE_OWN"],
+  Técnicos: ["TECHNICIANS_VIEW"],
+  Reincidencias: ["RECURRENCES_VIEW_ALL", "RECURRENCES_VIEW_OWN"],
+};
+
+export function canAccessPage(page: Page, permissions: string[]) {
+  return pagePermissions[page].some((permission) => permissions.includes(permission));
+}
+
 export function isKnownInternalPath(path: string): path is PagePath {
   return Object.prototype.hasOwnProperty.call(pageByPath, path);
 }

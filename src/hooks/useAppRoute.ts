@@ -19,7 +19,8 @@ export function useAppRoute() {
       window.history.pushState({}, "", nextPath);
     }
     setPage(nextPage);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
   }, []);
 
   return { page, navigate };
