@@ -1,6 +1,6 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import { limitedUser, renderWithAuth } from "../test/auth-test-utils";
 
@@ -27,17 +27,16 @@ describe("AppShell", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Actividades" })).toBeInTheDocument();
   });
 
-  it("filtra actividades por cliente", async () => {
+  it("envía la búsqueda de actividades al listado persistente", async () => {
     window.history.replaceState({}, "", "/actividades");
     const user = userEvent.setup();
     renderWithAuth(<AppShell />);
+    vi.mocked(fetch).mockClear();
     await user.type(screen.getByRole("textbox", { name: "Buscar orden, cliente o técnico" }), "Café Central");
-    const table = screen.getByRole("table");
-    expect(within(table).getByText("Pérdida intermitente de conexión")).toBeInTheDocument();
-    expect(within(table).queryByText("Instalación de 4 cámaras IP")).not.toBeInTheDocument();
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("search=Caf%C3%A9+Central"))).toBe(true));
   });
 
-  it("registra una nueva actividad durante la sesión", async () => {
+  it("no inyecta la actividad del formulario legado en el listado persistente", async () => {
     window.history.replaceState({}, "", "/actividades");
     const user = userEvent.setup();
     renderWithAuth(<AppShell />);
@@ -47,7 +46,7 @@ describe("AppShell", () => {
     await user.type(screen.getByLabelText("Duración"), "45m");
     await user.click(screen.getByRole("button", { name: "Guardar actividad" }));
     expect(screen.getByRole("status")).toHaveTextContent("Actividad guardada");
-    expect(screen.getByText("Revisión de cableado")).toBeInTheDocument();
+    expect(screen.queryByText("Revisión de cableado")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
