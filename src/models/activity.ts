@@ -72,6 +72,40 @@ export interface ActivityPage {
   pagination: ActivityPagination;
 }
 
+export interface LookupPage<T> {
+  items: T[];
+  pagination: ActivityPagination;
+}
+
+export interface OrderOption {
+  id: string;
+  orderNumber: string;
+  clientName: string;
+  branchName: string;
+  status: string;
+}
+
+export interface ClientOption {
+  id: string;
+  code: string;
+  tradeName: string;
+}
+
+export interface BranchOption {
+  id: string;
+  code: string;
+  name: string;
+  address: string;
+  isEffectivelyActive: boolean;
+}
+
+export interface TechnicianOption {
+  id: string;
+  code: string;
+  fullName: string;
+  status: "AVAILABLE" | "BUSY" | "ON_ROUTE";
+}
+
 export interface ActivityListFilters {
   search?: string;
   status?: ActivityStatus[];
