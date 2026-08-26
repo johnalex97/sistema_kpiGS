@@ -24,6 +24,20 @@ export function ProfileMenu() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelId = "profile-popover";
+
+  useEffect(() => {
+    if (!open) return;
+    const trigger = triggerRef.current;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      trigger?.focus();
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!passwordOpen) return;
@@ -66,7 +80,7 @@ export function ProfileMenu() {
         type="button"
         aria-label="Abrir perfil"
         aria-expanded={open}
-        aria-haspopup="menu"
+        aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((current) => !current)}
       >
         <Avatar initials={initials(user.displayName)} color="#173b5f" small />
@@ -74,7 +88,7 @@ export function ProfileMenu() {
         <ChevronDown size={15} aria-hidden="true" />
       </button>
       {open && (
-        <div className="profile-menu__panel" role="group" aria-label="Perfil de usuario">
+        <div id={panelId} className="profile-menu__panel" role="group" aria-label="Perfil de usuario">
           <p><strong>{user.displayName}</strong><span>{roleName(user.roles[0])}</span></p>
           <button type="button" onClick={() => { setOpen(false); setPasswordOpen(true); }}>
             Cambiar contraseña

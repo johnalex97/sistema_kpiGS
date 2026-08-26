@@ -16,6 +16,24 @@ it("muestra usuario real y cierra sesión", async () => {
   expect(logout).toHaveBeenCalledTimes(1);
 });
 
+it("expone el popover como divulgación y Escape restaura el foco", async () => {
+  const user = userEvent.setup();
+  renderWithAuth(<ProfileMenu />);
+
+  const trigger = screen.getByRole("button", { name: "Abrir perfil" });
+  await user.click(trigger);
+
+  const panel = screen.getByRole("group", { name: "Perfil de usuario" });
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(trigger).toHaveAttribute("aria-controls", panel.id);
+  expect(trigger).not.toHaveAttribute("aria-haspopup", "menu");
+
+  await user.keyboard("{Escape}");
+
+  expect(screen.queryByRole("group", { name: "Perfil de usuario" })).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+});
+
 it("reutiliza el formulario de contraseña en un diálogo que restaura el foco", async () => {
   const user = userEvent.setup();
   renderWithAuth(<ProfileMenu />);
