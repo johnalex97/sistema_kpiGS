@@ -16,6 +16,17 @@ it("muestra usuario real y cierra sesión", async () => {
   expect(logout).toHaveBeenCalledTimes(1);
 });
 
+it("muestra un error seguro y conserva el perfil cuando logout falla", async () => {
+  const user = userEvent.setup();
+  const logout = vi.fn().mockRejectedValue(new Error("network"));
+  renderWithAuth(<ProfileMenu />, { user: adminUser, logout });
+  await user.click(screen.getByRole("button", { name: "Abrir perfil" }));
+  await user.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("No fue posible cerrar sesión. Intenta nuevamente.");
+  expect(screen.getByRole("group", { name: "Perfil de usuario" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeEnabled();
+});
+
 it("expone el popover como divulgación y Escape restaura el foco", async () => {
   const user = userEvent.setup();
   renderWithAuth(<ProfileMenu />);

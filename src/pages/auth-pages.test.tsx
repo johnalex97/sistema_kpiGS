@@ -146,6 +146,16 @@ describe("páginas de autenticación", () => {
     expect(logout).toHaveBeenCalledTimes(1);
   });
 
+  it("mantiene el cambio obligatorio y permite reintentar logout tras un fallo", async () => {
+    const user = userEvent.setup();
+    const logout = vi.fn().mockRejectedValue(new Error("network"));
+    renderWithAuth(<ForcedPasswordChangePage />, { logout, user: provisionalUser });
+    await user.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No fue posible cerrar sesión. Intenta nuevamente.");
+    expect(screen.getByRole("heading", { name: "Protege tu cuenta" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeEnabled();
+  });
+
   it("permite reintentar una restauración de sesión no disponible", async () => {
     const user = userEvent.setup();
     const retry = vi.fn(async () => undefined);

@@ -22,6 +22,8 @@ export function ProfileMenu() {
   const { user, changePassword, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelId = "profile-popover";
@@ -57,6 +59,11 @@ export function ProfileMenu() {
   if (!user) return null;
 
   const closePasswordDialog = () => setPasswordOpen(false);
+  const handleLogout = async () => {
+    if (logoutPending) return;
+    setLogoutError(""); setLogoutPending(true);
+    try { await logout(); } catch { setLogoutError("No fue posible cerrar sesión. Intenta nuevamente."); } finally { setLogoutPending(false); }
+  };
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Tab" && dialogRef.current) {
       const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"));
@@ -93,8 +100,9 @@ export function ProfileMenu() {
           <button type="button" onClick={() => { setOpen(false); setPasswordOpen(true); }}>
             Cambiar contraseña
           </button>
-          <button type="button" onClick={() => void logout()}>
-            Cerrar sesión
+          {logoutError && <p className="auth-form__error" role="alert">{logoutError}</p>}
+          <button type="button" onClick={() => void handleLogout()} disabled={logoutPending}>
+            {logoutPending ? "Cerrando sesión…" : "Cerrar sesión"}
           </button>
         </div>
       )}
