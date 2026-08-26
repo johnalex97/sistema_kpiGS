@@ -39,12 +39,17 @@
 - `npm test`: 13 files, 61 tests passed.
 - `npm run lint`, `npm run build`, `git diff --check`: passed.
 - Browser storage scan (`rg` for storage, cookie, Bearer): no matches in `src`.
-- Backend exact auth command and backend `typecheck` could not run because the
-  worktree lacks installed server dependencies: `supertest` cannot resolve and
-  TypeScript cannot find the `node` type definitions. No install or audit fix
-  was authorized.
+- Backend: `npm ci` completed 409 packages without an audit fix. `npm run
+  db:generate` completed after providing a syntactically valid `DATABASE_URL`
+  and generated Prisma. The default three-route command ran the configured
+  authorization suite (11/11); the config excludes `auth-http` and
+  `auth-service`, so `npm run test:db -- tests/auth/auth-http.test.ts
+  tests/auth/auth-service.test.ts` was run with the existing local `.env`
+  (without printing secrets) and passed 2 files/10 tests. `npm run typecheck`
+  passed. Total named backend suites: 21 tests.
 
 ## Concerns
 
-- Backend auth verification remains environment-blocked by the missing server
-  dependencies above; frontend changes and frontend verification are complete.
+- The backend default test command follows its configured inclusion rules and
+  excludes `auth-http`/`auth-service`; those suites require the explicit
+  database test command documented above.
