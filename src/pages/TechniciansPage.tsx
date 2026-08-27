@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCw, Search, UserPlus } from "lucide-react";
 import { createKpiApi, type KpiApi } from "../api/kpis";
 import { createTechnicianApi, type TechnicianApi } from "../api/technicians";
 import { useAuth } from "../auth/useAuth";
+import { TechnicianActionDialog, type TechnicianActionValue } from "../components/technicians/TechnicianActionDialog";
 import { TechnicianDetail, type TechnicianDetailAction } from "../components/technicians/TechnicianDetail";
 import { TechnicianForm } from "../components/technicians/TechnicianForm";
 import { TechnicianSummary } from "../components/technicians/TechnicianSummary";
@@ -47,6 +48,7 @@ function TechniciansWorkspaceView({ workspace, api, onAction }: { workspace: Tec
 
 function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, canManage }: { workspace: TechniciansWorkspace; api: TechnicianApi; onAction?: (action: TechnicianDetailAction) => void; canViewKpi: boolean; canManage: boolean }) {
   const [form, setForm] = useState<"create" | "edit" | null>(null);
+  const [actionKind, setActionKind] = useState<"status" | "deactivate" | "reactivate" | null>(null);
   const lastTriggerRef = useRef<HTMLElement | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const pagination = workspace.page?.pagination;
@@ -77,8 +79,19 @@ function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, can
   };
   const detailAction = (action: TechnicianDetailAction) => {
     if (action === "edit" && canManage) openForm("edit");
+    else if (action !== "edit" && canManage) { workspace.clearMutationError(); setActionKind(action); }
     onAction?.(action);
   };
+  const closeAction = () => { workspace.clearMutationError(); setActionKind(null); };
+  const confirmAction = async (value: TechnicianActionValue) => {
+    let saved = false;
+    if (actionKind === "status" && "status" in value) saved = await workspace.changeStatus(value.status);
+    else if (actionKind === "deactivate" && "reason" in value) saved = await workspace.deactivate({ reason: value.reason, ...("leftOn" in value && value.leftOn ? { leftOn: value.leftOn } : {}) });
+    else if (actionKind === "reactivate" && "reason" in value) saved = await workspace.reactivate(value.reason);
+    if (saved) setActionKind(null);
+    return saved;
+  };
+  const detailActions: TechnicianDetailAction[] = !canManage || !workspace.selected ? [] : workspace.selected.status === "INACTIVE" ? ["reactivate"] : ["edit", "status", "deactivate"];
 
   return <section className="panel full-panel technicians-workspace">
     <header className="technicians-toolbar"><div><p className="eyebrow">Operación de campo</p><h2>Catálogo técnico</h2><p>Disponibilidad laboral y rendimiento de la semana vigente.</p></div><button className="button button--ghost" type="button" onClick={workspace.retryList}><RefreshCw size={15} aria-hidden="true" />Actualizar</button></header>
@@ -98,8 +111,9 @@ function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, can
     {pagination && pagination.totalPages > 1 && <nav className="technicians-pagination" aria-label="Paginación de técnicos"><button className="button button--ghost" type="button" disabled={pagination.page <= 1} onClick={() => workspace.setFilters({ page: pagination.page - 1 })}>Página anterior</button><span>Página <b>{pagination.page}</b> de {pagination.totalPages}</span><button className="button button--ghost" type="button" aria-label="Página siguiente" disabled={pagination.page >= pagination.totalPages} onClick={() => workspace.setFilters({ page: pagination.page + 1 })}>Siguiente</button></nav>}
     {workspace.detailState === "loading" && <div className="technician-detail-loading" role="status">Cargando detalle del técnico…</div>}
     {workspace.detailState === "error" && !workspace.selected && <div className="technician-detail-error" role="alert"><span>No fue posible cargar el detalle del técnico.</span><button type="button" onClick={retryDetail}>Reintentar detalle</button><button type="button" onClick={closeDetail}>Cerrar</button></div>}
-    {workspace.selected && form !== "edit" && <div className="technician-detail-backdrop"><TechnicianDetail technician={workspace.selected} kpi={selectedKpi} showKpi={canViewKpi} actions={canManage ? ["edit"] : []} onClose={closeDetail} onAction={detailAction} /></div>}
+    {workspace.selected && form !== "edit" && actionKind === null && <div className="technician-detail-backdrop"><TechnicianDetail technician={workspace.selected} kpi={selectedKpi} showKpi={canViewKpi} actions={detailActions} onClose={closeDetail} onAction={detailAction} /></div>}
     {form === "create" && <div className="activity-form-backdrop technician-form-backdrop"><TechnicianForm api={api} apiError={workspace.mutation?.name === "create" ? workspace.mutation.error : null} onCancel={closeForm} onSubmit={async (input) => { const saved = await workspace.createTechnician(input); if (saved) closeForm(); return saved; }} /></div>}
     {form === "edit" && workspace.selected && <div className="activity-form-backdrop technician-form-backdrop"><TechnicianForm variant="edit" technician={workspace.selected} api={api} apiError={workspace.mutation?.name === "update" ? workspace.mutation.error : null} onCancel={closeForm} onSubmit={async (input) => { const saved = await workspace.updateTechnician(input); if (saved) closeForm(); return saved; }} /></div>}
+    {actionKind && workspace.selected && <div className="activity-form-backdrop technician-action-backdrop"><TechnicianActionDialog action={{ kind: actionKind, technician: workspace.selected }} error={workspace.mutation?.name === actionKind ? workspace.mutation.error : null} onCancel={closeAction} onConfirm={confirmAction} /></div>}
   </section>;
 }

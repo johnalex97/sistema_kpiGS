@@ -98,6 +98,62 @@ function pageView(current: TechniciansWorkspace, permissions = ["TECHNICIANS_VIE
 }
 
 describe("TechniciansPage", () => {
+  it("ofrece el ciclo laboral correcto según estado y permiso", () => {
+    const active = workspace({ selected: technician, detailState: "ready" });
+    const view = render(pageView(active, ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+    expect(screen.getByRole("button", { name: "Editar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cambiar estado" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Desactivar" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reactivar" })).not.toBeInTheDocument();
+
+    view.rerender(pageView(workspace({ selected: { ...technician, status: "INACTIVE" }, detailState: "ready" }), ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+    expect(screen.getByRole("button", { name: "Reactivar" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar" })).not.toBeInTheDocument();
+
+    view.rerender(pageView(workspace({ selected: technician, detailState: "ready" }), ["TECHNICIANS_VIEW"]));
+    expect(screen.queryByRole("button", { name: "Cambiar estado" })).not.toBeInTheDocument();
+  });
+
+  it("mantiene el diálogo y sus valores al recuperar un conflicto de versión", async () => {
+    const user = userEvent.setup();
+    const current = workspace({ selected: technician, detailState: "ready", changeStatus: vi.fn(async () => false) });
+    const view = render(pageView(current, ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+
+    await user.click(screen.getByRole("button", { name: "Cambiar estado" }));
+    await user.selectOptions(screen.getByLabelText("Nuevo estado"), "ON_ROUTE");
+    await user.click(screen.getByRole("button", { name: "Guardar estado" }));
+    expect(current.changeStatus).toHaveBeenCalledWith("ON_ROUTE");
+
+    view.rerender(pageView(workspace({
+      selected: { ...technician, version: 5 },
+      detailState: "ready",
+      changeStatus: current.changeStatus,
+      mutation: { name: "status", pending: false, conflict: true, error: "El registro cambió; revisa la versión actual." },
+    }), ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+    expect(screen.getByRole("dialog", { name: "Cambiar estado" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Nuevo estado")).toHaveValue("ON_ROUTE");
+    expect(screen.getByRole("alert")).toHaveTextContent("registro cambió");
+    expect(screen.getByText("Ficha v5")).toBeInTheDocument();
+  });
+
+  it("envía desactivación y reactivación por el workspace", async () => {
+    const user = userEvent.setup();
+    const active = workspace({ selected: technician, detailState: "ready" });
+    const view = render(pageView(active, ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+
+    await user.click(screen.getByRole("button", { name: "Desactivar" }));
+    await user.type(screen.getByLabelText("Motivo"), "Finalización autorizada por operaciones");
+    await user.click(screen.getByRole("button", { name: "Desactivar técnico" }));
+    expect(active.deactivate).toHaveBeenCalledWith({ reason: "Finalización autorizada por operaciones" });
+
+    const inactive = workspace({ selected: { ...technician, status: "INACTIVE" }, detailState: "ready" });
+    view.rerender(pageView(inactive, ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+    await user.click(screen.getByRole("button", { name: "Reactivar" }));
+    await user.type(screen.getByLabelText("Motivo"), "Retorno autorizado por operaciones");
+    await user.click(screen.getByRole("button", { name: "Reactivar técnico" }));
+    expect(inactive.reactivate).toHaveBeenCalledWith("Retorno autorizado por operaciones");
+  });
+
   it("muestra crear y editar sólo con permiso y cierra únicamente tras éxito", async () => {
     const user = userEvent.setup();
     const current = workspace({ selected: technician, detailState: "ready" });
