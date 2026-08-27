@@ -25,6 +25,8 @@ const password = "GeekTechHttp-2026!";
 const createdTechnicianIds: string[] = [];
 let adminId = "";
 let adminEmail = "";
+let readOnlyId = "";
+let readOnlyEmail = "";
 
 beforeAll(async () => {
   await seedDatabase(database);
@@ -33,6 +35,11 @@ beforeAll(async () => {
   });
   adminId = randomUUID();
   adminEmail = `technicians.http.${randomUUID()}@example.test`;
+  const technicianRole = await database.rol.findUniqueOrThrow({
+    where: { code: "TECHNICIAN" },
+  });
+  readOnlyId = randomUUID();
+  readOnlyEmail = `technicians.http.read-only.${randomUUID()}@example.test`;
   await database.usuario.create({
     data: {
       id: adminId,
@@ -47,6 +54,22 @@ beforeAll(async () => {
         maxmem: 16 * 1024 * 1024,
       }),
       roles: { create: { rolId: adminRole.id } },
+    },
+  });
+  await database.usuario.create({
+    data: {
+      id: readOnlyId,
+      email: readOnlyEmail,
+      displayName: "Usuario solo lectura HTTP TÃ©cnicos",
+      status: "ACTIVE",
+      mustChangePassword: false,
+      passwordHash: await hashPassword(password, {
+        N: 1024,
+        r: 8,
+        p: 1,
+        maxmem: 16 * 1024 * 1024,
+      }),
+      roles: { create: { rolId: technicianRole.id } },
     },
   });
 });
@@ -64,17 +87,23 @@ afterAll(async () => {
   });
   await database.usuarioRol.deleteMany({ where: { usuarioId: adminId } });
   await database.usuario.deleteMany({ where: { id: adminId } });
+  await database.sesion.deleteMany({ where: { userId: readOnlyId } });
+  await database.auditoria.deleteMany({
+    where: { entity: "usuario", entityId: readOnlyId },
+  });
+  await database.usuarioRol.deleteMany({ where: { usuarioId: readOnlyId } });
+  await database.usuario.deleteMany({ where: { id: readOnlyId } });
   await disconnectTestDatabase();
 });
 
-async function authenticatedAgent() {
+async function authenticatedAgent(email = adminEmail) {
   const agent = request.agent(
     createApp({ env, logger: silentLogger, database }),
   );
   await agent
     .post("/api/v1/auth/login")
     .set("Origin", allowedOrigin)
-    .send({ email: adminEmail, password })
+    .send({ email, password })
     .expect(200);
   return agent;
 }
@@ -104,6 +133,60 @@ describe("technicians HTTP API", () => {
     expect(provisional.body.errors[0].code).toBe(
       "PASSWORD_CHANGE_REQUIRED",
     );
+    await database.usuario.update({
+      where: { id: adminId },
+      data: { mustChangePassword: false },
+    });
+  });
+
+  it("protects and filters the eligible users endpoint", async () => {
+    const app = createApp({ env, logger: silentLogger, database });
+    await request(app)
+      .get("/api/v1/technicians/eligible-users")
+      .expect(401);
+
+    const readOnlyAgent = await authenticatedAgent(readOnlyEmail);
+    const forbidden = await readOnlyAgent
+      .get("/api/v1/technicians/eligible-users")
+      .expect(403);
+    expect(forbidden.body.error?.code ?? forbidden.body.errors[0]?.code).toBe(
+      "FORBIDDEN",
+    );
+
+    const managerAgent = await authenticatedAgent();
+    const response = await managerAgent
+      .get("/api/v1/technicians/eligible-users?page=1&pageSize=20")
+      .expect(200);
+    expect(response.body.data).toEqual(
+      expect.objectContaining({
+        items: expect.any(Array),
+        pagination: expect.objectContaining({ page: 1, pageSize: 20 }),
+      }),
+    );
+    expect(JSON.stringify(response.body)).not.toContain("passwordHash");
+
+    const search = await managerAgent
+      .get(
+        "/api/v1/technicians/eligible-users?search=solo%20lectura&pageSize=20",
+      )
+      .expect(200);
+    expect(search.body.data.items).toEqual([
+      expect.objectContaining({ id: readOnlyId, email: readOnlyEmail }),
+    ]);
+
+    const invalidTechnicianId = await managerAgent
+      .get("/api/v1/technicians/eligible-users?technicianId=no-es-uuid")
+      .expect(400);
+    expect(invalidTechnicianId.body.errors[0].code).toBe("VALIDATION_ERROR");
+
+    await database.usuario.update({
+      where: { id: adminId },
+      data: { mustChangePassword: true },
+    });
+    const provisional = await managerAgent
+      .get("/api/v1/technicians/eligible-users")
+      .expect(403);
+    expect(provisional.body.errors[0].code).toBe("PASSWORD_CHANGE_REQUIRED");
     await database.usuario.update({
       where: { id: adminId },
       data: { mustChangePassword: false },

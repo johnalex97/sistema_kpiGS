@@ -44,6 +44,13 @@ export function createTechniciansRouter(
   ];
 
   router.get("/", ...readSecurity, controller.list);
+  router.get(
+    "/eligible-users",
+    authentication,
+    requirePasswordChanged,
+    requirePermission("TECHNICIANS_MANAGE"),
+    controller.eligibleUsers,
+  );
   router.get("/:id", ...readSecurity, controller.get);
   router.post("/", ...mutationSecurity, controller.create);
   router.patch("/:id/status", ...mutationSecurity, controller.changeStatus);

@@ -5,6 +5,7 @@ import {
   changeTechnicianStatusSchema,
   createTechnicianSchema,
   deactivateTechnicianSchema,
+  eligibleUserListQuerySchema,
   reactivateTechnicianSchema,
   technicianIdSchema,
   technicianListQuerySchema,
@@ -63,6 +64,18 @@ export function createTechniciansController(service: TechniciansService) {
       try {
         const query = parse(technicianListQuerySchema.safeParse(req.query));
         success(req, res, 200, "Técnicos consultados", await service.list(query));
+      } catch (error) { next(error); }
+    },
+    eligibleUsers: async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const query = parse(eligibleUserListQuerySchema.safeParse(req.query));
+        success(
+          req,
+          res,
+          200,
+          "Usuarios elegibles consultados",
+          await service.listEligibleUsers(query),
+        );
       } catch (error) { next(error); }
     },
     get: async (req: Request, res: Response, next: NextFunction) => {
