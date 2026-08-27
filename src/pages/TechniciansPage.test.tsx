@@ -98,6 +98,30 @@ function pageView(current: TechniciansWorkspace, permissions = ["TECHNICIANS_VIE
 }
 
 describe("TechniciansPage", () => {
+  it("muestra crear y editar sólo con permiso y cierra únicamente tras éxito", async () => {
+    const user = userEvent.setup();
+    const current = workspace({ selected: technician, detailState: "ready" });
+    const eligibleApi = {
+      list: vi.fn(), detail: vi.fn(), eligibleUsers: vi.fn(async () => ({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } })),
+      create: vi.fn(), update: vi.fn(), changeStatus: vi.fn(), deactivate: vi.fn(), reactivate: vi.fn(),
+    } as unknown as TechnicianApi;
+    const view = render(<AuthContext.Provider value={authValue(["TECHNICIANS_VIEW"])}><TechniciansPage workspace={current} api={eligibleApi} /></AuthContext.Provider>);
+    expect(screen.queryByRole("button", { name: "Nuevo técnico" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar" })).not.toBeInTheDocument();
+
+    view.rerender(<AuthContext.Provider value={authValue(["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"])}><TechniciansPage workspace={current} api={eligibleApi} /></AuthContext.Provider>);
+    await user.click(screen.getByRole("button", { name: "Editar" }));
+    expect(screen.getByRole("dialog", { name: "Editar técnico" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(current.updateTechnician).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "Editar técnico" })).not.toBeInTheDocument();
+
+    current.createTechnician = vi.fn(async () => false);
+    await user.click(screen.getByRole("button", { name: "Nuevo técnico" }));
+    await user.type(screen.getByLabelText("Nombre completo"), "Carlos Mejía");
+    await user.click(screen.getByRole("button", { name: "Crear técnico" }));
+    expect(await screen.findByRole("dialog", { name: "Nuevo técnico" })).toBeInTheDocument();
+  });
   it("orienta durante carga, vacío, error recuperable y datos obsoletos", () => {
     const loading = workspace({ page: null, listState: "loading" });
     const empty = workspace({ page: { items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } }, listState: "empty" });
