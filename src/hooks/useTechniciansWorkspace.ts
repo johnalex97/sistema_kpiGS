@@ -61,6 +61,11 @@ export interface UseTechniciansWorkspaceOptions {
   now?: () => Date;
 }
 
+interface MutationTarget {
+  id: string;
+  version: number;
+}
+
 const systemNow = () => new Date();
 
 function isAbortError(error: unknown): boolean {
@@ -86,7 +91,7 @@ function mutationErrorMessage(error: unknown): { message: string; conflict: bool
     TECHNICIAN_HAS_ACTIVE_WORK: "No se puede desactivar el técnico porque tiene trabajo activo.",
     INVALID_TECHNICIAN_STATUS: "El estado seleccionado no es válido para el técnico.",
   };
-  return { message: messages[error.code] ?? errorMessage(error, "No fue posible guardar los cambios"), conflict: false };
+  return { message: messages[error.code] ?? "No fue posible guardar los cambios", conflict: false };
 }
 
 export function useTechniciansWorkspace({
@@ -116,6 +121,7 @@ export function useTechniciansWorkspace({
   const pageRef = useRef(page);
   const selectedRef = useRef(selected);
   const selectedIdRef = useRef<string | null>(null);
+  const canViewKpiRef = useRef(canViewKpi);
   const appliedSearchRef = useRef(search.trim());
   const listControllerRef = useRef<AbortController | null>(null);
   const detailControllerRef = useRef<AbortController | null>(null);
@@ -124,6 +130,14 @@ export function useTechniciansWorkspace({
   const detailGenerationRef = useRef(0);
   const kpiGenerationRef = useRef(0);
   const mutationPendingRef = useRef(false);
+
+  const invalidateKpis = useCallback(() => {
+    kpiGenerationRef.current += 1;
+    kpiControllerRef.current?.abort();
+    kpiControllerRef.current = null;
+    setKpis((current) => current.size === 0 ? current : new Map());
+    setKpiState((current) => current === "idle" ? current : "idle");
+  }, []);
 
   const beginListLoading = useCallback(() => {
     setListState("loading");
@@ -159,11 +173,7 @@ export function useTechniciansWorkspace({
   }, [api]);
 
   const loadKpis = useCallback(async (): Promise<void> => {
-    if (!canViewKpi) {
-      kpiControllerRef.current?.abort();
-      setKpiState("idle");
-      return;
-    }
+    if (!canViewKpiRef.current) return;
     kpiControllerRef.current?.abort();
     const controller = new AbortController();
     kpiControllerRef.current = controller;
@@ -171,14 +181,14 @@ export function useTechniciansWorkspace({
     setKpiState("loading");
     try {
       const dashboard = await kpiApi.getDashboard({ periodStart: currentWeekStart(clock()), granularity: "WEEK" }, controller.signal);
-      if (controller.signal.aborted || generation !== kpiGenerationRef.current) return;
+      if (!canViewKpiRef.current || controller.signal.aborted || generation !== kpiGenerationRef.current) return;
       setKpis(indexTechnicianKpis(dashboard.items));
       setKpiState("ready");
     } catch (error: unknown) {
-      if (controller.signal.aborted || generation !== kpiGenerationRef.current || isAbortError(error)) return;
+      if (!canViewKpiRef.current || controller.signal.aborted || generation !== kpiGenerationRef.current || isAbortError(error)) return;
       setKpiState("error");
     }
-  }, [canViewKpi, clock, kpiApi]);
+  }, [clock, kpiApi]);
 
   const loadDetail = useCallback(async (id: string, silent: boolean): Promise<void> => {
     detailControllerRef.current?.abort();
@@ -211,9 +221,15 @@ export function useTechniciansWorkspace({
   useEffect(() => { pageRef.current = page; }, [page]);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { nowRef.current = now; }, [now]);
+  useEffect(() => { canViewKpiRef.current = canViewKpi; }, [canViewKpi]);
 
   useEffect(() => { void loadList(); }, [loadList, query]);
-  useEffect(() => { void Promise.resolve().then(loadKpis); }, [loadKpis]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      if (!canViewKpiRef.current) return invalidateKpis();
+      return loadKpis();
+    });
+  }, [canViewKpi, invalidateKpis, loadKpis]);
 
   useEffect(() => {
     const normalized = search.trim();
@@ -301,18 +317,27 @@ export function useTechniciansWorkspace({
     setPage(nextPage);
   }, []);
 
-  const handleMutationError = useCallback(async (name: TechnicianMutationName, error: unknown): Promise<boolean> => {
+  const handleMutationError = useCallback(async (
+    name: TechnicianMutationName,
+    target: MutationTarget | null,
+    error: unknown,
+  ): Promise<boolean> => {
     const { message, conflict } = mutationErrorMessage(error);
-    if (error instanceof ApiClientError && error.status === 404) {
+    const targetRemainsSelected = target?.id === selectedIdRef.current;
+    if (error instanceof ApiClientError && error.status === 404 && targetRemainsSelected) {
       closeDetail();
       await loadList();
     }
-    if (conflict && selectedIdRef.current) await loadDetail(selectedIdRef.current, true);
+    if (conflict && target && targetRemainsSelected) await loadDetail(target.id, true);
     setMutation({ name, pending: false, error: message, conflict });
     return false;
   }, [closeDetail, loadDetail, loadList]);
 
-  const executeMutation = useCallback(async (name: TechnicianMutationName, operation: () => Promise<Technician>): Promise<boolean> => {
+  const executeMutation = useCallback(async (
+    name: TechnicianMutationName,
+    target: MutationTarget | null,
+    operation: () => Promise<Technician>,
+  ): Promise<boolean> => {
     if (mutationPendingRef.current) return false;
     mutationPendingRef.current = true;
     setMutation({ name, pending: true, error: null, conflict: false });
@@ -324,28 +349,32 @@ export function useTechniciansWorkspace({
       setMutation({ name, pending: false, error: null, conflict: false });
       return true;
     } catch (error: unknown) {
-      return await handleMutationError(name, error);
+      return await handleMutationError(name, target, error);
     } finally {
       mutationPendingRef.current = false;
     }
   }, [applyTechnician, handleMutationError, refresh]);
 
-  const createTechnician = useCallback((input: CreateTechnicianInput) => executeMutation("create", () => api.create(input)), [api, executeMutation]);
+  const createTechnician = useCallback((input: CreateTechnicianInput) => executeMutation("create", null, () => api.create(input)), [api, executeMutation]);
   const updateTechnician = useCallback((input: Omit<UpdateTechnicianInput, "version">) => {
     const current = selectedRef.current;
-    return current ? executeMutation("update", () => api.update(current.id, { ...input, version: current.version })) : Promise.resolve(false);
+    const target = current && { id: current.id, version: current.version };
+    return target ? executeMutation("update", target, () => api.update(target.id, { ...input, version: target.version })) : Promise.resolve(false);
   }, [api, executeMutation]);
   const changeStatus = useCallback((status: OperationalTechnicianStatus) => {
     const current = selectedRef.current;
-    return current ? executeMutation("status", () => api.changeStatus(current.id, { status, version: current.version })) : Promise.resolve(false);
+    const target = current && { id: current.id, version: current.version };
+    return target ? executeMutation("status", target, () => api.changeStatus(target.id, { status, version: target.version })) : Promise.resolve(false);
   }, [api, executeMutation]);
   const deactivate = useCallback((input: Omit<DeactivateTechnicianInput, "version">) => {
     const current = selectedRef.current;
-    return current ? executeMutation("deactivate", () => api.deactivate(current.id, { ...input, version: current.version })) : Promise.resolve(false);
+    const target = current && { id: current.id, version: current.version };
+    return target ? executeMutation("deactivate", target, () => api.deactivate(target.id, { ...input, version: target.version })) : Promise.resolve(false);
   }, [api, executeMutation]);
   const reactivate = useCallback((reason: string) => {
     const current = selectedRef.current;
-    return current ? executeMutation("reactivate", () => api.reactivate(current.id, { reason, version: current.version })) : Promise.resolve(false);
+    const target = current && { id: current.id, version: current.version };
+    return target ? executeMutation("reactivate", target, () => api.reactivate(target.id, { reason, version: target.version })) : Promise.resolve(false);
   }, [api, executeMutation]);
   const clearMutationError = useCallback(() => setMutation(null), []);
 

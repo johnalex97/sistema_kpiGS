@@ -41,11 +41,16 @@ function kpiApiMock(overrides: Partial<KpiApi> = {}): KpiApi {
   };
 }
 
-interface Deferred<T> { promise: Promise<T>; resolve(value: T): void; }
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+}
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 async function flushPromises() { await act(async () => { await Promise.resolve(); }); }
@@ -75,6 +80,56 @@ describe("useTechniciansWorkspace", () => {
     const { result } = renderHook(() => useTechniciansWorkspace({ api, kpiApi, search: "", canViewKpi: false }));
     await waitFor(() => expect(result.current.listState).toBe("ready"));
     expect(kpiApi.getDashboard).not.toHaveBeenCalled();
+    expect(result.current.kpiState).toBe("idle");
+  });
+
+  it("no inicia KPI si el permiso se revoca antes del microtask programado", async () => {
+    const api = technicianApiMock();
+    const kpiApi = kpiApiMock();
+    const { result, rerender } = renderHook(
+      ({ canViewKpi }) => useTechniciansWorkspace({ api, kpiApi, search: "", canViewKpi }),
+      { initialProps: { canViewKpi: true } },
+    );
+    rerender({ canViewKpi: false });
+    await flushPromises();
+    expect(kpiApi.getDashboard).not.toHaveBeenCalled();
+    expect(result.current.kpis).toEqual(new Map());
+    expect(result.current.kpiState).toBe("idle");
+  });
+
+  it("aborta y limpia KPI pendiente al revocar permiso sin publicar su respuesta", async () => {
+    const pending = deferred<KpiDashboardData>();
+    const api = technicianApiMock();
+    const kpiApi = kpiApiMock({ getDashboard: vi.fn(() => pending.promise) });
+    const { result, rerender } = renderHook(
+      ({ canViewKpi }) => useTechniciansWorkspace({ api, kpiApi, search: "", canViewKpi }),
+      { initialProps: { canViewKpi: true } },
+    );
+    await waitFor(() => expect(kpiApi.getDashboard).toHaveBeenCalledTimes(1));
+    const signal = vi.mocked(kpiApi.getDashboard).mock.calls[0]?.[1] as AbortSignal;
+    rerender({ canViewKpi: false });
+    await flushPromises();
+    expect(signal.aborted).toBe(true);
+    expect(result.current.kpis).toEqual(new Map());
+    expect(result.current.kpiState).toBe("idle");
+    pending.resolve(dashboard);
+    await flushPromises();
+    expect(result.current.kpis).toEqual(new Map());
+    expect(result.current.kpiState).toBe("idle");
+  });
+
+  it("limpia los KPI ya cargados al revocar permiso", async () => {
+    const api = technicianApiMock();
+    const kpiApi = kpiApiMock();
+    const { result, rerender } = renderHook(
+      ({ canViewKpi }) => useTechniciansWorkspace({ api, kpiApi, search: "", canViewKpi }),
+      { initialProps: { canViewKpi: true } },
+    );
+    await waitFor(() => expect(result.current.kpiState).toBe("ready"));
+    expect(result.current.kpis.get(technician.id)).toEqual(dashboard.items[0]);
+    rerender({ canViewKpi: false });
+    await flushPromises();
+    expect(result.current.kpis).toEqual(new Map());
     expect(result.current.kpiState).toBe("idle");
   });
 
@@ -185,6 +240,29 @@ describe("useTechniciansWorkspace", () => {
     expect(api.detail).toHaveBeenLastCalledWith("tech-1", expect.any(AbortSignal));
   });
 
+  it("no cierra ni recarga el detalle nuevo si un 404 pertenece a la mutación anterior", async () => {
+    const second = { ...technician, id: "tech-2", fullName: "Beatriz", version: 4 };
+    const pending = deferred<Technician>();
+    const api = technicianApiMock({
+      detail: vi.fn((id: string) => Promise.resolve(id === technician.id ? technician : second)),
+      update: vi.fn(() => pending.promise),
+    });
+    const { result } = renderHook(() => useTechniciansWorkspace({ api, kpiApi: kpiApiMock(), search: "", canViewKpi: false }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(technician.id));
+    await waitFor(() => expect(result.current.selected?.id).toBe(technician.id));
+    let saving!: Promise<boolean>;
+    act(() => { saving = result.current.updateTechnician({ fullName: "Ana actualizada" }); });
+    await waitFor(() => expect(result.current.mutation?.pending).toBe(true));
+    act(() => result.current.select(second.id));
+    await waitFor(() => expect(result.current.selected).toEqual(second));
+    pending.reject(new ApiClientError(404, "NOT_FOUND", "detalle interno"));
+    await act(async () => expect(await saving).toBe(false));
+    expect(result.current.selected).toEqual(second);
+    expect(result.current.detailState).toBe("ready");
+    expect(api.detail).toHaveBeenCalledTimes(2);
+  });
+
   it("impide doble envío mientras una mutación está pendiente", async () => {
     const pending = deferred<Technician>();
     const api = technicianApiMock({ create: vi.fn(() => pending.promise) });
@@ -212,5 +290,13 @@ describe("useTechniciansWorkspace", () => {
     await waitFor(() => expect(result.current.listState).toBe("ready"));
     await act(async () => expect(await result.current.createTechnician({ fullName: "Beatriz" })).toBe(false));
     expect(result.current.mutation).toMatchObject({ pending: false, conflict: false, error: message });
+  });
+
+  it("oculta el detalle interno de un ApiClientError no reconocido", async () => {
+    const api = technicianApiMock({ create: vi.fn().mockRejectedValue(new ApiClientError(500, "DATABASE_FAILURE", "traza privada")) });
+    const { result } = renderHook(() => useTechniciansWorkspace({ api, kpiApi: kpiApiMock(), search: "", canViewKpi: false }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    await act(async () => expect(await result.current.createTechnician({ fullName: "Beatriz" })).toBe(false));
+    expect(result.current.mutation).toMatchObject({ error: "No fue posible guardar los cambios", conflict: false });
   });
 });
