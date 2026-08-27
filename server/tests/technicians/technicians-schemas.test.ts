@@ -4,6 +4,34 @@ import { createTechnicianSchemas } from "../../src/technicians/technicians.schem
 const schemas = createTechnicianSchemas(() => "2026-07-30");
 
 describe("technician request schemas", () => {
+  it("normalizes and validates eligible user list queries", () => {
+    const technicianId = "10000000-0000-4000-8000-000000000001";
+
+    expect(
+      schemas.eligibleUserListQuerySchema.parse({ search: "  Ana  " }),
+    ).toEqual({
+      search: "Ana",
+      page: 1,
+      pageSize: 20,
+    });
+    expect(
+      schemas.eligibleUserListQuerySchema.parse({
+        technicianId,
+        page: "2",
+        pageSize: "10",
+      }),
+    ).toEqual({ technicianId, page: 2, pageSize: 10 });
+    expect(
+      schemas.eligibleUserListQuerySchema.safeParse({
+        technicianId: "TEC-001",
+      }).success,
+    ).toBe(false);
+    expect(
+      schemas.eligibleUserListQuerySchema.safeParse({ pageSize: 51 })
+        .success,
+    ).toBe(false);
+  });
+
   it("normalizes list defaults and boolean text", () => {
     expect(
       schemas.technicianListQuerySchema.parse({

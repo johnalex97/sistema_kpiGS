@@ -6,6 +6,8 @@ import type {
   ChangeTechnicianStatusInput,
   CreateTechnicianInput,
   DeactivateTechnicianInput,
+  EligibleTechnicianUser,
+  EligibleUserFilters,
   PublicTechnician,
   TechnicianActorContext,
   TechnicianListFilters,
@@ -60,6 +62,9 @@ export interface TechniciansRepository {
   list(
     filters: TechnicianListFilters,
   ): Promise<{ items: TechnicianRecord[]; totalItems: number }>;
+  listEligibleUsers(
+    filters: EligibleUserFilters,
+  ): Promise<{ items: EligibleTechnicianUser[]; totalItems: number }>;
   findById(id: string): Promise<TechnicianRecord | null>;
   findUserEligibility(
     userId: string,
@@ -117,6 +122,12 @@ export const technicianSelect = {
       displayName: true,
     },
   },
+} as const;
+
+const eligibleUserSelect = {
+  id: true,
+  email: true,
+  displayName: true,
 } as const;
 
 function dateOnly(value: Date | null): string | null {
@@ -309,6 +320,60 @@ export function createTechniciansRepository(
         items: items as TechnicianRecord[],
         totalItems,
       };
+    },
+
+    async listEligibleUsers(filters) {
+      const where: Prisma.UsuarioWhereInput = {
+        status: "ACTIVE",
+        deletedAt: null,
+        roles: {
+          some: {
+            rol: {
+              code: "TECHNICIAN",
+              isActive: true,
+              deletedAt: null,
+            },
+          },
+        },
+        OR: [
+          { tecnico: null },
+          ...(filters.technicianId
+            ? [{ tecnico: { is: { id: filters.technicianId } } }]
+            : []),
+        ],
+        ...(filters.search && {
+          AND: [
+            {
+              OR: [
+                {
+                  displayName: {
+                    contains: filters.search,
+                    mode: "insensitive",
+                  },
+                },
+                {
+                  email: {
+                    contains: filters.search,
+                    mode: "insensitive",
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      };
+      const [items, totalItems] = await database.$transaction([
+        database.usuario.findMany({
+          where,
+          select: eligibleUserSelect,
+          orderBy: [{ displayName: "asc" }, { id: "asc" }],
+          skip: (filters.page - 1) * filters.pageSize,
+          take: filters.pageSize,
+        }),
+        database.usuario.count({ where }),
+      ]);
+
+      return { items, totalItems };
     },
 
     async findById(id) {

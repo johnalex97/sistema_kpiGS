@@ -339,6 +339,115 @@ describe("technician repository reads", () => {
       });
     }
   });
+
+  it("lists only eligible technician users and retains the editing link", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const repository = createTechniciansRepository(database);
+    const technicianRole = await database.rol.findUniqueOrThrow({
+      where: { code: "TECHNICIAN" },
+    });
+    const adminRole = await database.rol.findUniqueOrThrow({
+      where: { code: "ADMIN" },
+    });
+    const eligibleId = randomUUID();
+    const inactiveId = randomUUID();
+    const deletedId = randomUUID();
+    const wrongRoleId = randomUUID();
+    const linkedId = randomUUID();
+    const linkedTechnicianId = randomUUID();
+    const userIds = [
+      eligibleId,
+      inactiveId,
+      deletedId,
+      wrongRoleId,
+      linkedId,
+    ];
+
+    try {
+      await database.usuario.create({
+        data: {
+          id: eligibleId,
+          email: `eligible.${suffix}@example.test`,
+          displayName: `A elegible ${suffix}`,
+          status: "ACTIVE",
+          roles: { create: { rolId: technicianRole.id } },
+        },
+      });
+      await database.usuario.create({
+        data: {
+          id: inactiveId,
+          email: `inactive.${suffix}@example.test`,
+          displayName: `B inactivo ${suffix}`,
+          status: "INACTIVE",
+          roles: { create: { rolId: technicianRole.id } },
+        },
+      });
+      await database.usuario.create({
+        data: {
+          id: deletedId,
+          email: `deleted.${suffix}@example.test`,
+          displayName: `C eliminado ${suffix}`,
+          status: "ACTIVE",
+          deletedAt: new Date("2026-07-30T12:00:00.000Z"),
+          roles: { create: { rolId: technicianRole.id } },
+        },
+      });
+      await database.usuario.create({
+        data: {
+          id: wrongRoleId,
+          email: `wrong.${suffix}@example.test`,
+          displayName: `D rol incorrecto ${suffix}`,
+          status: "ACTIVE",
+          roles: { create: { rolId: adminRole.id } },
+        },
+      });
+      await database.usuario.create({
+        data: {
+          id: linkedId,
+          email: `linked.${suffix}@example.test`,
+          displayName: `Z vinculado ${suffix}`,
+          status: "ACTIVE",
+          roles: { create: { rolId: technicianRole.id } },
+          tecnico: {
+            create: {
+              id: linkedTechnicianId,
+              code: `ELIGIBLE-${suffix}`,
+              fullName: `Técnico vinculado ${suffix}`,
+            },
+          },
+        },
+      });
+
+      const page = await repository.listEligibleUsers({
+        search: suffix,
+        page: 1,
+        pageSize: 20,
+      });
+      const editing = await repository.listEligibleUsers({
+        search: suffix,
+        technicianId: linkedTechnicianId,
+        page: 1,
+        pageSize: 20,
+      });
+
+      expect(page.items.map(({ id }) => id)).toEqual([eligibleId]);
+      expect(editing.items.map(({ id }) => id)).toEqual([
+        eligibleId,
+        linkedId,
+      ]);
+      expect(JSON.stringify(editing.items)).not.toContain("password");
+    } finally {
+      await database.tecnico.deleteMany({
+        where: { id: linkedTechnicianId },
+      });
+      await database.usuarioRol.deleteMany({
+        where: { usuarioId: { in: userIds } },
+      });
+      await database.usuario.deleteMany({
+        where: { id: { in: userIds } },
+      });
+    }
+  });
 });
 
 describe("technician persisted mutations", () => {

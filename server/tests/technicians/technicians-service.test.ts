@@ -42,6 +42,7 @@ function repositoryWith(
 ): TechniciansRepository {
   return {
     list: async () => ({ items: [], totalItems: 0 }),
+    listEligibleUsers: async () => ({ items: [], totalItems: 0 }),
     findById: async () => null,
     findUserEligibility: async () => ({ kind: "ELIGIBLE" }),
     create: async () => ({ kind: "CREATED", technician: record }),
@@ -123,6 +124,24 @@ describe("technician read service", () => {
       totalPages: 2,
     });
     expect(result.items[0]?.id).toBe(technicianId);
+  });
+
+  it("returns zero total pages for an empty eligible user list", async () => {
+    const result = await serviceWith(
+      repositoryWith({
+        listEligibleUsers: async () => ({ items: [], totalItems: 0 }),
+      }),
+    ).listEligibleUsers({ page: 1, pageSize: 20 });
+
+    expect(result).toEqual({
+      items: [],
+      pagination: {
+        page: 1,
+        pageSize: 20,
+        totalItems: 0,
+        totalPages: 0,
+      },
+    });
   });
 
   it("returns a technician by identifier", async () => {

@@ -10,6 +10,8 @@ import type {
   ChangeTechnicianStatusInput,
   CreateTechnicianInput,
   DeactivateTechnicianInput,
+  EligibleUserFilters,
+  EligibleUserListResult,
   PublicTechnician,
   TechnicianActorContext,
   TechnicianListFilters,
@@ -20,6 +22,9 @@ import type {
 
 export interface TechniciansService {
   list(filters: TechnicianListFilters): Promise<TechnicianListResult>;
+  listEligibleUsers(
+    filters: EligibleUserFilters,
+  ): Promise<EligibleUserListResult>;
   getById(id: string): Promise<PublicTechnician>;
   create(
     input: CreateTechnicianInput,
@@ -154,6 +159,22 @@ export function createTechniciansService(
       const result = await repository.list(filters);
       return {
         items: result.items.map(mapPublicTechnician),
+        pagination: {
+          page: filters.page,
+          pageSize: filters.pageSize,
+          totalItems: result.totalItems,
+          totalPages:
+            result.totalItems === 0
+              ? 0
+              : Math.ceil(result.totalItems / filters.pageSize),
+        },
+      };
+    },
+
+    async listEligibleUsers(filters) {
+      const result = await repository.listEligibleUsers(filters);
+      return {
+        items: result.items,
         pagination: {
           page: filters.page,
           pageSize: filters.pageSize,

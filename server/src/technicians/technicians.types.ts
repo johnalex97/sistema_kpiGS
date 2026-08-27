@@ -47,6 +47,29 @@ export interface TechnicianListResult {
   };
 }
 
+export interface EligibleTechnicianUser {
+  id: string;
+  email: string;
+  displayName: string;
+}
+
+export interface EligibleUserFilters {
+  search?: string | undefined;
+  technicianId?: string | undefined;
+  page: number;
+  pageSize: number;
+}
+
+export interface EligibleUserListResult {
+  items: EligibleTechnicianUser[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
+}
+
 export interface CreateTechnicianInput {
   fullName: string;
   specialty?: string | null | undefined;
