@@ -42,6 +42,10 @@ function TechniciansWorkspaceView({ workspace, api, onAction }: { workspace: Tec
   const { hasPermission } = useAuth();
   const canViewKpi = hasPermission("KPI_VIEW_ALL");
   const canManage = hasPermission("TECHNICIANS_MANAGE");
+  return <TechniciansWorkspaceContent key={canManage ? "managed" : "read-only"} workspace={workspace} api={api} onAction={onAction} canViewKpi={canViewKpi} canManage={canManage} />;
+}
+
+function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, canManage }: { workspace: TechniciansWorkspace; api: TechnicianApi; onAction?: (action: TechnicianDetailAction) => void; canViewKpi: boolean; canManage: boolean }) {
   const [form, setForm] = useState<"create" | "edit" | null>(null);
   const lastTriggerRef = useRef<HTMLElement | null>(null);
   const selectedIdRef = useRef<string | null>(null);

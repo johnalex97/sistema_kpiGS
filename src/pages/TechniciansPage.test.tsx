@@ -121,6 +121,9 @@ describe("TechniciansPage", () => {
     await user.type(screen.getByLabelText("Nombre completo"), "Carlos Mejía");
     await user.click(screen.getByRole("button", { name: "Crear técnico" }));
     expect(await screen.findByRole("dialog", { name: "Nuevo técnico" })).toBeInTheDocument();
+
+    view.rerender(<AuthContext.Provider value={authValue(["TECHNICIANS_VIEW"])}><TechniciansPage workspace={current} api={eligibleApi} /></AuthContext.Provider>);
+    expect(screen.queryByRole("dialog", { name: "Nuevo técnico" })).not.toBeInTheDocument();
   });
   it("orienta durante carga, vacío, error recuperable y datos obsoletos", () => {
     const loading = workspace({ page: null, listState: "loading" });
