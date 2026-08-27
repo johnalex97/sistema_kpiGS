@@ -6,6 +6,7 @@ export interface TechnicianQueryState {
 }
 
 const PAGE_SIZE = 20;
+const KPI_TIME_ZONE = "America/Tegucigalpa";
 const ownedSearchParams = [
   "technicianSearch",
   "technicianStatus",
@@ -61,13 +62,20 @@ export function serializeTechnicianSearch(search: string, state: TechnicianQuery
 }
 
 export function currentWeekStart(date: Date): string {
-  const monday = new Date(date.getTime());
-  const day = monday.getDay();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: KPI_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = (type: "year" | "month" | "day") => Number(parts.find((part) => part.type === type)?.value);
+  const monday = new Date(Date.UTC(value("year"), value("month") - 1, value("day")));
+  const day = monday.getUTCDay();
   const daysSinceMonday = day === 0 ? 6 : day - 1;
-  monday.setDate(monday.getDate() - daysSinceMonday);
-  const year = monday.getFullYear();
-  const month = String(monday.getMonth() + 1).padStart(2, "0");
-  const dayOfMonth = String(monday.getDate()).padStart(2, "0");
+  monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);
+  const year = monday.getUTCFullYear();
+  const month = String(monday.getUTCMonth() + 1).padStart(2, "0");
+  const dayOfMonth = String(monday.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${dayOfMonth}`;
 }
 

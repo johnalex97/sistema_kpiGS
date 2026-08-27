@@ -29,7 +29,8 @@ function technicianPath(id: string, operation?: string): string {
 
 function listQuery(filters: TechnicianListFilters): string {
   const query = new URLSearchParams();
-  if (filters.search !== undefined && filters.search !== "") query.set("search", filters.search);
+  const search = filters.search?.trim();
+  if (search) query.set("search", search);
   if (filters.status !== undefined) query.set("status", filters.status);
   query.set("includeInactive", String(filters.includeInactive));
   query.set("page", String(filters.page));
@@ -39,7 +40,8 @@ function listQuery(filters: TechnicianListFilters): string {
 
 function eligibleUsersQuery(search: string, page: number, technicianId?: string): string {
   const query = new URLSearchParams();
-  if (search !== "") query.set("search", search);
+  const normalizedSearch = search.trim();
+  if (normalizedSearch) query.set("search", normalizedSearch);
   query.set("page", String(page));
   query.set("pageSize", "20");
   if (technicianId !== undefined) query.set("technicianId", technicianId);

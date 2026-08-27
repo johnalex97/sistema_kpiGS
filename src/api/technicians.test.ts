@@ -88,6 +88,36 @@ describe("createTechnicianApi", () => {
     expect(eligibleInit).toEqual(expect.objectContaining({ credentials: "include", signal: controller.signal }));
   });
 
+  it("recorta las búsquedas antes de serializar listado y usuarios elegibles", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(technicianPage))
+      .mockResolvedValueOnce(jsonResponse(eligibleUserPage));
+    const api = createTechnicianApi();
+
+    await api.list({ search: "  Ana López  ", includeInactive: false, page: 1, pageSize: 20 });
+    await api.eligibleUsers("  Ana López  ", 1);
+
+    const listUrl = new URL(String(vi.mocked(fetch).mock.calls[0]![0]), "http://localhost");
+    const eligibleUrl = new URL(String(vi.mocked(fetch).mock.calls[1]![0]), "http://localhost");
+    expect(listUrl.searchParams.get("search")).toBe("Ana López");
+    expect(eligibleUrl.searchParams.get("search")).toBe("Ana López");
+  });
+
+  it("omite las búsquedas compuestas sólo de espacios", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(technicianPage))
+      .mockResolvedValueOnce(jsonResponse(eligibleUserPage));
+    const api = createTechnicianApi();
+
+    await api.list({ search: "   ", includeInactive: false, page: 1, pageSize: 20 });
+    await api.eligibleUsers("   ", 1);
+
+    const listUrl = new URL(String(vi.mocked(fetch).mock.calls[0]![0]), "http://localhost");
+    const eligibleUrl = new URL(String(vi.mocked(fetch).mock.calls[1]![0]), "http://localhost");
+    expect(listUrl.searchParams.has("search")).toBe(false);
+    expect(eligibleUrl.searchParams.has("search")).toBe(false);
+  });
+
   it.each<{
     name: string;
     path: string;

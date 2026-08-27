@@ -59,8 +59,19 @@ describe("estado URL de técnicos", () => {
     expect(query.has("technicianPageSize")).toBe(false);
   });
 
-  it("calcula el lunes de la semana usando el calendario local", () => {
+  it("calcula el lunes de la semana KPI en America/Tegucigalpa", () => {
     expect(currentWeekStart(new Date("2026-08-27T12:00:00-06:00"))).toBe("2026-08-24");
+  });
+
+  it("conserva la semana KPI previa en el límite domingo-lunes de un navegador UTC", () => {
+    const environment = (globalThis as typeof globalThis & { process: { env: { TZ?: string } } }).process.env;
+    const originalTimeZone = environment.TZ;
+    environment.TZ = "UTC";
+    try {
+      expect(currentWeekStart(new Date("2026-08-31T05:30:00.000Z"))).toBe("2026-08-24");
+    } finally {
+      environment.TZ = originalTimeZone;
+    }
   });
 });
 

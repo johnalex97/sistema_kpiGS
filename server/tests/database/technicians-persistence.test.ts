@@ -340,9 +340,14 @@ describe("technician repository reads", () => {
     }
   });
 
-  it("lists only eligible technician users and retains the editing link", async () => {
+  it("lists eligible technician users in stable pages and retains the editing link", async () => {
     const suffix = randomUUID().slice(0, 8);
     const repository = createTechniciansRepository(database);
+    const service = createTechniciansService({
+      repository,
+      now: () => new Date("2026-08-27T18:00:00.000Z"),
+      today: () => "2026-08-27",
+    });
     const technicianRole = await database.rol.findUniqueOrThrow({
       where: { code: "TECHNICIAN" },
     });
@@ -418,24 +423,31 @@ describe("technician repository reads", () => {
         },
       });
 
-      const page = await repository.listEligibleUsers({
+      const page = await service.listEligibleUsers({
         search: suffix,
         page: 1,
-        pageSize: 20,
+        pageSize: 1,
       });
-      const editing = await repository.listEligibleUsers({
+      const editingFirstPage = await service.listEligibleUsers({
         search: suffix,
         technicianId: linkedTechnicianId,
         page: 1,
-        pageSize: 20,
+        pageSize: 1,
+      });
+      const editingSecondPage = await service.listEligibleUsers({
+        search: suffix,
+        technicianId: linkedTechnicianId,
+        page: 2,
+        pageSize: 1,
       });
 
       expect(page.items.map(({ id }) => id)).toEqual([eligibleId]);
-      expect(editing.items.map(({ id }) => id)).toEqual([
-        eligibleId,
-        linkedId,
-      ]);
-      expect(JSON.stringify(editing.items)).not.toContain("password");
+      expect(page.pagination).toEqual({ page: 1, pageSize: 1, totalItems: 1, totalPages: 1 });
+      expect(editingFirstPage.items.map(({ id }) => id)).toEqual([eligibleId]);
+      expect(editingSecondPage.items.map(({ id }) => id)).toEqual([linkedId]);
+      expect(editingFirstPage.pagination).toEqual({ page: 1, pageSize: 1, totalItems: 2, totalPages: 2 });
+      expect(editingSecondPage.pagination).toEqual({ page: 2, pageSize: 1, totalItems: 2, totalPages: 2 });
+      expect(JSON.stringify([...editingFirstPage.items, ...editingSecondPage.items])).not.toContain("password");
     } finally {
       await database.tecnico.deleteMany({
         where: { id: linkedTechnicianId },
