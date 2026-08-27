@@ -114,6 +114,20 @@ describe("TechniciansPage", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Los datos pueden estar desactualizados");
   });
 
+  it("anuncia la actualización sin ocultar la página ni los filtros conservados", () => {
+    const refreshing = workspace({
+      listState: "loading",
+      query: { filters: { status: "ON_ROUTE", page: 2, pageSize: 20, includeInactive: true } },
+    });
+
+    render(pageView(refreshing));
+
+    expect(screen.getByRole("status")).toHaveTextContent("Actualizando técnicos");
+    expect(screen.getByText("Ana López")).toBeInTheDocument();
+    expect(screen.getByLabelText("Estado del técnico")).toHaveValue("ON_ROUTE");
+    expect(screen.getByLabelText("Incluir técnicos inactivos")).toBeChecked();
+  });
+
   it("aplica estado, inactivos y paginación mediante el workspace", async () => {
     const user = userEvent.setup();
     const current = workspace();
@@ -138,6 +152,19 @@ describe("TechniciansPage", () => {
     view.rerender(pageView(workspace({ selected: technician, detailState: "ready", closeDetail: current.closeDetail }), ["TECHNICIANS_VIEW"]));
     expect(screen.getByRole("dialog", { name: "Detalle del técnico" })).toBeInTheDocument();
     expect(screen.queryByText("Productividad")).not.toBeInTheDocument();
+  });
+
+  it("permite reintentar un detalle fallido sin perder el técnico elegido", async () => {
+    const user = userEvent.setup();
+    const current = workspace();
+    const view = render(pageView(current));
+
+    await user.click(screen.getByRole("button", { name: "Ver técnico Ana López" }));
+    view.rerender(pageView(workspace({ detailState: "error", select: current.select })));
+    await user.click(screen.getByRole("button", { name: "Reintentar detalle" }));
+
+    expect(current.select).toHaveBeenCalledTimes(2);
+    expect(current.select).toHaveBeenLastCalledWith(technician.id);
   });
 
   it("conecta APIs inyectadas y consulta el KPI de la semana de Tegucigalpa", async () => {

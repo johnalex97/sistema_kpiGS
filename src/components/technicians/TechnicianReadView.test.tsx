@@ -67,6 +67,8 @@ describe("lectura de técnicos", () => {
     expect(screen.getByText("Ana López")).toBeInTheDocument();
     expect(screen.getByText("Disponible")).toBeInTheDocument();
     expect(screen.getByText("91.25")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Calidad real" })).toBeInTheDocument();
+    expect(screen.getByText("91.10")).toBeInTheDocument();
     expect(screen.getByText("8.5 / 10")).toBeInTheDocument();
     expect(screen.getByText("6 h 05 min")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Ver técnico Ana López" }));
@@ -77,7 +79,9 @@ describe("lectura de técnicos", () => {
     render(<TechnicianTable technicians={[ana]} kpis={new Map([[ana.id, kpi]])} showKpi={false} onSelect={vi.fn()} />);
 
     expect(screen.queryByRole("columnheader", { name: "KPI semanal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Calidad real" })).not.toBeInTheDocument();
     expect(screen.queryByText("91.25")).not.toBeInTheDocument();
+    expect(screen.queryByText("91.10")).not.toBeInTheDocument();
     expect(screen.queryByText("Productividad")).not.toBeInTheDocument();
   });
 
