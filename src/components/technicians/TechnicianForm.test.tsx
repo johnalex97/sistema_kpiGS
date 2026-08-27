@@ -161,6 +161,42 @@ describe("EligibleUserCombobox", () => {
     expect(screen.getByRole("option", { name: "Ana López · ana@geek.test" })).toBeInTheDocument();
     expect(eligibleUsers.mock.calls.map((call) => call[1])).toEqual([1, 2, 2]);
   });
+
+  it("secuencia tres páginas sin avanzar durante carga ni error", async () => {
+    const user = userEvent.setup();
+    let rejectPage2: ((error: unknown) => void) | undefined;
+    let resolvePage2Retry: ((value: EligibleUserPage) => void) | undefined;
+    let page2Attempts = 0;
+    const eligibleUsers = vi.fn((_search: string, requestedPage: number): Promise<EligibleUserPage> => {
+      if (requestedPage === 1) return Promise.resolve({ items: [eligibleAna], pagination: { ...pagination, totalItems: 3, totalPages: 3 } });
+      if (requestedPage === 2 && page2Attempts++ === 0) {
+        return new Promise((_resolve, reject) => { rejectPage2 = reject; });
+      }
+      if (requestedPage === 2) {
+        return new Promise((resolve) => { resolvePage2Retry = resolve; });
+      }
+      return Promise.resolve({ items: [{ id: "user-3", displayName: "Carla Paz", email: "carla@geek.test" }], pagination: { ...pagination, page: 3, totalItems: 3, totalPages: 3 } });
+    });
+    render(<EligibleUserCombobox api={api({ eligibleUsers })} value={null} onChange={vi.fn()} />);
+    fireEvent.focus(screen.getByRole("combobox", { name: "Usuario vinculado" }));
+    expect(await screen.findByRole("option", { name: "Ana López · ana@geek.test" })).toBeInTheDocument();
+
+    await user.dblClick(screen.getByRole("button", { name: "Cargar más usuarios" }));
+    expect(eligibleUsers.mock.calls.map((call) => call[1])).toEqual([1, 2]);
+    expect(screen.queryByRole("button", { name: "Cargar más usuarios" })).not.toBeInTheDocument();
+
+    await act(async () => { rejectPage2?.(new Error("fallo temporal de página 2")); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("No fue posible cargar los usuarios elegibles.");
+    expect(screen.queryByRole("button", { name: "Cargar más usuarios" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reintentar usuarios elegibles" }));
+    expect(eligibleUsers.mock.calls.map((call) => call[1])).toEqual([1, 2, 2]);
+
+    await act(async () => { resolvePage2Retry?.({ items: [eligibleBeto], pagination: { ...pagination, page: 2, totalItems: 3, totalPages: 3 } }); });
+    expect(await screen.findByRole("option", { name: "Beto Ruiz · beto@geek.test" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cargar más usuarios" }));
+    expect(await screen.findByRole("option", { name: "Carla Paz · carla@geek.test" })).toBeInTheDocument();
+    expect(eligibleUsers.mock.calls.map((call) => call[1])).toEqual([1, 2, 2, 3]);
+  });
 });
 
 describe("TechnicianForm", () => {

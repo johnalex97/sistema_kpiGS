@@ -125,7 +125,7 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
       {!loading && loadError && <div role="alert"><p>No fue posible cargar los usuarios elegibles.</p><button type="button" aria-label="Reintentar usuarios elegibles" onClick={retry}>Reintentar</button></div>}
       {!loading && !loadError && items.length === 0 && <p>No hay usuarios elegibles para esta búsqueda.</p>}
       {items.map((user) => <button type="button" role="option" aria-selected={value?.id === user.id} key={user.id} onClick={() => { selectedRef.current = user; setQuery(optionLabel(user)); setSearch(""); setOpen(false); onChange(user); }}>{optionLabel(user)}</button>)}
-      {page < totalPages && <button className="lookup-combobox__more" type="button" aria-label="Cargar más usuarios" onClick={() => { setLoading(true); setPage((current) => current + 1); }}>Cargar más</button>}
+      {!loading && !loadError && page < totalPages && <button className="lookup-combobox__more" type="button" aria-label="Cargar más usuarios" onClick={() => { setLoading(true); setPage((current) => current + 1); }}>Cargar más</button>}
     </div>}
   </div>;
 }
