@@ -205,6 +205,26 @@ describe("useTechniciansWorkspace", () => {
     }), expect.any(AbortSignal));
   });
 
+  it("limpia la búsqueda persistida cuando la prop externa cambia realmente a vacío", async () => {
+    vi.useFakeTimers();
+    window.history.replaceState({}, "", "/tecnicos?technicianSearch=Persistida&technicianPage=3");
+    const api = technicianApiMock();
+    const { result, rerender } = renderHook(
+      ({ search }) => useTechniciansWorkspace({ api, kpiApi: kpiApiMock(), search, canViewKpi: false }),
+      { initialProps: { search: "Ana" } },
+    );
+    await act(async () => undefined);
+    expect(result.current.query.filters.search).toBe("Ana");
+
+    rerender({ search: "" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+
+    expect(result.current.query.filters.search).toBeUndefined();
+    expect(result.current.query.filters.page).toBe(1);
+    expect(new URLSearchParams(window.location.search).has("technicianSearch")).toBe(false);
+    expect(api.list).toHaveBeenLastCalledWith(expect.not.objectContaining({ search: expect.anything() }), expect.any(AbortSignal));
+  });
+
   it("carga detalle y aborta su solicitud al desmontarse", async () => {
     const pending = deferred<Technician>();
     const api = technicianApiMock({ detail: vi.fn(() => pending.promise) });

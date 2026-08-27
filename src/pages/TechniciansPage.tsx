@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw, Search, UserPlus } from "lucide-react";
 import { createKpiApi, type KpiApi } from "../api/kpis";
 import { createTechnicianApi, type TechnicianApi } from "../api/technicians";
@@ -52,6 +52,7 @@ function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, can
   const [detailSuppressed, setDetailSuppressed] = useState(false);
   const lastTriggerRef = useRef<HTMLElement | null>(null);
   const selectedIdRef = useRef<string | null>(null);
+  const returnActionRef = useRef<TechnicianDetailAction | null>(null);
   const pagination = workspace.page?.pagination;
   const selectedKpi = workspace.selected ? workspace.kpis.get(workspace.selected.id) : undefined;
   const selectTechnician = workspace.select;
@@ -71,6 +72,18 @@ function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, can
   const retryDetail = useCallback(() => {
     if (selectedIdRef.current) selectTechnician(selectedIdRef.current);
   }, [selectTechnician]);
+  useEffect(() => {
+    if (form !== null || actionKind !== null || !workspace.selected || detailSuppressed) return;
+    const action = returnActionRef.current;
+    if (!action) return;
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      document.querySelector<HTMLElement>(`[data-technician-action="${action}"]`)?.focus();
+      returnActionRef.current = null;
+    });
+    return () => { cancelled = true; };
+  }, [actionKind, detailSuppressed, form, workspace.selected]);
   const openForm = (kind: "create" | "edit") => {
     workspace.clearMutationError();
     if (kind === "create" && (workspace.selected || workspace.detailState !== "idle")) {
@@ -85,6 +98,7 @@ function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, can
     setForm(null);
   };
   const detailAction = (action: TechnicianDetailAction) => {
+    returnActionRef.current = action;
     if (action === "edit" && canManage) openForm("edit");
     else if (action !== "edit" && canManage) { workspace.clearMutationError(); setActionKind(action); }
     onAction?.(action);

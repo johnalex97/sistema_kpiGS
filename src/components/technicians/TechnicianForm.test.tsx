@@ -142,6 +142,25 @@ describe("EligibleUserCombobox", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reintentar usuarios elegibles" }));
     expect(await screen.findByRole("option", { name: "Ana López · ana@geek.test" })).toBeInTheDocument();
   });
+
+  it("conserva la página acumulada y reintenta la misma página tras un error", async () => {
+    const eligibleUsers = vi.fn()
+      .mockResolvedValueOnce({ items: [eligibleAna], pagination: { ...pagination, totalItems: 2, totalPages: 2 } })
+      .mockRejectedValueOnce(new Error("fallo interno página 2"))
+      .mockResolvedValueOnce({ items: [eligibleBeto], pagination: { ...pagination, page: 2, totalItems: 2, totalPages: 2 } });
+    render(<EligibleUserCombobox api={api({ eligibleUsers })} value={null} onChange={vi.fn()} />);
+    fireEvent.focus(screen.getByRole("combobox", { name: "Usuario vinculado" }));
+    expect(await screen.findByRole("option", { name: "Ana López · ana@geek.test" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más usuarios" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No fue posible cargar los usuarios elegibles.");
+    expect(screen.getByRole("option", { name: "Ana López · ana@geek.test" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar usuarios elegibles" }));
+
+    expect(await screen.findByRole("option", { name: "Beto Ruiz · beto@geek.test" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Ana López · ana@geek.test" })).toBeInTheDocument();
+    expect(eligibleUsers.mock.calls.map((call) => call[1])).toEqual([1, 2, 2]);
+  });
 });
 
 describe("TechnicianForm", () => {

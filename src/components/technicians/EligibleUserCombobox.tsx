@@ -64,8 +64,10 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
     }).catch((error: unknown) => {
       if (controller.signal.aborted || generation !== generationRef.current) return;
       if (!(error instanceof Error && error.name === "AbortError")) {
-        setItems([]);
-        setTotalPages(1);
+        if (page === 1) {
+          setItems([]);
+          setTotalPages(1);
+        }
         setLoadError(true);
       }
     }).finally(() => {

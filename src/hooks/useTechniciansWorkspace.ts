@@ -125,7 +125,7 @@ export function useTechniciansWorkspace({
   const selectedRef = useRef(selected);
   const selectedIdRef = useRef<string | null>(null);
   const canViewKpiRef = useRef(canViewKpi);
-  const appliedSearchRef = useRef(search.trim() || query.filters.search || "");
+  const externalSearchRef = useRef(search.trim());
   const listControllerRef = useRef<AbortController | null>(null);
   const detailControllerRef = useRef<AbortController | null>(null);
   const kpiControllerRef = useRef<AbortController | null>(null);
@@ -236,10 +236,10 @@ export function useTechniciansWorkspace({
 
   useEffect(() => {
     const normalized = search.trim();
-    if (!normalized) return;
-    if (normalized === appliedSearchRef.current) return;
+    const previous = externalSearchRef.current;
+    if (normalized === previous) return;
+    externalSearchRef.current = normalized;
     const timer = window.setTimeout(() => {
-      appliedSearchRef.current = normalized;
       beginListLoading();
       setQuery((current) => ({ ...current, filters: { ...current.filters, search: normalized || undefined, page: 1 } }));
     }, 300);
@@ -257,7 +257,6 @@ export function useTechniciansWorkspace({
   useEffect(() => {
     const handlePopState = () => {
       const parsed = parseTechnicianSearch(window.location.search);
-      appliedSearchRef.current = parsed.filters.search ?? "";
       beginListLoading();
       setQuery(parsed);
     };

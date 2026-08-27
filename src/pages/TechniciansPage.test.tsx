@@ -200,6 +200,22 @@ describe("TechniciansPage", () => {
     expect(current.closeDetail).toHaveBeenCalledOnce();
     expect(createButton).toHaveFocus();
   });
+
+  it("restaura el foco a la acción exacta del detalle al cerrar overlays", async () => {
+    const user = userEvent.setup();
+    const current = workspace({ selected: technician, detailState: "ready" });
+    render(pageView(current, ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+
+    const editButton = screen.getByRole("button", { name: "Editar" });
+    await user.click(editButton);
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.getByRole("button", { name: "Editar" })).toHaveFocus();
+
+    const statusButton = screen.getByRole("button", { name: "Cambiar estado" });
+    await user.click(statusButton);
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.getByRole("button", { name: "Cambiar estado" })).toHaveFocus();
+  });
   it("orienta durante carga, vacío, error recuperable y datos obsoletos", () => {
     const loading = workspace({ page: null, listState: "loading" });
     const empty = workspace({ page: { items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } }, listState: "empty" });
