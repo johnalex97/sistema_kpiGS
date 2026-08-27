@@ -2,6 +2,8 @@ import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } fr
 import { ChevronDown, LoaderCircle, Search, X } from "lucide-react";
 import type { ActivityLookupApi } from "../../api/activity-lookups";
 import type {
+  ActivityDetail,
+  ActivityEditValue,
   ActivityFormActor,
   ActivityFormValue,
   ActivityTeamInput,
@@ -58,29 +60,46 @@ function LookupCombobox<T,>({ label, placeholder, fetchPage, getKey, getLabel, o
   </div>;
 }
 
-export interface ActivityFormProps {
+interface ActivityFormBaseProps {
   mode?: "scheduled" | "manual";
   activityTypes: ActivityType[];
   lookupApi: ActivityLookupApi;
   actor: ActivityFormActor;
   now?: () => Date;
-  onSubmit(value: ActivityFormValue): Promise<void>;
   onCancel(): void;
 }
+
+interface CreateActivityFormProps extends ActivityFormBaseProps {
+  variant?: "create";
+  initialActivity?: never;
+  onSubmit(value: ActivityFormValue): Promise<void>;
+}
+
+interface EditActivityFormProps extends ActivityFormBaseProps {
+  variant: "edit";
+  initialActivity: ActivityDetail;
+  onSubmit(value: ActivityEditValue): Promise<void>;
+}
+
+export type ActivityFormProps = CreateActivityFormProps | EditActivityFormProps;
 
 function localDateTimeWithTegucigalpaOffset(value: string): string {
   return `${value.length === 16 ? `${value}:00.000` : value}-06:00`;
 }
 
-export function ActivityForm({ mode: initialMode = "scheduled", activityTypes, lookupApi, actor, now = () => new Date(), onSubmit, onCancel }: ActivityFormProps) {
+export function ActivityForm(props: ActivityFormProps) {
+  const { activityTypes, lookupApi, actor, now = () => new Date(), onCancel } = props;
+  const isEdit = props.variant === "edit";
+  const initialActivity = isEdit ? props.initialActivity : undefined;
+  const initialMode = props.mode ?? "scheduled";
   const [mode, setMode] = useState<"scheduled" | "manual">(initialMode);
   const [source, setSource] = useState<"order" | "branch">("order");
   const [orderId, setOrderId] = useState<string>();
   const [client, setClient] = useState<ClientOption>();
   const [branchId, setBranchId] = useState<string>();
-  const [activityTypeId, setActivityTypeId] = useState("");
-  const [description, setDescription] = useState("");
-  const [observations, setObservations] = useState("");
+  const [activityTypeId, setActivityTypeId] = useState(initialActivity?.activityType.id ?? "");
+  const [description, setDescription] = useState(initialActivity?.description ?? "");
+  const [observations, setObservations] = useState(initialActivity?.observations ?? "");
   const [startedAt, setStartedAt] = useState("");
   const [endedAt, setEndedAt] = useState("");
   const [result, setResult] = useState("");
@@ -91,14 +110,14 @@ export function ActivityForm({ mode: initialMode = "scheduled", activityTypes, l
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    if (!actor.canManage) return;
+    if (!actor.canManage || isEdit) return;
     const controller = new AbortController();
     lookupApi.technicians("", 1, controller.signal).then((page) => {
       setTechnicians(page.items);
       setTeam((current) => current.length > 0 || page.items.length === 0 ? current : [{ technicianId: page.items[0].id, role: "RESPONSIBLE", participationPercentage: "100.00" }]);
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [actor.canManage, lookupApi]);
+  }, [actor.canManage, isEdit, lookupApi]);
 
   const setOrigin = (nextSource: "order" | "branch") => {
     setSource(nextSource);
@@ -110,6 +129,12 @@ export function ActivityForm({ mode: initialMode = "scheduled", activityTypes, l
     event.preventDefault();
     setFormError(null);
     if (!activityTypeId || !description.trim()) { setFormError("Selecciona el tipo y escribe la descripción."); return; }
+    if (isEdit) {
+      const value: ActivityEditValue = { activityTypeId, description: description.trim(), observations: observations.trim() || null };
+      setPending(true);
+      try { await props.onSubmit(value); } finally { setPending(false); }
+      return;
+    }
     if (source === "order" ? !orderId : !branchId) { setFormError(source === "order" ? "Selecciona una orden." : "Selecciona una sucursal."); return; }
     if (actor.canManage) {
       const teamErrors = activityTeamErrors(team);
@@ -135,7 +160,7 @@ export function ActivityForm({ mode: initialMode = "scheduled", activityTypes, l
       value = { mode: "manual", ...common, startedAt: started, endedAt: ended, result: result.trim(), justification: justification.trim() };
     } else value = { mode: "scheduled", ...common };
     setPending(true);
-    try { await onSubmit(value); } finally { setPending(false); }
+    try { await props.onSubmit(value); } finally { setPending(false); }
   };
 
   const orderLabel = (option: OrderOption) => `${option.orderNumber} · ${option.clientName} · ${option.branchName}`;
@@ -143,24 +168,24 @@ export function ActivityForm({ mode: initialMode = "scheduled", activityTypes, l
   const branchLabel = (option: BranchOption) => `${option.code} · ${option.name} · ${option.address}`;
 
   return <form className="activity-form" noValidate onSubmit={submit}>
-    <header className="activity-form__head"><div><p className="eyebrow">Registro operativo</p><h2>Nueva actividad</h2><span>Documenta el trabajo en el momento o carga una visita ya finalizada.</span></div><button className="icon-button" type="button" aria-label="Cerrar formulario" onClick={onCancel}><X size={18} /></button></header>
+    <header className="activity-form__head"><div><p className="eyebrow">Registro operativo</p><h2>{isEdit ? "Editar actividad" : "Nueva actividad"}</h2><span>{isEdit ? "Actualiza los datos descriptivos sin alterar el origen del trabajo." : "Documenta el trabajo en el momento o carga una visita ya finalizada."}</span></div><button className="icon-button" type="button" aria-label="Cerrar formulario" onClick={onCancel}><X size={18} /></button></header>
     <div className="activity-form__body">
-      <fieldset className="activity-form__switch"><legend>Modo de registro</legend><label><input type="radio" name="activityMode" checked={mode === "scheduled"} onChange={() => setMode("scheduled")} />Programada</label><label><input type="radio" name="activityMode" checked={mode === "manual"} onChange={() => setMode("manual")} />Manual</label></fieldset>
-      <fieldset className="activity-form__switch"><legend>Origen del trabajo</legend><label><input type="radio" name="activitySource" checked={source === "order"} onChange={() => setOrigin("order")} />Orden existente</label><label><input type="radio" name="activitySource" checked={source === "branch"} onChange={() => setOrigin("branch")} />Sucursal</label></fieldset>
+      {!isEdit && <><fieldset className="activity-form__switch"><legend>Modo de registro</legend><label><input type="radio" name="activityMode" checked={mode === "scheduled"} onChange={() => setMode("scheduled")} />Programada</label><label><input type="radio" name="activityMode" checked={mode === "manual"} onChange={() => setMode("manual")} />Manual</label></fieldset>
+      <fieldset className="activity-form__switch"><legend>Origen del trabajo</legend><label><input type="radio" name="activitySource" checked={source === "order"} onChange={() => setOrigin("order")} />Orden existente</label><label><input type="radio" name="activitySource" checked={source === "branch"} onChange={() => setOrigin("branch")} />Sucursal</label></fieldset></>}
       <div className="activity-form__grid">
-        {source === "order" ? <LookupCombobox<OrderOption> label="Orden" placeholder="Buscar número, cliente…" fetchPage={(search, page, signal) => lookupApi.orders(search, page, signal)} getKey={(option) => option.id} getLabel={orderLabel} onSelect={(option) => { setOrderId(option.id); setBranchId(undefined); }} onClear={() => setOrderId(undefined)} /> : <>
+        {!isEdit && (source === "order" ? <LookupCombobox<OrderOption> label="Orden" placeholder="Buscar número, cliente…" fetchPage={(search, page, signal) => lookupApi.orders(search, page, signal)} getKey={(option) => option.id} getLabel={orderLabel} onSelect={(option) => { setOrderId(option.id); setBranchId(undefined); }} onClear={() => setOrderId(undefined)} /> : <>
           <LookupCombobox<ClientOption> label="Cliente" placeholder="Buscar cliente…" fetchPage={(search, page, signal) => lookupApi.clients(search, page, signal)} getKey={(option) => option.id} getLabel={clientLabel} onSelect={(option) => { setClient(option); setBranchId(undefined); }} onClear={() => { setClient(undefined); setBranchId(undefined); }} />
           {client && <LookupCombobox<BranchOption> key={client.id} label="Sucursal del cliente" placeholder="Buscar sucursal…" fetchPage={(search, page, signal) => lookupApi.branches(client.id, search, page, signal)} getKey={(option) => option.id} getLabel={branchLabel} onSelect={(option) => { setBranchId(option.id); setOrderId(undefined); }} onClear={() => setBranchId(undefined)} />}
-        </>}
+        </>)}
         <Field label="Tipo de actividad"><select name="activityTypeId" aria-label="Tipo de actividad" value={activityTypeId} onChange={(event) => setActivityTypeId(event.target.value)}><option value="">Seleccionar</option>{activityTypes.map((type) => <option value={type.id} key={type.id}>{type.name}</option>)}</select></Field>
         <Field label="Descripción" wide><textarea name="description" aria-label="Descripción" rows={4} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe el trabajo que se realizará" /></Field>
         <Field label="Observaciones" wide><textarea name="observations" aria-label="Observaciones" rows={3} value={observations} onChange={(event) => setObservations(event.target.value)} placeholder="Contexto adicional (opcional)" /></Field>
-        {mode === "manual" && <><Field label="Inicio"><input name="startedAt" aria-label="Inicio" type="datetime-local" value={startedAt} onChange={(event) => setStartedAt(event.target.value)} /></Field><Field label="Fin"><input name="endedAt" aria-label="Fin" type="datetime-local" value={endedAt} onChange={(event) => setEndedAt(event.target.value)} /></Field><Field label="Resultado" wide><textarea name="result" aria-label="Resultado" rows={3} value={result} onChange={(event) => setResult(event.target.value)} /></Field><Field label="Justificación" wide><textarea name="justification" aria-label="Justificación" rows={3} value={justification} onChange={(event) => setJustification(event.target.value)} /></Field></>}
+        {!isEdit && mode === "manual" && <><Field label="Inicio"><input name="startedAt" aria-label="Inicio" type="datetime-local" value={startedAt} onChange={(event) => setStartedAt(event.target.value)} /></Field><Field label="Fin"><input name="endedAt" aria-label="Fin" type="datetime-local" value={endedAt} onChange={(event) => setEndedAt(event.target.value)} /></Field><Field label="Resultado" wide><textarea name="result" aria-label="Resultado" rows={3} value={result} onChange={(event) => setResult(event.target.value)} /></Field><Field label="Justificación" wide><textarea name="justification" aria-label="Justificación" rows={3} value={justification} onChange={(event) => setJustification(event.target.value)} /></Field></>}
       </div>
-      {actor.canManage && <ActivityTeamEditor members={team} technicians={technicians} onChange={setTeam} showConfirm={false} />}
+      {!isEdit && actor.canManage && <ActivityTeamEditor members={team} technicians={technicians} onChange={setTeam} showConfirm={false} />}
       {formError && <p className="form-error" role="alert">{formError}</p>}
     </div>
-    <footer className="activity-form__actions"><button className="button button--ghost" type="button" onClick={onCancel}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending}>{pending ? "Guardando…" : mode === "manual" ? "Registrar actividad manual" : "Crear actividad"}</button></footer>
+    <footer className="activity-form__actions"><button className="button button--ghost" type="button" onClick={onCancel}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending}>{pending ? "Guardando…" : isEdit ? "Guardar cambios" : mode === "manual" ? "Registrar actividad manual" : "Crear actividad"}</button></footer>
   </form>;
 }
 

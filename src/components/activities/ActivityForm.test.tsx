@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ActivityLookupApi } from "../../api/activity-lookups";
-import type { ActivityFormActor, ActivityFormValue, ActivityType, LookupPage, OrderOption } from "../../models/activity";
+import type { ActivityDetail, ActivityFormActor, ActivityFormValue, ActivityType, LookupPage, OrderOption } from "../../models/activity";
 import { ActivityForm } from "./ActivityForm";
 
 const activityTypes: ActivityType[] = [{ id: "type-1", code: "SUP", name: "Soporte", description: null, displayOrder: 1 }];
@@ -147,5 +147,30 @@ describe("ActivityForm", () => {
     view.unmount();
 
     expect(signal?.aborted).toBe(true);
+  });
+
+  it("edita solo tipo, descripcion y observaciones preservando valores", async () => {
+    const user = userEvent.setup();
+    const initialActivity: ActivityDetail = {
+      id: "activity-1",
+      branch: { id: "branch-1", code: "TGU-01", name: "Centro", client: { id: "client-1", code: "CLI-1", tradeName: "Cliente Demo" } },
+      order: { id: "order-1", orderNumber: "OT-1" },
+      activityType: activityTypes[0], status: "PENDING", description: "Revision inicial", result: null,
+      responsible: null, startedAt: null, endedAt: null, pausedMinutes: 0, productiveMinutes: null,
+      createdAt: "2026-08-26T13:00:00.000Z", updatedAt: "2026-08-26T13:00:00.000Z", version: 1,
+      observations: "Llevar escalera", team: [], pauses: [],
+    };
+    const onSubmit = vi.fn(async () => undefined);
+    render(<ActivityForm variant="edit" initialActivity={initialActivity} activityTypes={activityTypes} lookupApi={lookupApi()} actor={technicianActor} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+    expect(screen.queryByText("Modo de registro")).not.toBeInTheDocument();
+    expect(screen.queryByText("Origen del trabajo")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Descripci/)).toHaveValue("Revision inicial");
+    expect(screen.getByLabelText("Observaciones")).toHaveValue("Llevar escalera");
+    await user.clear(screen.getByLabelText(/Descripci/));
+    await user.type(screen.getByLabelText(/Descripci/), "Revision actualizada");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({ activityTypeId: "type-1", description: "Revision actualizada", observations: "Llevar escalera" });
   });
 });

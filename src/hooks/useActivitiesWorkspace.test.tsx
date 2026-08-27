@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActivityApi } from "../api/activities";
+import { ApiClientError, ApiNetworkError } from "../api/http";
 import type { ActivityDetail, ActivityPage, ActivitySummary } from "../models/activity";
 import { useActivitiesWorkspace } from "./useActivitiesWorkspace";
 
@@ -232,5 +233,107 @@ describe("useActivitiesWorkspace", () => {
     pendingDetail.resolve(detail);
     await flushPromises();
     expect(result.current.selected).toBeNull();
+  });
+
+  it("reconcilia el detalle y el listado con el DTO devuelto por una accion", async () => {
+    const startedDetail: ActivityDetail = { ...detail, status: "IN_PROGRESS", startedAt: "2026-08-26T14:00:00.000Z", version: 2 };
+    const api = activityApiMock({ start: vi.fn(async () => startedDetail), list: vi.fn().mockResolvedValueOnce(page).mockResolvedValue({ ...page, items: [startedDetail] }) });
+    const { result } = renderHook(() => useActivitiesWorkspace({ api, search: "" }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(detail.id));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+    await act(async () => { expect(await result.current.runAction({ type: "start" })).toBe(true); });
+    expect(api.start).toHaveBeenCalledWith(detail.id, 1);
+    expect(result.current.selected).toMatchObject({ status: "IN_PROGRESS", version: 2 });
+    expect(result.current.page?.items[0]).toMatchObject({ status: "IN_PROGRESS", version: 2 });
+  });
+
+  it("impide repetir una mutacion mientras esta pendiente", async () => {
+    const pendingStart = deferred<ActivityDetail>();
+    const api = activityApiMock({ start: vi.fn(() => pendingStart.promise) });
+    const { result } = renderHook(() => useActivitiesWorkspace({ api, search: "" }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(detail.id));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+    let first!: Promise<boolean>;
+    act(() => { first = result.current.runAction({ type: "start" }); });
+    await waitFor(() => expect(result.current.mutation?.pending).toBe(true));
+    await act(async () => { expect(await result.current.runAction({ type: "start" })).toBe(false); });
+    expect(api.start).toHaveBeenCalledTimes(1);
+    pendingStart.resolve({ ...detail, status: "IN_PROGRESS", version: 2 });
+    await act(async () => { await first; });
+  });
+
+  it("recarga la version actual sin repetir una mutacion en conflicto", async () => {
+    const newerDetail: ActivityDetail = { ...detail, description: "Cambio remoto", version: 3 };
+    const api = activityApiMock({ complete: vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "conflict")), detail: vi.fn().mockResolvedValueOnce(detail).mockResolvedValueOnce(newerDetail) });
+    const { result } = renderHook(() => useActivitiesWorkspace({ api, search: "" }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(detail.id));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+    await act(async () => { expect(await result.current.runAction({ type: "complete", result: "Listo" })).toBe(false); });
+    expect(api.complete).toHaveBeenCalledTimes(1);
+    expect(api.complete).toHaveBeenCalledWith(detail.id, { version: 1, result: "Listo" });
+    expect(result.current.selected).toEqual(newerDetail);
+    expect(result.current.mutation).toMatchObject({ pending: false, conflict: true });
+  });
+
+  it("usa la version seleccionada al editar y reemplazar el equipo", async () => {
+    const updated = { ...detail, description: "Descripcion corregida", version: 2 };
+    const teamed = { ...updated, version: 3 };
+    const api = activityApiMock({ update: vi.fn(async () => updated), replaceTeam: vi.fn(async () => teamed) });
+    const { result } = renderHook(() => useActivitiesWorkspace({ api, search: "" }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(detail.id));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+    await act(async () => { expect(await result.current.updateActivity({ description: "Descripcion corregida" })).toBe(true); });
+    await act(async () => { expect(await result.current.replaceActivityTeam([])).toBe(true); });
+    expect(api.update).toHaveBeenCalledWith(detail.id, { description: "Descripcion corregida", version: 1 });
+    expect(api.replaceTeam).toHaveBeenCalledWith(detail.id, 2, []);
+  });
+
+  it("despacha por separado el registro programado y manual", async () => {
+    const api = activityApiMock();
+    const { result } = renderHook(() => useActivitiesWorkspace({ api, search: "" }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+
+    await act(async () => { await result.current.createActivity({ mode: "scheduled", orderId: "order-1", activityTypeId: "type-1", description: "Programada" }); });
+    await act(async () => { await result.current.createActivity({ mode: "manual", branchId: "branch-1", activityTypeId: "type-1", description: "Manual", startedAt: "2026-08-26T13:00:00.000-06:00", endedAt: "2026-08-26T14:00:00.000-06:00", result: "Listo", justification: "Carga posterior" }); });
+
+    expect(api.create).toHaveBeenCalledWith({ orderId: "order-1", activityTypeId: "type-1", description: "Programada" });
+    expect(api.createManual).toHaveBeenCalledWith(expect.objectContaining({ branchId: "branch-1", result: "Listo" }));
+  });
+
+  it("conserva el detalle y muestra un mensaje seguro ante red o permiso denegado", async () => {
+    const api = activityApiMock({
+      start: vi.fn().mockRejectedValueOnce(new ApiNetworkError()).mockRejectedValueOnce(new ApiClientError(403, "FORBIDDEN", "detalle interno")),
+    });
+    const { result } = renderHook(() => useActivitiesWorkspace({ api, search: "" }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(detail.id));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+
+    await act(async () => { await result.current.runAction({ type: "start" }); });
+    expect(result.current.selected).toEqual(detail);
+    expect(result.current.mutation?.error).toBe("No fue posible conectar con el servidor");
+    await act(async () => { await result.current.runAction({ type: "start" }); });
+    expect(result.current.selected).toEqual(detail);
+    expect(result.current.mutation?.error).toBe("No tienes permiso para realizar esta acción.");
+  });
+
+  it("cierra una actividad eliminada y actualiza el listado", async () => {
+    const list = vi.fn().mockResolvedValueOnce(page).mockResolvedValueOnce({ ...page, items: [], pagination: { ...page.pagination, totalItems: 0, totalPages: 0 } });
+    const api = activityApiMock({ list, cancel: vi.fn().mockRejectedValueOnce(new ApiClientError(404, "NOT_FOUND", "missing")) });
+    const { result } = renderHook(() => useActivitiesWorkspace({ api, search: "" }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(detail.id));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+
+    await act(async () => { expect(await result.current.runAction({ type: "cancel", reason: "Duplicada" })).toBe(false); });
+
+    expect(result.current.selected).toBeNull();
+    expect(result.current.detailState).toBe("idle");
+    expect(result.current.listState).toBe("empty");
+    expect(list).toHaveBeenCalledTimes(2);
   });
 });

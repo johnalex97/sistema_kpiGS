@@ -158,6 +158,8 @@ export interface UpdateActivityInput {
   observations?: string | null;
 }
 
+export type ActivityEditValue = Omit<UpdateActivityInput, "version">;
+
 export interface PauseActivityInput {
   version: number;
   reason: string;

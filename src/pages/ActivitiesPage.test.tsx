@@ -61,12 +61,18 @@ function workspace(overrides: Partial<ActivitiesWorkspace> = {}): ActivitiesWork
     stale: false,
     listError: null,
     detailState: "idle",
+    mutation: null,
     setView: vi.fn(),
     setFilters: vi.fn(),
     retryList: vi.fn(),
     select: vi.fn(),
     closeDetail: vi.fn(),
     refresh: vi.fn(async () => undefined),
+    createActivity: vi.fn(async () => true),
+    updateActivity: vi.fn(async () => true),
+    replaceActivityTeam: vi.fn(async () => true),
+    runAction: vi.fn(async () => true),
+    clearMutationError: vi.fn(),
     ...overrides,
   };
 }
@@ -157,5 +163,29 @@ describe("ActivitiesPage", () => {
 
     expect(screen.queryByRole("button", { name: "Ajustar actividad" })).not.toBeInTheDocument();
     expect(screen.getByText("Enlace estable")).toBeInTheDocument();
+  });
+
+  it("confirma una accion y la envia al workspace una sola vez", async () => {
+    const user = userEvent.setup();
+    const current = workspace({ selected: detail, detailState: "ready" });
+    render(pageView(current, ["ACTIVITIES_OPERATE_OWN"]));
+
+    await user.click(screen.getByRole("button", { name: "Iniciar" }));
+    expect(screen.getByRole("dialog", { name: "Iniciar actividad" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Iniciar actividad" }));
+
+    expect(current.runAction).toHaveBeenCalledTimes(1);
+    expect(current.runAction).toHaveBeenCalledWith({ type: "start" });
+  });
+
+  it.each([
+    ["IN_PROGRESS", ["Pausar", "Completar"], ["Iniciar", "Reanudar", "Ajustar actividad"]],
+    ["PAUSED", ["Reanudar", "Completar"], ["Iniciar", "Pausar", "Ajustar actividad"]],
+    ["COMPLETED", ["Ajustar actividad"], ["Iniciar", "Pausar", "Reanudar", "Completar"]],
+    ["CANCELLED", [], ["Iniciar", "Pausar", "Reanudar", "Completar", "Ajustar actividad"]],
+  ] as const)("respeta las acciones disponibles en estado %s", (status, visible, hidden) => {
+    render(pageView(workspace({ selected: { ...detail, status }, detailState: "ready" }), ["ACTIVITIES_MANAGE"]));
+    visible.forEach((name) => expect(screen.getByRole("button", { name })).toBeInTheDocument());
+    hidden.forEach((name) => expect(screen.queryByRole("button", { name })).not.toBeInTheDocument());
   });
 });

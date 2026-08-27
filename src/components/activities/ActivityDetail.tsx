@@ -11,11 +11,13 @@ const statusLabel: Record<ActivityStatus, string> = {
 export interface ActivityDetailProps {
   activity: ActivityDetailModel;
   now: Date;
+  pending?: boolean;
+  closeOnEscape?: boolean;
   onClose(): void;
   onAction(action: ActivityDetailAction): void;
 }
 
-export function ActivityDetail({ activity, now, onClose, onAction }: ActivityDetailProps) {
+export function ActivityDetail({ activity, now, pending = false, closeOnEscape = true, onClose, onAction }: ActivityDetailProps) {
   const { hasPermission } = useAuth();
   const panelRef = useRef<HTMLElement>(null);
   const canManage = hasPermission("ACTIVITIES_MANAGE");
@@ -24,10 +26,10 @@ export function ActivityDetail({ activity, now, onClose, onAction }: ActivityDet
 
   useEffect(() => {
     panelRef.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+    const handleEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && closeOnEscape) onClose(); };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [closeOnEscape, onClose]);
 
   const actions: Array<{ action: ActivityDetailAction; label: string; primary?: boolean }> = [];
   if (activity.status === "PENDING") {
@@ -47,6 +49,6 @@ export function ActivityDetail({ activity, now, onClose, onAction }: ActivityDet
       <section><span className="activity-detail__label">Equipo técnico</span>{activity.team.length === 0 ? <p className="activity-detail__muted">Sin equipo registrado</p> : <ul className="activity-detail__team">{activity.team.map((member) => <li key={member.technician.id}><span className="avatar avatar--small" aria-hidden="true">{member.technician.fullName.split(" ").map((part) => part[0]).slice(0, 2).join("")}</span><span><strong>{member.technician.fullName}</strong><small>{member.role === "RESPONSIBLE" ? "Responsable" : "Participante"}</small></span><b>{member.participationPercentage}%</b></li>)}</ul>}</section>
       {activity.pauses.length > 0 && <section><span className="activity-detail__label">Pausas</span><ul className="activity-detail__pauses">{activity.pauses.map((pause) => <li key={pause.id}><Pause size={13} aria-hidden="true" /><span>{pause.reason}</span><small>{pause.endedAt ? "Finalizada" : "En curso"}</small></li>)}</ul></section>}
     </div>
-    {actions.length > 0 && <footer className="activity-detail__actions">{actions.map(({ action, label, primary }) => <button key={action} className={`button ${primary ? "button--primary" : "button--ghost"}`} type="button" onClick={() => onAction(action)}>{label}</button>)}</footer>}
+    {actions.length > 0 && <footer className="activity-detail__actions">{actions.map(({ action, label, primary }) => <button key={action} className={`button ${primary ? "button--primary" : "button--ghost"}`} type="button" disabled={pending} onClick={() => onAction(action)}>{label}</button>)}</footer>}
   </aside>;
 }

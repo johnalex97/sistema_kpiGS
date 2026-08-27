@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActivityApi } from "../api/activities";
-import type { ActivityDetail, ActivityListFilters, ActivityPage } from "../models/activity";
+import { ApiClientError } from "../api/http";
+import type {
+  ActivityActionCommand,
+  ActivityDetail,
+  ActivityFormValue,
+  ActivityListFilters,
+  ActivityPage,
+  ActivityTeamInput,
+  UpdateActivityInput,
+} from "../models/activity";
 import {
   defaultActivityFilters,
   parseActivitySearch,
@@ -17,12 +26,27 @@ export interface ActivitiesWorkspace {
   stale: boolean;
   listError: string | null;
   detailState: "idle" | "loading" | "ready" | "error";
+  mutation: ActivityMutationState | null;
   setView(view: ActivityView): void;
   setFilters(patch: Partial<ActivityListFilters>): void;
   retryList(): void;
   select(id: string): void;
   closeDetail(): void;
   refresh(): Promise<void>;
+  createActivity(value: ActivityFormValue): Promise<boolean>;
+  updateActivity(input: Omit<UpdateActivityInput, "version">): Promise<boolean>;
+  replaceActivityTeam(team: ActivityTeamInput[]): Promise<boolean>;
+  runAction(command: ActivityActionCommand): Promise<boolean>;
+  clearMutationError(): void;
+}
+
+export type ActivityMutationName = "create" | "update" | "team" | "start" | "pause" | "resume" | "complete" | "cancel" | "adjust";
+
+export interface ActivityMutationState {
+  name: ActivityMutationName;
+  pending: boolean;
+  error: string | null;
+  conflict: boolean;
 }
 
 export interface UseActivitiesWorkspaceOptions {
@@ -41,6 +65,12 @@ function errorMessage(error: unknown, fallback: string): string {
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError"
     || error instanceof Error && error.name === "AbortError";
+}
+
+function withoutMode<T extends { mode: "scheduled" | "manual" }>(value: T): Omit<T, "mode"> {
+  const input = { ...value };
+  Reflect.deleteProperty(input, "mode");
+  return input;
 }
 
 export function useActivitiesWorkspace({
@@ -63,6 +93,7 @@ export function useActivitiesWorkspace({
   const [stale, setStale] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [detailState, setDetailState] = useState<ActivitiesWorkspace["detailState"]>("idle");
+  const [mutation, setMutation] = useState<ActivityMutationState | null>(null);
 
   const queryRef = useRef(query);
   const pageRef = useRef(page);
@@ -73,6 +104,7 @@ export function useActivitiesWorkspace({
   const listGenerationRef = useRef(0);
   const detailGenerationRef = useRef(0);
   const appliedSearchRef = useRef(search.trim());
+  const mutationPendingRef = useRef(false);
 
   const beginListLoading = useCallback(() => {
     setListState("loading");
@@ -252,6 +284,102 @@ export function useActivitiesWorkspace({
     setDetailState("idle");
   }, []);
 
+  const applyActivity = useCallback((activity: ActivityDetail) => {
+    if (selectedIdRef.current === activity.id) {
+      selectedRef.current = activity;
+      setSelected(activity);
+      setDetailState("ready");
+    }
+    const currentPage = pageRef.current;
+    if (!currentPage?.items.some((item) => item.id === activity.id)) return;
+    const nextPage = { ...currentPage, items: currentPage.items.map((item) => item.id === activity.id ? activity : item) };
+    pageRef.current = nextPage;
+    setPage(nextPage);
+  }, []);
+
+  const mutationError = useCallback(async (name: ActivityMutationName, error: unknown): Promise<boolean> => {
+    let message = errorMessage(error, "No fue posible guardar los cambios");
+    let conflict = false;
+    if (error instanceof ApiClientError) {
+      if (error.status === 403) message = "No tienes permiso para realizar esta acción.";
+      if (error.status === 404) {
+        message = "La actividad ya no está disponible.";
+        closeDetail();
+        await loadList();
+      }
+      if (error.status === 409 && error.code === "VERSION_CONFLICT") {
+        conflict = true;
+        message = "La actividad cambió en el servidor. Revisa la versión actual antes de continuar.";
+        const id = selectedIdRef.current;
+        if (id) await loadDetail(id, true);
+      }
+    }
+    setMutation({ name, pending: false, error: message, conflict });
+    return false;
+  }, [closeDetail, loadDetail, loadList]);
+
+  const executeMutation = useCallback(async (
+    name: ActivityMutationName,
+    operation: () => Promise<ActivityDetail>,
+    options: { refreshAfter?: boolean } = {},
+  ): Promise<boolean> => {
+    if (mutationPendingRef.current) return false;
+    mutationPendingRef.current = true;
+    setMutation({ name, pending: true, error: null, conflict: false });
+    try {
+      const activity = await operation();
+      applyActivity(activity);
+      if (options.refreshAfter !== false) {
+        await refresh();
+        applyActivity(activity);
+      }
+      setMutation({ name, pending: false, error: null, conflict: false });
+      return true;
+    } catch (error: unknown) {
+      return await mutationError(name, error);
+    } finally {
+      mutationPendingRef.current = false;
+    }
+  }, [applyActivity, mutationError, refresh]);
+
+  const createActivity = useCallback(async (value: ActivityFormValue): Promise<boolean> => executeMutation(
+    "create",
+    () => {
+      if (value.mode === "manual") {
+        return api.createManual(withoutMode(value));
+      }
+      return api.create(withoutMode(value));
+    },
+  ), [api, executeMutation]);
+
+  const updateActivity = useCallback(async (input: Omit<UpdateActivityInput, "version">): Promise<boolean> => {
+    const activity = selectedRef.current;
+    if (!activity || activity.status !== "PENDING") return false;
+    return executeMutation("update", () => api.update(activity.id, { ...input, version: activity.version }));
+  }, [api, executeMutation]);
+
+  const replaceActivityTeam = useCallback(async (team: ActivityTeamInput[]): Promise<boolean> => {
+    const activity = selectedRef.current;
+    if (!activity || activity.status !== "PENDING") return false;
+    return executeMutation("team", () => api.replaceTeam(activity.id, activity.version, team));
+  }, [api, executeMutation]);
+
+  const runAction = useCallback(async (command: ActivityActionCommand): Promise<boolean> => {
+    const activity = selectedRef.current;
+    if (!activity) return false;
+    const { id, version } = activity;
+    switch (command.type) {
+      case "start": return executeMutation("start", () => api.start(id, version));
+      case "pause": return executeMutation("pause", () => api.pause(id, { version, reason: command.reason }));
+      case "resume": return executeMutation("resume", () => api.resume(id, version));
+      case "complete": return executeMutation("complete", () => api.complete(id, { version, result: command.result, ...(command.observations !== undefined ? { observations: command.observations } : {}) }));
+      case "cancel": return executeMutation("cancel", () => api.cancel(id, { version, reason: command.reason }));
+      case "adjust": return executeMutation("adjust", () => api.adjust(id, { ...command.input, version }));
+    }
+  }, [api, executeMutation]);
+
+  const clearMutationError = useCallback(() => setMutation(null), []);
+
   return {
     query,
     page,
@@ -260,11 +388,17 @@ export function useActivitiesWorkspace({
     stale,
     listError,
     detailState,
+    mutation,
     setView,
     setFilters,
     retryList,
     select,
     closeDetail,
     refresh,
+    createActivity,
+    updateActivity,
+    replaceActivityTeam,
+    runAction,
+    clearMutationError,
   };
 }

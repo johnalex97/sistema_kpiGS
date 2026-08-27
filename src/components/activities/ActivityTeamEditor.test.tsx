@@ -51,4 +51,12 @@ describe("ActivityTeamEditor", () => {
     await user.click(screen.getByRole("button", { name: "Confirmar equipo" }));
     expect(onConfirm).toHaveBeenCalledWith(changed);
   });
+
+  it("bloquea la confirmacion pendiente y muestra el error recuperable", () => {
+    const members: ActivityTeamInput[] = [{ technicianId: "tech-1", role: "RESPONSIBLE", participationPercentage: "100.00" }];
+    render(<ActivityTeamEditor members={members} technicians={technicians} onChange={vi.fn()} pending error="La actividad cambio" />);
+
+    expect(screen.getByRole("button", { name: "Confirmar equipo" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("La actividad cambio");
+  });
 });

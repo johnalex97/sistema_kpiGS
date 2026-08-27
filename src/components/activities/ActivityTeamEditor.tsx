@@ -8,9 +8,11 @@ export interface ActivityTeamEditorProps {
   onChange(members: ActivityTeamInput[]): void;
   onConfirm?(members: ActivityTeamInput[]): void;
   showConfirm?: boolean;
+  pending?: boolean;
+  error?: string | null;
 }
 
-export function ActivityTeamEditor({ members, technicians, onChange, onConfirm, showConfirm = true }: ActivityTeamEditorProps) {
+export function ActivityTeamEditor({ members, technicians, onChange, onConfirm, showConfirm = true, pending = false, error = null }: ActivityTeamEditorProps) {
   const errors = activityTeamErrors(members);
   const technicianName = (id: string) => technicians.find((technician) => technician.id === id)?.fullName ?? "Técnico sin seleccionar";
   const update = (index: number, patch: Partial<ActivityTeamInput>) => onChange(members.map((member, position) => position === index ? { ...member, ...patch } : member));
@@ -27,6 +29,7 @@ export function ActivityTeamEditor({ members, technicians, onChange, onConfirm, 
       </div>;
     })}</div>
     {errors.map((error) => <p className="form-error" role="alert" key={error}>{error}</p>)}
-    {showConfirm && <div className="activity-team-editor__confirm"><button className="button button--primary" type="button" disabled={errors.length > 0} onClick={() => onConfirm?.(members)}>Confirmar equipo</button></div>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {showConfirm && <div className="activity-team-editor__confirm"><button className="button button--primary" type="button" aria-label="Confirmar equipo" disabled={pending || errors.length > 0} onClick={() => onConfirm?.(members)}>{pending ? "Guardando…" : "Confirmar equipo"}</button></div>}
   </section>;
 }
