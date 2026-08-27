@@ -213,13 +213,21 @@ Salida: indicadores reproducibles y explicables, verificados con
 
 Salida: interfaz existente conectada a datos persistentes.
 
-Estado: en progreso. El bloque KPI ya consume la API; actividades, jornada y
-otros paneles operativos conservan temporalmente sus fuentes locales.
+Estado: en progreso. Los subbloques de autenticación, KPI y
+Actividades/Jornada operativa están completados. Actividades consume catálogo,
+listado, detalle, búsquedas auxiliares y todas sus mutaciones desde la API, con
+URL, polling, control optimista y recuperación de conflictos. La jornada visual
+del Dashboard, Técnicos, Evidencias y Reincidencias conservan temporalmente sus
+fuentes o interfaces locales; por eso la fase 12 completa sigue abierta.
 
 Subbloque de autenticación frontend: completado. La SPA restaura la sesión con
 `GET /api/v1/auth/me`, usa la cookie opaca `gs_session`, bloquea el contenido
 privado durante la comprobación y exige cambiar contraseñas provisionales antes
 de entrar al shell. Esta actualización no completa toda la fase 12.
+
+Subbloque de Actividades/Jornada operativa: completado. El formulario legado y
+el listado en memoria fueron retirados del módulo; `initialWorks` permanece sólo
+en la frontera del Dashboard hasta migrar su tabla de actividad reciente.
 
 ## 13. Reportes y auditoría
 

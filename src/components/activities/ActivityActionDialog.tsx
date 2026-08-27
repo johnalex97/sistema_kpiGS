@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import type { ActivityActionCommand, ActivityDetail } from "../../models/activity";
 
@@ -38,14 +38,33 @@ export function ActivityActionDialog({ action, activity, pending, error, onConfi
   const [description, setDescription] = useState(activity.description);
   const [confirmed, setConfirmed] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const cancelRef = useRef(onCancel);
+  const pendingRef = useRef(pending);
+
+  useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
+  useEffect(() => { pendingRef.current = pending; }, [pending]);
 
   useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    (dialogRef.current?.querySelector<HTMLElement>('textarea:not([disabled]), input:not([disabled]), select:not([disabled])')
+      ?? dialogRef.current?.querySelector<HTMLElement>('button[type="submit"]'))?.focus();
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pending) onCancel();
+      if (event.key === "Escape" && !pendingRef.current) cancelRef.current();
     };
     window.addEventListener("keydown", escape);
-    return () => window.removeEventListener("keydown", escape);
-  }, [onCancel, pending]);
+    return () => { window.removeEventListener("keydown", escape); previouslyFocused?.focus(); };
+  }, []);
+
+  const trapFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Tab" || !dialogRef.current) return;
+    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -86,15 +105,15 @@ export function ActivityActionDialog({ action, activity, pending, error, onConfi
   };
 
   return <div className="modal-backdrop">
-    <section className="modal activity-action-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-action-title">
+    <section className="modal activity-action-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-action-title" ref={dialogRef} onKeyDown={trapFocus}>
       <header className="modal-head"><div><p className="eyebrow">Acción operativa</p><h2 id="activity-action-title">{titles[action]}</h2><span>{activity.description}</span></div><button className="icon-button" type="button" aria-label="Cerrar acción" disabled={pending} onClick={onCancel}><X size={18} /></button></header>
       <form noValidate onSubmit={submit}>
-        {(action === "pause" || action === "cancel" || action === "adjust") && <label className="field field--wide"><span>Motivo</span><textarea aria-label="Motivo" rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>}
-        {(action === "complete" || action === "adjust") && <label className="field field--wide"><span>Resultado</span><textarea aria-label="Resultado" rows={3} value={result} onChange={(event) => setResult(event.target.value)} /></label>}
-        {action === "adjust" && <label className="field field--wide"><span>Descripción</span><textarea aria-label="Descripción ajustada" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} /></label>}
-        {(action === "complete" || action === "adjust") && <label className="field field--wide"><span>Observaciones</span><textarea aria-label="Observaciones" rows={3} value={observations} onChange={(event) => setObservations(event.target.value)} /></label>}
+        {(action === "pause" || action === "cancel" || action === "adjust") && <label className="field field--wide"><span>Motivo</span><textarea name="reason" autoComplete="off" aria-label="Motivo" rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>}
+        {(action === "complete" || action === "adjust") && <label className="field field--wide"><span>Resultado</span><textarea name="result" autoComplete="off" aria-label="Resultado" rows={3} value={result} onChange={(event) => setResult(event.target.value)} /></label>}
+        {action === "adjust" && <label className="field field--wide"><span>Descripción</span><textarea name="description" autoComplete="off" aria-label="Descripción ajustada" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} /></label>}
+        {(action === "complete" || action === "adjust") && <label className="field field--wide"><span>Observaciones</span><textarea name="observations" autoComplete="off" aria-label="Observaciones" rows={3} value={observations} onChange={(event) => setObservations(event.target.value)} /></label>}
         {(action === "start" || action === "resume") && <p className="activity-action-dialog__notice">El cronómetro de trabajo se actualizará inmediatamente.</p>}
-        {(action === "cancel" || action === "adjust") && <label className="check-field field--wide"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span><b>Confirmo que revisé esta acción</b><small>{action === "cancel" ? "La actividad quedará cancelada y no podrá operarse." : "El ajuste quedará registrado en la bitácora."}</small></span></label>}
+        {(action === "cancel" || action === "adjust") && <label className="check-field field--wide"><input name="confirmed" type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span><b>Confirmo que revisé esta acción</b><small>{action === "cancel" ? "La actividad quedará cancelada y no podrá operarse." : "El ajuste quedará registrado en la bitácora."}</small></span></label>}
         {(validationError || error) && <p className="form-error field--wide" role="alert"><AlertTriangle size={14} aria-hidden="true" />{validationError ?? error}</p>}
         <div className="modal-actions field--wide"><button className="button button--ghost" type="button" disabled={pending} onClick={onCancel}>Volver</button><button className="button button--primary" type="submit" aria-label={submitLabels[action]} disabled={pending}>{pending ? "Guardando…" : submitLabels[action]}</button></div>
       </form>

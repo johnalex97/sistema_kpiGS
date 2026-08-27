@@ -22,9 +22,9 @@ export function ActivityTeamEditor({ members, technicians, onChange, onConfirm, 
     <div className="activity-team-editor__rows">{members.map((member, index) => {
       const name = technicianName(member.technicianId);
       return <div className="activity-team-member" key={`${index}-${member.technicianId}`}>
-        <label><span>Técnico</span><select aria-label={`Técnico ${index + 1}`} value={member.technicianId} onChange={(event) => update(index, { technicianId: event.target.value })}><option value="">Seleccionar</option>{technicians.map((technician) => <option key={technician.id} value={technician.id}>{technician.code} · {technician.fullName}</option>)}</select></label>
-        <label><span>Rol</span><select aria-label={`Rol de ${name}`} value={member.role} onChange={(event) => update(index, { role: event.target.value as ActivityTeamInput["role"] })}><option value="RESPONSIBLE">Responsable</option><option value="PARTICIPANT">Participante</option></select></label>
-        <label><span>Participación</span><div className="percentage-input"><input aria-label={`Participación de ${name}`} inputMode="decimal" value={member.participationPercentage} onChange={(event) => update(index, { participationPercentage: event.target.value })} /><b>%</b></div></label>
+        <label><span>Técnico</span><select name={`technician-${index}`} aria-label={`Técnico ${index + 1}`} value={member.technicianId} onChange={(event) => update(index, { technicianId: event.target.value })}><option value="">Seleccionar</option>{technicians.map((technician) => <option key={technician.id} value={technician.id}>{technician.code} · {technician.fullName}</option>)}</select></label>
+        <label><span>Rol</span><select name={`role-${index}`} aria-label={`Rol de ${name}`} value={member.role} onChange={(event) => update(index, { role: event.target.value as ActivityTeamInput["role"] })}><option value="RESPONSIBLE">Responsable</option><option value="PARTICIPANT">Participante</option></select></label>
+        <label><span>Participación</span><div className="percentage-input"><input name={`participation-${index}`} autoComplete="off" aria-label={`Participación de ${name}`} inputMode="decimal" value={member.participationPercentage} onChange={(event) => update(index, { participationPercentage: event.target.value })} /><b>%</b></div></label>
         <button className="icon-button" type="button" aria-label={`Quitar ${name}`} onClick={() => onChange(members.filter((_, position) => position !== index))}><Trash2 size={15} /></button>
       </div>;
     })}</div>

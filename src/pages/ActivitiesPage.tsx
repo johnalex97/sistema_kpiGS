@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CalendarDays, Plus, RefreshCw, Search } from "lucide-react";
 import { createActivityApi, type ActivityApi } from "../api/activities";
 import { createActivityLookupApi, type ActivityLookupApi } from "../api/activity-lookups";
@@ -34,6 +34,31 @@ export function ActivitiesPage({ workspace, ...props }: ActivitiesPageProps) {
 }
 
 type ActivityEditor = "create" | "edit" | "team" | Exclude<ActivityDetailAction, "edit" | "team"> | null;
+
+function TeamDialog({ pending, onClose, children }: { pending: boolean; onClose(): void; children: ReactNode }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  const pendingRef = useRef(pending);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
+  useEffect(() => { pendingRef.current = pending; }, [pending]);
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    dialogRef.current?.querySelector<HTMLElement>('select:not([disabled]), button:not([disabled]), input:not([disabled])')?.focus();
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !pendingRef.current) closeRef.current(); };
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("keydown", escape); previouslyFocused?.focus(); };
+  }, []);
+  const trapFocus = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab" || !dialogRef.current) return;
+    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+  return <div className="modal-backdrop"><div className="activity-team-dialog" role="dialog" aria-modal="true" aria-label="Editar equipo" ref={dialogRef} onKeyDown={trapFocus}>{children}</div></div>;
+}
 
 function ActivitiesWorkspaceView({ workspace, api, lookupApi, onAction }: { workspace: ActivitiesWorkspace; api: ActivityApi; lookupApi: ActivityLookupApi; onAction?: (action: ActivityDetailAction) => void }) {
   const { user, hasPermission } = useAuth();
@@ -88,8 +113,8 @@ function ActivitiesWorkspaceView({ workspace, api, lookupApi, onAction }: { work
   return <section className="panel full-panel activities-workspace">
     <header className="activities-toolbar"><div className="activities-tabs" role="tablist" aria-label="Vista de actividades"><button type="button" role="tab" aria-selected={workspace.query.view === "open"} onClick={() => workspace.setView("open")}>Abiertas</button><button type="button" role="tab" aria-selected={workspace.query.view === "history"} onClick={() => workspace.setView("history")}>Historial</button></div><div className="activities-count"><b>{pagination?.totalItems ?? 0}</b><span>actividades<br />en esta vista</span></div></header>
     <div className="activities-filters">
-      <label><span>Estado</span><select aria-label="Estado" value={singleStatus} onChange={(event) => workspace.setFilters({ status: event.target.value ? [event.target.value as ActivityStatus] : statuses })}><option value="">Todos</option>{statuses.map((status) => <option key={status} value={status}>{status === "PENDING" ? "Pendiente" : status === "IN_PROGRESS" ? "En curso" : status === "PAUSED" ? "Pausada" : status === "COMPLETED" ? "Completada" : "Cancelada"}</option>)}</select></label>
-      {workspace.query.view === "history" && <label><span>Rango</span><select aria-label="Rango de fechas" value={workspace.query.filters.startedFrom ? "today" : "all"} onChange={(event) => workspace.setFilters(event.target.value === "today" ? tegucigalpaDayRange(now) : { startedFrom: undefined, startedTo: undefined })}><option value="today">Hoy</option><option value="all">Todas las fechas</option></select></label>}
+      <label><span>Estado</span><select name="activityStatus" aria-label="Estado" value={singleStatus} onChange={(event) => workspace.setFilters({ status: event.target.value ? [event.target.value as ActivityStatus] : statuses })}><option value="">Todos</option>{statuses.map((status) => <option key={status} value={status}>{status === "PENDING" ? "Pendiente" : status === "IN_PROGRESS" ? "En curso" : status === "PAUSED" ? "Pausada" : status === "COMPLETED" ? "Completada" : "Cancelada"}</option>)}</select></label>
+      {workspace.query.view === "history" && <label><span>Rango</span><select name="activityDateRange" aria-label="Rango de fechas" value={workspace.query.filters.startedFrom ? "today" : "all"} onChange={(event) => workspace.setFilters(event.target.value === "today" ? tegucigalpaDayRange(now) : { startedFrom: undefined, startedTo: undefined })}><option value="today">Hoy</option><option value="all">Todas las fechas</option></select></label>}
       <button className="button button--ghost activities-refresh" type="button" onClick={() => void workspace.refresh()}><RefreshCw size={15} />Actualizar</button>{canCreate && <button className="button button--primary" type="button" onClick={() => { workspace.clearMutationError(); setEditor("create"); }}><Plus size={15} />Nueva actividad</button>}
     </div>
     {workspace.query.view === "history" && <p className="activities-date-note"><CalendarDays size={14} aria-hidden="true" />Las cancelaciones sin inicio aparecen al elegir “Todas las fechas”.</p>}
@@ -103,7 +128,7 @@ function ActivitiesWorkspaceView({ workspace, api, lookupApi, onAction }: { work
     {workspace.selected && <div className="activity-detail-backdrop"><ActivityDetail activity={workspace.selected} now={now} pending={mutationPending} closeOnEscape={!editor} onClose={closeDetail} onAction={chooseAction} /></div>}
     {editor === "create" && <div className="modal-backdrop"><ActivityForm activityTypes={activityTypes} lookupApi={lookupApi} actor={actor} onCancel={closeEditor} onSubmit={async (value) => { if (await workspace.createActivity(value)) setEditor(null); }} />{workspace.mutation?.error && <p className="activity-overlay-error" role="alert">{workspace.mutation.error}</p>}</div>}
     {editor === "edit" && workspace.selected && <div className="modal-backdrop"><ActivityForm variant="edit" initialActivity={workspace.selected} activityTypes={activityTypes} lookupApi={lookupApi} actor={actor} onCancel={closeEditor} onSubmit={async (value) => { if (await workspace.updateActivity(value)) setEditor(null); }} />{workspace.mutation?.error && <p className="activity-overlay-error" role="alert">{workspace.mutation.error}</p>}</div>}
-    {editor === "team" && workspace.selected && <div className="modal-backdrop"><div className="activity-team-dialog" role="dialog" aria-modal="true" aria-label="Editar equipo"><ActivityTeamEditor members={team} technicians={technicians} onChange={setTeam} pending={mutationPending} error={workspace.mutation?.error} onConfirm={async (members) => { if (await workspace.replaceActivityTeam(members)) setEditor(null); }} /><button className="button button--ghost" type="button" disabled={mutationPending} onClick={closeEditor}>Volver</button></div></div>}
+    {editor === "team" && workspace.selected && <TeamDialog pending={mutationPending} onClose={closeEditor}><ActivityTeamEditor members={team} technicians={technicians} onChange={setTeam} pending={mutationPending} error={workspace.mutation?.error} onConfirm={async (members) => { if (await workspace.replaceActivityTeam(members)) setEditor(null); }} /><button className="button button--ghost" type="button" disabled={mutationPending} onClick={closeEditor}>Volver</button></TeamDialog>}
     {editor && editor !== "create" && editor !== "edit" && editor !== "team" && workspace.selected && <ActivityActionDialog action={editor} activity={workspace.selected} pending={mutationPending} error={workspace.mutation?.error ?? null} onCancel={closeEditor} onConfirm={async (command) => { if (await workspace.runAction(command)) setEditor(null); }} />}
   </section>;
 }

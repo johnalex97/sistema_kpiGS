@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, LoaderCircle, Search, X } from "lucide-react";
 import type { ActivityLookupApi } from "../../api/activity-lookups";
 import type {
@@ -108,6 +108,33 @@ export function ActivityForm(props: ActivityFormProps) {
   const [team, setTeam] = useState<ActivityTeamInput[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const cancelRef = useRef(onCancel);
+  const pendingRef = useRef(pending);
+
+  useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
+  useEffect(() => { pendingRef.current = pending; }, [pending]);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    (formRef.current?.querySelector<HTMLElement>('.activity-form__body input:not([disabled]), .activity-form__body select:not([disabled]), .activity-form__body textarea:not([disabled])')
+      ?? formRef.current?.querySelector<HTMLElement>('button:not([disabled])'))?.focus();
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !pendingRef.current) cancelRef.current();
+    };
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("keydown", escape); previouslyFocused?.focus(); };
+  }, []);
+
+  const trapFocus = (event: ReactKeyboardEvent<HTMLFormElement>) => {
+    if (event.key !== "Tab" || !formRef.current) return;
+    const focusable = Array.from(formRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
 
   useEffect(() => {
     if (!actor.canManage || isEdit) return;
@@ -167,8 +194,8 @@ export function ActivityForm(props: ActivityFormProps) {
   const clientLabel = (option: ClientOption) => `${option.code} · ${option.tradeName}`;
   const branchLabel = (option: BranchOption) => `${option.code} · ${option.name} · ${option.address}`;
 
-  return <form className="activity-form" noValidate onSubmit={submit}>
-    <header className="activity-form__head"><div><p className="eyebrow">Registro operativo</p><h2>{isEdit ? "Editar actividad" : "Nueva actividad"}</h2><span>{isEdit ? "Actualiza los datos descriptivos sin alterar el origen del trabajo." : "Documenta el trabajo en el momento o carga una visita ya finalizada."}</span></div><button className="icon-button" type="button" aria-label="Cerrar formulario" onClick={onCancel}><X size={18} /></button></header>
+  return <form className="activity-form" role="dialog" aria-modal="true" aria-labelledby="activity-form-title" ref={formRef} noValidate onSubmit={submit} onKeyDown={trapFocus}>
+    <header className="activity-form__head"><div><p className="eyebrow">Registro operativo</p><h2 id="activity-form-title">{isEdit ? "Editar actividad" : "Nueva actividad"}</h2><span>{isEdit ? "Actualiza los datos descriptivos sin alterar el origen del trabajo." : "Documenta el trabajo en el momento o carga una visita ya finalizada."}</span></div><button className="icon-button" type="button" aria-label="Cerrar formulario" onClick={onCancel}><X size={18} /></button></header>
     <div className="activity-form__body">
       {!isEdit && <><fieldset className="activity-form__switch"><legend>Modo de registro</legend><label><input type="radio" name="activityMode" checked={mode === "scheduled"} onChange={() => setMode("scheduled")} />Programada</label><label><input type="radio" name="activityMode" checked={mode === "manual"} onChange={() => setMode("manual")} />Manual</label></fieldset>
       <fieldset className="activity-form__switch"><legend>Origen del trabajo</legend><label><input type="radio" name="activitySource" checked={source === "order"} onChange={() => setOrigin("order")} />Orden existente</label><label><input type="radio" name="activitySource" checked={source === "branch"} onChange={() => setOrigin("branch")} />Sucursal</label></fieldset></>}
@@ -178,9 +205,9 @@ export function ActivityForm(props: ActivityFormProps) {
           {client && <LookupCombobox<BranchOption> key={client.id} label="Sucursal del cliente" placeholder="Buscar sucursal…" fetchPage={(search, page, signal) => lookupApi.branches(client.id, search, page, signal)} getKey={(option) => option.id} getLabel={branchLabel} onSelect={(option) => { setBranchId(option.id); setOrderId(undefined); }} onClear={() => setBranchId(undefined)} />}
         </>)}
         <Field label="Tipo de actividad"><select name="activityTypeId" aria-label="Tipo de actividad" value={activityTypeId} onChange={(event) => setActivityTypeId(event.target.value)}><option value="">Seleccionar</option>{activityTypes.map((type) => <option value={type.id} key={type.id}>{type.name}</option>)}</select></Field>
-        <Field label="Descripción" wide><textarea name="description" aria-label="Descripción" rows={4} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe el trabajo que se realizará" /></Field>
-        <Field label="Observaciones" wide><textarea name="observations" aria-label="Observaciones" rows={3} value={observations} onChange={(event) => setObservations(event.target.value)} placeholder="Contexto adicional (opcional)" /></Field>
-        {!isEdit && mode === "manual" && <><Field label="Inicio"><input name="startedAt" aria-label="Inicio" type="datetime-local" value={startedAt} onChange={(event) => setStartedAt(event.target.value)} /></Field><Field label="Fin"><input name="endedAt" aria-label="Fin" type="datetime-local" value={endedAt} onChange={(event) => setEndedAt(event.target.value)} /></Field><Field label="Resultado" wide><textarea name="result" aria-label="Resultado" rows={3} value={result} onChange={(event) => setResult(event.target.value)} /></Field><Field label="Justificación" wide><textarea name="justification" aria-label="Justificación" rows={3} value={justification} onChange={(event) => setJustification(event.target.value)} /></Field></>}
+        <Field label="Descripción" wide><textarea name="description" aria-label="Descripción" autoComplete="off" rows={4} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe el trabajo que se realizará…" /></Field>
+        <Field label="Observaciones" wide><textarea name="observations" autoComplete="off" aria-label="Observaciones" rows={3} value={observations} onChange={(event) => setObservations(event.target.value)} placeholder="Contexto adicional (opcional)…" /></Field>
+        {!isEdit && mode === "manual" && <><Field label="Inicio"><input name="startedAt" autoComplete="off" aria-label="Inicio" type="datetime-local" value={startedAt} onChange={(event) => setStartedAt(event.target.value)} /></Field><Field label="Fin"><input name="endedAt" autoComplete="off" aria-label="Fin" type="datetime-local" value={endedAt} onChange={(event) => setEndedAt(event.target.value)} /></Field><Field label="Resultado" wide><textarea name="result" autoComplete="off" aria-label="Resultado" rows={3} value={result} onChange={(event) => setResult(event.target.value)} /></Field><Field label="Justificación" wide><textarea name="justification" autoComplete="off" aria-label="Justificación" rows={3} value={justification} onChange={(event) => setJustification(event.target.value)} /></Field></>}
       </div>
       {!isEdit && actor.canManage && <ActivityTeamEditor members={team} technicians={technicians} onChange={setTeam} showConfirm={false} />}
       {formError && <p className="form-error" role="alert">{formError}</p>}

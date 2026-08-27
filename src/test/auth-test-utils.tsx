@@ -11,7 +11,7 @@ export const adminUser: AuthUser = {
   mustChangePassword: false,
   technicianId: null,
   roles: ["ADMIN"],
-  permissions: ["KPI_VIEW_ALL", "ACTIVITIES_VIEW_ALL", "TECHNICIANS_VIEW", "RECURRENCES_VIEW_ALL"],
+  permissions: ["KPI_VIEW_ALL", "ACTIVITIES_VIEW_ALL", "ACTIVITIES_MANAGE", "TECHNICIANS_VIEW", "RECURRENCES_VIEW_ALL"],
 };
 
 export const provisionalUser: AuthUser = { ...adminUser, mustChangePassword: true };

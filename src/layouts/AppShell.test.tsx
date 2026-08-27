@@ -1,8 +1,14 @@
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import { limitedUser, renderWithAuth } from "../test/auth-test-utils";
+
+beforeEach(() => {
+  vi.mocked(fetch).mockReset().mockResolvedValue(new Response(JSON.stringify({
+    data: { status: "PREVIEW", items: [], warnings: [], capabilities: {} },
+  }), { status: 200, headers: { "Content-Type": "application/json" } }));
+});
 
 afterEach(() => {
   cleanup();
@@ -36,37 +42,24 @@ describe("AppShell", () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("search=Caf%C3%A9+Central"))).toBe(true));
   });
 
-  it("no inyecta la actividad del formulario legado en el listado persistente", async () => {
+  it("monta un unico formulario persistente y restaura el foco al cerrarlo", async () => {
     window.history.replaceState({}, "", "/actividades");
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname;
+      const data = path.endsWith("/activity-types") ? [] : { items: [], pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 } };
+      return new Response(JSON.stringify({ data }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
     const user = userEvent.setup();
-    renderWithAuth(<AppShell />);
-    await user.click(screen.getByRole("button", { name: "Nueva actividad" }));
-    await user.type(screen.getByLabelText("Trabajo realizado"), "Revisión de cableado");
-    await user.type(screen.getByLabelText("Cliente"), "Cliente de demostración");
-    await user.type(screen.getByLabelText("Duración"), "45m");
-    await user.click(screen.getByRole("button", { name: "Guardar actividad" }));
-    expect(screen.getByRole("status")).toHaveTextContent("Actividad guardada");
-    expect(screen.queryByText("Revisión de cableado")).not.toBeInTheDocument();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
+    renderWithAuth(<AppShell />, { user: limitedUser });
 
-  it("mantiene el modal accesible y permite cerrarlo con Escape", async () => {
-    const user = userEvent.setup();
-    renderWithAuth(<AppShell />);
-    await user.click(screen.getByRole("button", { name: "Nueva actividad" }));
+    const trigger = await screen.findByRole("button", { name: "Nueva actividad" });
+    expect(screen.getAllByRole("button", { name: "Nueva actividad" })).toHaveLength(1);
+    await user.click(trigger);
     expect(screen.getByRole("dialog", { name: "Nueva actividad" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Trabajo realizado")).toHaveFocus();
+    expect(screen.queryByLabelText("Trabajo realizado")).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Nueva actividad" })).toHaveFocus();
-  });
-
-  it("muestra validación clara cuando faltan campos obligatorios", async () => {
-    const user = userEvent.setup();
-    renderWithAuth(<AppShell />);
-    await user.click(screen.getByRole("button", { name: "Nueva actividad" }));
-    await user.click(screen.getByRole("button", { name: "Guardar actividad" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Completa el trabajo realizado y el cliente.");
+    expect(screen.queryByRole("dialog", { name: "Nueva actividad" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("oculta módulos sin permiso y conserva la sesión en 403", () => {

@@ -6,14 +6,11 @@ cumplimiento, eficiencia y calidad.
 
 ## Estado actual
 
-El repositorio contiene un frontend modular, una API Express independiente,
-persistencia PostgreSQL administrada mediante Prisma, autenticación backend
-con sesiones revocables y APIs protegidas de técnicos, clientes, órdenes y
-actividades. El frontend todavía usa datos de demostración porque
-la pantalla de acceso y la conexión entre ambas
-aplicaciones corresponden a etapas posteriores. Las actividades creadas desde
-el formulario visual se conservan únicamente durante la sesión del navegador;
-la API de actividades sí persiste el registro operativo en PostgreSQL.
+El repositorio contiene un frontend modular conectado gradualmente a una API
+Express independiente, persistencia PostgreSQL administrada mediante Prisma y
+autenticación con sesiones revocables. La sesión, el dashboard KPI y el módulo
+de Actividades ya consumen la API real. Técnicos, la jornada visual del resumen
+y Reincidencias todavía usan datos de demostración mientras avanza la fase 12.
 
 Consulta:
 
@@ -252,8 +249,9 @@ npm test -- tests/orders
 npm run test:db -- tests/database/orders-read-persistence.test.ts tests/database/orders-mutation-persistence.test.ts tests/database/orders-operation-persistence.test.ts tests/orders/orders-http.test.ts
 ```
 
-El frontend React sigue usando `src/mocks/data.ts`; esta entrega no conecta sus
-pantallas con la API de órdenes.
+Las pantallas de órdenes todavía no están conectadas. `initialWorks` se conserva
+exclusivamente como fuente temporal de la tabla “Actividad reciente” del
+Dashboard; el módulo de Actividades no lo importa ni lo modifica.
 
 La API de actividades añade 13 endpoints. `ACTIVITIES_VIEW_ALL` permite a ADMIN
 y SUPERVISOR consultar catálogo, lista y detalle; un TECHNICIAN sólo ve sus
@@ -295,6 +293,12 @@ La visibilidad técnica usa el equipo canónico actual o una ACL histórica
 inmutable. Crear una actividad y reemplazar o ajustar su equipo agrega los
 participantes a esa ACL dentro de la misma transacción; retirar a alguien del
 equipo no elimina su acceso histórico.
+
+La ruta `/actividades` consume estas APIs directamente. Incluye vistas abiertas
+e historial, filtros y paginación en URL, búsqueda con debounce, polling visible,
+creación programada/manual, edición pendiente, equipos y comandos operativos.
+Las respuestas mutadas se reconcilian por `version`; un conflicto `409` conserva
+la entrada del usuario y recarga el detalle vigente sin repetir la mutación.
 
 ## Reincidencias revisadas
 
@@ -432,9 +436,9 @@ npm run start
 
 ## Variables de entorno
 
-El frontend documenta `VITE_API_URL` en `.env.example`, pero todavía no consume
-la API. El backend valida las variables descritas en `server/.env.example`,
-incluyendo:
+El frontend usa `VITE_API_BASE_URL` para apuntar a la API versionada; si se
+omite, utiliza `http://localhost:4000/api/v1`. El backend valida las variables
+descritas en `server/.env.example`, incluyendo:
 
 ```env
 DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/Sistema_kpiGS?schema=public
@@ -480,13 +484,15 @@ el análisis se exige una justificación temporal.
 | `npm run test:watch` | Ejecuta Vitest en modo interactivo |
 | `npm run preview` | Sirve localmente el build |
 
-Las pruebas del frontend cubren navegación, búsqueda, registro temporal,
-accesibilidad del modal y validación de campos obligatorios.
+Las pruebas del frontend cubren sesión, navegación, KPI y el ciclo persistente
+de Actividades: crear, iniciar, pausar, reanudar, completar, editar y recuperar
+conflictos. También verifican permisos, teclado, errores y validaciones.
 
 ## Datos de demostración
 
-Los técnicos, actividades, KPIs y reincidencias visuales están identificados
-explícitamente en `src/mocks/data.ts`.
+Los técnicos, la jornada del Dashboard, su tabla de actividad reciente y las
+reincidencias visuales están identificados en `src/mocks/data.ts`. Actividades y
+KPIs ya no usan esas colecciones como fuente de verdad.
 
 PostgreSQL posee además un seed independiente con:
 
@@ -523,13 +529,10 @@ seguros, cierre controlado de Prisma, contraseñas `scrypt`, bloqueo temporal,
 sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 La SPA restaura sesiones con `GET /api/v1/auth/me`, usa la cookie opaca
-`gs_session` y obliga el cambio de contraseña provisional. Los módulos
-operativos distintos del dashboard KPI siguen migrándose gradualmente en la
-fase 12.
-La autorización por propiedad ya se aplica en órdenes y actividades. El
-frontend no integra aún las APIs de actividades, evidencias ni reincidencias:
-continúan pendientes los puntajes KPI, reportes,
-exportaciones y la integración de los mocks con datos reales. No utilices el
+`gs_session` y obliga el cambio de contraseña provisional. Dashboard KPI y
+Actividades aplican permisos y alcance desde la API; Técnicos, Evidencias y
+Reincidencias siguen pendientes de integración frontend. También faltan
+reportes, exportaciones y reemplazar los mocks restantes. No utilices el
 sistema para información sensible o datos personales reales hasta completar las
 fases funcionales y el despliegue HTTPS.
 

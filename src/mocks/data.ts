@@ -18,6 +18,7 @@ export const technicians: Technician[] = [
   { id: 4, name: "María Santos", initials: "MS", role: "Técnica de campo", color: "#8268d8", done: 4, goal: 6, score: 82, recurrence: 4, hours: "4h 55m" },
 ];
 
+// Fuente temporal exclusiva de “Actividad reciente” en DashboardPage.
 export const initialWorks: Work[] = [
   { id: "OT-1842", title: "Configuración de router empresarial", client: "Farmacia San Rafael", type: "Soporte", tech: "Carlos Méndez", time: "08:20", status: "Finalizado", duration: "1h 15m" },
   { id: "OT-1844", title: "Instalación de 4 cámaras IP", client: "Ferretería El Martillo", type: "Instalación", tech: "Ana López", time: "09:05", status: "En curso", duration: "2h 40m" },
