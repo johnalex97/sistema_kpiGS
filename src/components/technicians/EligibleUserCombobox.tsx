@@ -8,12 +8,14 @@ export interface EligibleUserComboboxProps {
   value: EligibleTechnicianUser | null;
   technicianId?: string;
   disabled?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
   onChange(user: EligibleTechnicianUser | null): void;
 }
 
 const optionLabel = (user: EligibleTechnicianUser) => `${user.displayName} · ${user.email}`;
 
-export function EligibleUserCombobox({ api, value, technicianId, disabled = false, onChange }: EligibleUserComboboxProps) {
+export function EligibleUserCombobox({ api, value, technicianId, disabled = false, invalid = false, describedBy, onChange }: EligibleUserComboboxProps) {
   const inputId = useId();
   const listId = `${inputId}-eligible-users`;
   const [query, setQuery] = useState(() => value ? optionLabel(value) : "");
@@ -24,16 +26,24 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
   const [items, setItems] = useState<EligibleTechnicianUser[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [requestRevision, setRequestRevision] = useState(0);
   const apiRef = useRef(api);
   const requestRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
   const selectedRef = useRef(value);
+  const debounceInitializedRef = useRef(false);
 
   useEffect(() => { apiRef.current = api; }, [api]);
   useEffect(() => {
+    if (!debounceInitializedRef.current) {
+      debounceInitializedRef.current = true;
+      return;
+    }
     const timer = window.setTimeout(() => {
       setPage(1);
       setDebouncedSearch(search);
+      setRequestRevision((current) => current + 1);
     }, 300);
     return () => window.clearTimeout(timer);
   }, [search]);
@@ -50,17 +60,19 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
         return [...new Map(incoming.map((item) => [item.id, item])).values()];
       });
       setTotalPages(result.pagination.totalPages);
+      setLoadError(false);
     }).catch((error: unknown) => {
       if (controller.signal.aborted || generation !== generationRef.current) return;
       if (!(error instanceof Error && error.name === "AbortError")) {
         setItems([]);
         setTotalPages(1);
+        setLoadError(true);
       }
     }).finally(() => {
       if (!controller.signal.aborted && generation === generationRef.current) setLoading(false);
     });
     return () => controller.abort();
-  }, [debouncedSearch, page, technicianId]);
+  }, [debouncedSearch, page, requestRevision, technicianId]);
 
   const changeQuery = (next: string) => {
     requestRef.current?.abort();
@@ -74,6 +86,7 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
     setPage(1);
     setOpen(true);
     setLoading(true);
+    setLoadError(false);
   };
 
   const clear = () => {
@@ -84,7 +97,18 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
     setSearch("");
     setPage(1);
     setOpen(true);
+    setLoading(true);
+    setLoadError(false);
+    setRequestRevision((current) => current + 1);
     onChange(null);
+  };
+
+  const retry = () => {
+    requestRef.current?.abort();
+    generationRef.current += 1;
+    setLoading(true);
+    setLoadError(false);
+    setRequestRevision((current) => current + 1);
   };
 
   return <div className="lookup-combobox technician-user-combobox">
@@ -92,11 +116,12 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
     <p className="technician-user-combobox__hint">Conecta el perfil laboral con su acceso a Geek Solution.</p>
     <div className="lookup-combobox__input">
       <Search size={14} aria-hidden="true" />
-      <input id={inputId} name="eligible-user-search" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={listId} autoComplete="off" placeholder="Buscar nombre o correo…" value={query} disabled={disabled} onFocus={() => setOpen(true)} onChange={(event) => changeQuery(event.target.value)} />
+      <input id={inputId} name="eligible-user-search" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={listId} aria-invalid={invalid || undefined} aria-describedby={describedBy} autoComplete="off" placeholder="Buscar nombre o correo…" value={query} disabled={disabled} onFocus={() => setOpen(true)} onChange={(event) => changeQuery(event.target.value)} />
       {value && !disabled ? <button type="button" className="icon-button" aria-label="Quitar usuario vinculado" onClick={clear}><X size={14} aria-hidden="true" /></button> : loading ? <LoaderCircle className="lookup-combobox__loader" size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
     </div>
     {open && !disabled && <div className="lookup-combobox__list" id={listId} role="listbox" aria-label="Usuarios elegibles">
-      {!loading && items.length === 0 && <p>No hay usuarios elegibles para esta búsqueda.</p>}
+      {!loading && loadError && <div role="alert"><p>No fue posible cargar los usuarios elegibles.</p><button type="button" aria-label="Reintentar usuarios elegibles" onClick={retry}>Reintentar</button></div>}
+      {!loading && !loadError && items.length === 0 && <p>No hay usuarios elegibles para esta búsqueda.</p>}
       {items.map((user) => <button type="button" role="option" aria-selected={value?.id === user.id} key={user.id} onClick={() => { selectedRef.current = user; setQuery(optionLabel(user)); setSearch(""); setOpen(false); onChange(user); }}>{optionLabel(user)}</button>)}
       {page < totalPages && <button className="lookup-combobox__more" type="button" aria-label="Cargar más usuarios" onClick={() => { setLoading(true); setPage((current) => current + 1); }}>Cargar más</button>}
     </div>}

@@ -49,6 +49,7 @@ function TechniciansWorkspaceView({ workspace, api, onAction }: { workspace: Tec
 function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, canManage }: { workspace: TechniciansWorkspace; api: TechnicianApi; onAction?: (action: TechnicianDetailAction) => void; canViewKpi: boolean; canManage: boolean }) {
   const [form, setForm] = useState<"create" | "edit" | null>(null);
   const [actionKind, setActionKind] = useState<"status" | "deactivate" | "reactivate" | null>(null);
+  const [detailSuppressed, setDetailSuppressed] = useState(false);
   const lastTriggerRef = useRef<HTMLElement | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const pagination = workspace.page?.pagination;
@@ -59,6 +60,7 @@ function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, can
   const openTechnician = useCallback((id: string) => {
     lastTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     selectedIdRef.current = id;
+    setDetailSuppressed(false);
     selectTechnician(id);
   }, [selectTechnician]);
   const closeDetail = useCallback(() => {
@@ -71,6 +73,11 @@ function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, can
   }, [selectTechnician]);
   const openForm = (kind: "create" | "edit") => {
     workspace.clearMutationError();
+    if (kind === "create" && (workspace.selected || workspace.detailState !== "idle")) {
+      selectedIdRef.current = null;
+      setDetailSuppressed(true);
+      closeWorkspaceDetail();
+    }
     setForm(kind);
   };
   const closeForm = () => {
@@ -111,7 +118,7 @@ function TechniciansWorkspaceContent({ workspace, api, onAction, canViewKpi, can
     {pagination && pagination.totalPages > 1 && <nav className="technicians-pagination" aria-label="Paginación de técnicos"><button className="button button--ghost" type="button" disabled={pagination.page <= 1} onClick={() => workspace.setFilters({ page: pagination.page - 1 })}>Página anterior</button><span>Página <b>{pagination.page}</b> de {pagination.totalPages}</span><button className="button button--ghost" type="button" aria-label="Página siguiente" disabled={pagination.page >= pagination.totalPages} onClick={() => workspace.setFilters({ page: pagination.page + 1 })}>Siguiente</button></nav>}
     {workspace.detailState === "loading" && <div className="technician-detail-loading" role="status">Cargando detalle del técnico…</div>}
     {workspace.detailState === "error" && !workspace.selected && <div className="technician-detail-error" role="alert"><span>No fue posible cargar el detalle del técnico.</span><button type="button" onClick={retryDetail}>Reintentar detalle</button><button type="button" onClick={closeDetail}>Cerrar</button></div>}
-    {workspace.selected && form !== "edit" && actionKind === null && <div className="technician-detail-backdrop"><TechnicianDetail technician={workspace.selected} kpi={selectedKpi} showKpi={canViewKpi} actions={detailActions} onClose={closeDetail} onAction={detailAction} /></div>}
+    {workspace.selected && !detailSuppressed && form === null && actionKind === null && <div className="technician-detail-backdrop"><TechnicianDetail technician={workspace.selected} kpi={selectedKpi} showKpi={canViewKpi} actions={detailActions} onClose={closeDetail} onAction={detailAction} /></div>}
     {form === "create" && <div className="activity-form-backdrop technician-form-backdrop"><TechnicianForm api={api} apiError={workspace.mutation?.name === "create" ? workspace.mutation.error : null} onCancel={closeForm} onSubmit={async (input) => { const saved = await workspace.createTechnician(input); if (saved) closeForm(); return saved; }} /></div>}
     {form === "edit" && workspace.selected && <div className="activity-form-backdrop technician-form-backdrop"><TechnicianForm variant="edit" technician={workspace.selected} api={api} apiError={workspace.mutation?.name === "update" ? workspace.mutation.error : null} onCancel={closeForm} onSubmit={async (input) => { const saved = await workspace.updateTechnician(input); if (saved) closeForm(); return saved; }} /></div>}
     {actionKind && workspace.selected && <div className="activity-form-backdrop technician-action-backdrop"><TechnicianActionDialog action={{ kind: actionKind, technician: workspace.selected }} error={workspace.mutation?.name === actionKind ? workspace.mutation.error : null} onCancel={closeAction} onConfirm={confirmAction} /></div>}

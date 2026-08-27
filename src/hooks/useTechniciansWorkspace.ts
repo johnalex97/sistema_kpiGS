@@ -105,7 +105,10 @@ export function useTechniciansWorkspace({
   const clock = useCallback(() => (nowRef.current ?? systemNow)(), []);
   const [query, setQuery] = useState<TechnicianQueryState>(() => {
     const parsed = parseTechnicianSearch(window.location.search);
-    return { ...parsed, filters: { ...parsed.filters, search: search.trim() || undefined } };
+    const externalSearch = search.trim();
+    return externalSearch
+      ? { ...parsed, filters: { ...parsed.filters, search: externalSearch, page: 1 } }
+      : parsed;
   });
   const [page, setPage] = useState<TechnicianPage | null>(null);
   const [selected, setSelected] = useState<Technician | null>(null);
@@ -122,7 +125,7 @@ export function useTechniciansWorkspace({
   const selectedRef = useRef(selected);
   const selectedIdRef = useRef<string | null>(null);
   const canViewKpiRef = useRef(canViewKpi);
-  const appliedSearchRef = useRef(search.trim());
+  const appliedSearchRef = useRef(search.trim() || query.filters.search || "");
   const listControllerRef = useRef<AbortController | null>(null);
   const detailControllerRef = useRef<AbortController | null>(null);
   const kpiControllerRef = useRef<AbortController | null>(null);
@@ -233,6 +236,7 @@ export function useTechniciansWorkspace({
 
   useEffect(() => {
     const normalized = search.trim();
+    if (!normalized) return;
     if (normalized === appliedSearchRef.current) return;
     const timer = window.setTimeout(() => {
       appliedSearchRef.current = normalized;
@@ -253,8 +257,9 @@ export function useTechniciansWorkspace({
   useEffect(() => {
     const handlePopState = () => {
       const parsed = parseTechnicianSearch(window.location.search);
+      appliedSearchRef.current = parsed.filters.search ?? "";
       beginListLoading();
-      setQuery({ ...parsed, filters: { ...parsed.filters, search: appliedSearchRef.current || undefined } });
+      setQuery(parsed);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);

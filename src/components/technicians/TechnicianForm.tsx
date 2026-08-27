@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Link2, X } from "lucide-react";
 import type { TechnicianApi } from "../../api/technicians";
 import type { CreateTechnicianInput, EligibleTechnicianUser, Technician, UpdateTechnicianInput } from "../../models/technician";
@@ -45,6 +45,13 @@ export function TechnicianForm(props: TechnicianFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const cancelRef = useRef(props.onCancel);
   const pendingRef = useRef(false);
+  const errorId = useId();
+  const apiErrorField = props.apiError === "El correo laboral ya está registrado."
+    ? "workEmail"
+    : props.apiError === "El usuario seleccionado no es elegible como técnico."
+      || props.apiError === "El usuario seleccionado ya está vinculado a otro técnico."
+      ? "user"
+      : null;
 
   useEffect(() => { cancelRef.current = props.onCancel; }, [props.onCancel]);
   useEffect(() => { pendingRef.current = pending; }, [pending]);
@@ -91,24 +98,28 @@ export function TechnicianForm(props: TechnicianFormProps) {
       hiredOn: hiredOn || null,
       userId: user?.id ?? null,
     };
+    pendingRef.current = true;
     setPending(true);
-    try { await props.onSubmit(value); } finally { setPending(false); }
+    try { await props.onSubmit(value); } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
   };
 
   const title = isEdit ? "Editar técnico" : "Nuevo técnico";
   return <form className="activity-form technician-form" role="dialog" aria-modal="true" aria-labelledby="technician-form-title" noValidate ref={formRef} onSubmit={submit} onKeyDown={trapFocus}>
-    <header className="activity-form__head technician-form__head"><div><p className="eyebrow">Maestro laboral</p><h2 id="technician-form-title">{title}</h2><span>{isEdit ? `Actualiza la ficha de ${initial?.fullName ?? "este técnico"} sin alterar su código ni estado.` : "Crea la identidad laboral que acompañará el trabajo diario del técnico."}</span></div><button className="icon-button" type="button" aria-label="Cerrar formulario" disabled={pending} onClick={props.onCancel}><X size={18} /></button></header>
+    <header className="activity-form__head technician-form__head"><div><p className="eyebrow">Maestro laboral</p><h2 id="technician-form-title">{title}</h2><span>{isEdit ? `Actualiza la ficha de ${initial?.fullName ?? "este técnico"} sin alterar su código ni estado.` : "Crea la identidad laboral que acompañará el trabajo diario del técnico."}</span></div><button className="icon-button" type="button" aria-label="Cerrar formulario" disabled={pending} onClick={props.onCancel}><X size={18} aria-hidden="true" /></button></header>
     <fieldset className="activity-form__body technician-form__body" disabled={pending}>
       <legend className="sr-only">Datos del técnico</legend>
       <div className="activity-form__grid">
         <Field label="Nombre completo"><input name="fullName" autoComplete="name" maxLength={160} value={fullName} onChange={(event) => setFullName(event.target.value)} /></Field>
         <Field label="Especialidad"><input name="specialty" autoComplete="organization-title" maxLength={120} value={specialty} onChange={(event) => setSpecialty(event.target.value)} /></Field>
         <Field label="Teléfono laboral"><input name="workPhone" type="tel" autoComplete="tel" maxLength={30} value={workPhone} onChange={(event) => setWorkPhone(event.target.value)} /></Field>
-        <Field label="Correo laboral"><input name="workEmail" type="email" autoComplete="email" maxLength={254} value={workEmail} onChange={(event) => setWorkEmail(event.target.value)} /></Field>
+        <Field label="Correo laboral"><input name="workEmail" type="email" autoComplete="email" maxLength={254} value={workEmail} aria-invalid={apiErrorField === "workEmail" || undefined} aria-describedby={apiErrorField === "workEmail" ? errorId : undefined} onChange={(event) => setWorkEmail(event.target.value)} /></Field>
         <Field label="Fecha de ingreso"><input name="hiredOn" type="date" autoComplete="off" max={todayInTegucigalpa((props.now ?? (() => new Date()))())} value={hiredOn} onChange={(event) => setHiredOn(event.target.value)} /></Field>
       </div>
-      <section className="technician-form__identity" aria-labelledby="technician-form-user-title"><h3 id="technician-form-user-title"><Link2 size={16} aria-hidden="true" />Acceso al sistema</h3><EligibleUserCombobox api={props.api} technicianId={initial?.id} value={user} disabled={pending} onChange={setUser} /></section>
-      {(validationError || props.apiError) && <p className="form-error" role="alert">{validationError ?? props.apiError}</p>}
+      <section className="technician-form__identity" aria-labelledby="technician-form-user-title"><h3 id="technician-form-user-title"><Link2 size={16} aria-hidden="true" />Acceso al sistema</h3><EligibleUserCombobox api={props.api} technicianId={initial?.id} value={user} disabled={pending} invalid={apiErrorField === "user"} describedBy={apiErrorField === "user" ? errorId : undefined} onChange={setUser} /></section>
+      {(validationError || props.apiError) && <p id={errorId} className="form-error" role="alert">{validationError ?? props.apiError}</p>}
     </fieldset>
     <footer className="activity-form__actions technician-form__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={props.onCancel}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending}>{pending ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear técnico"}</button></footer>
   </form>;

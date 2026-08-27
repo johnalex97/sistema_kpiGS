@@ -174,6 +174,37 @@ describe("useTechniciansWorkspace", () => {
     expect(query.get("technicianIncludeInactive")).toBe("true");
   });
 
+  it("conserva la búsqueda persistida en URL cuando la búsqueda externa está vacía", async () => {
+    window.history.replaceState({}, "", "/tecnicos?technicianSearch=Ana&technicianStatus=BUSY&technicianPage=3");
+    const api = technicianApiMock();
+
+    const { result } = renderHook(() => useTechniciansWorkspace({ api, kpiApi: kpiApiMock(), search: "", canViewKpi: false }));
+
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    expect(result.current.query.filters).toMatchObject({ search: "Ana", status: "BUSY", page: 3 });
+    expect(api.list).toHaveBeenCalledWith(expect.objectContaining({ search: "Ana", status: "BUSY", page: 3 }), expect.any(AbortSignal));
+    expect(new URLSearchParams(window.location.search).get("technicianSearch")).toBe("Ana");
+  });
+
+  it("restaura exactamente búsqueda y filtros desde URL al navegar con popstate", async () => {
+    window.history.replaceState({}, "", "/tecnicos?technicianSearch=Ana&technicianStatus=BUSY&technicianPage=3");
+    const api = technicianApiMock();
+    const { result } = renderHook(() => useTechniciansWorkspace({ api, kpiApi: kpiApiMock(), search: "", canViewKpi: false }));
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+
+    act(() => {
+      window.history.pushState({}, "", "/tecnicos?technicianSearch=Beatriz&technicianStatus=INACTIVE&technicianIncludeInactive=true&technicianPage=2");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    await waitFor(() => expect(result.current.query.filters).toMatchObject({
+      search: "Beatriz", status: "INACTIVE", includeInactive: true, page: 2,
+    }));
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      search: "Beatriz", status: "INACTIVE", includeInactive: true, page: 2,
+    }), expect.any(AbortSignal));
+  });
+
   it("carga detalle y aborta su solicitud al desmontarse", async () => {
     const pending = deferred<Technician>();
     const api = technicianApiMock({ detail: vi.fn(() => pending.promise) });

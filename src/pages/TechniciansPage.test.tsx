@@ -181,6 +181,25 @@ describe("TechniciansPage", () => {
     view.rerender(<AuthContext.Provider value={authValue(["TECHNICIANS_VIEW"])}><TechniciansPage workspace={current} api={eligibleApi} /></AuthContext.Provider>);
     expect(screen.queryByRole("dialog", { name: "Nuevo técnico" })).not.toBeInTheDocument();
   });
+
+  it("cierra el detalle antes de abrir Nuevo técnico y un solo Escape cierra el único diálogo", async () => {
+    const user = userEvent.setup();
+    const current = workspace({ selected: technician, detailState: "ready" });
+    render(pageView(current, ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+    expect(screen.getByRole("dialog", { name: "Detalle del técnico" })).toBeInTheDocument();
+
+    const createButton = screen.getByRole("button", { name: "Nuevo técnico" });
+    await user.click(createButton);
+    expect(current.closeDetail).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: "Detalle del técnico" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Nuevo técnico" })).toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(current.closeDetail).toHaveBeenCalledOnce();
+    expect(createButton).toHaveFocus();
+  });
   it("orienta durante carga, vacío, error recuperable y datos obsoletos", () => {
     const loading = workspace({ page: null, listState: "loading" });
     const empty = workspace({ page: { items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } }, listState: "empty" });

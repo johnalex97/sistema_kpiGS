@@ -76,8 +76,12 @@ export function TechnicianActionDialog({ action, error, now = () => new Date(), 
       value = action.kind === "deactivate" ? { reason: normalizedReason, ...(leftOn ? { leftOn } : {}) } : { reason: normalizedReason };
     }
     setValidationError(null);
+    pendingRef.current = true;
     setPending(true);
-    try { await onConfirm(value); } finally { setPending(false); }
+    try { await onConfirm(value); } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
   };
 
   const title = titles[action.kind];

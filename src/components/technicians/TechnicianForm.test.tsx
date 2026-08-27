@@ -89,6 +89,59 @@ describe("EligibleUserCombobox", () => {
     view.unmount();
     expect(requests[1]?.signal?.aborted).toBe(true);
   });
+
+  it("reinicia la misma búsqueda si una edición intermedia abortó su solicitud", async () => {
+    vi.useFakeTimers();
+    const requests: Array<{ search: string; signal?: AbortSignal; resolve(value: EligibleUserPage): void }> = [];
+    const eligibleUsers = vi.fn((search: string, _page: number, _technicianId?: string, signal?: AbortSignal) => new Promise<EligibleUserPage>((resolve) => requests.push({ search, signal, resolve })));
+    render(<EligibleUserCombobox api={api({ eligibleUsers })} value={null} onChange={vi.fn()} />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Usuario vinculado" }), { target: { value: "Ana" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(requests[requests.length - 1]?.search).toBe("Ana");
+    fireEvent.change(screen.getByRole("combobox", { name: "Usuario vinculado" }), { target: { value: "Ana x" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Usuario vinculado" }), { target: { value: "Ana" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+
+    expect(eligibleUsers).toHaveBeenCalledTimes(3);
+    expect(requests[requests.length - 1]?.search).toBe("Ana");
+    requests[requests.length - 1]?.resolve({ items: [], pagination: { ...pagination, totalItems: 0, totalPages: 0 } });
+    await act(async () => undefined);
+    expect(screen.getByText("No hay usuarios elegibles para esta búsqueda.")).toBeInTheDocument();
+  });
+
+  it("vuelve a cargar al limpiar una selección durante la primera solicitud", async () => {
+    vi.useFakeTimers();
+    const requests: Array<{ signal?: AbortSignal; resolve(value: EligibleUserPage): void }> = [];
+    const eligibleUsers = vi.fn((_search: string, _page: number, _technicianId?: string, signal?: AbortSignal) => new Promise<EligibleUserPage>((resolve) => requests.push({ signal, resolve })));
+    function Harness() {
+      const [value, setValue] = useState<typeof eligibleAna | null>(eligibleAna);
+      return <EligibleUserCombobox api={api({ eligibleUsers })} value={value} onChange={setValue} />;
+    }
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Quitar usuario vinculado" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(requests[0]?.signal?.aborted).toBe(true);
+    expect(eligibleUsers).toHaveBeenCalledTimes(2);
+    requests[1]?.resolve({ items: [], pagination: { ...pagination, totalItems: 0, totalPages: 0 } });
+    await act(async () => undefined);
+    expect(screen.getByText("No hay usuarios elegibles para esta búsqueda.")).toBeInTheDocument();
+  });
+
+  it("distingue el error de carga del resultado vacío y permite reintentar sin exponer detalles", async () => {
+    const eligibleUsers = vi.fn()
+      .mockRejectedValueOnce(new Error("SQLSTATE 08006 conexión privada"))
+      .mockResolvedValueOnce({ items: [eligibleAna], pagination });
+    render(<EligibleUserCombobox api={api({ eligibleUsers })} value={null} onChange={vi.fn()} />);
+    fireEvent.focus(screen.getByRole("combobox", { name: "Usuario vinculado" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("No fue posible cargar los usuarios elegibles.");
+    expect(screen.queryByText(/SQLSTATE/)).not.toBeInTheDocument();
+    expect(screen.queryByText("No hay usuarios elegibles para esta búsqueda.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar usuarios elegibles" }));
+    expect(await screen.findByRole("option", { name: "Ana López · ana@geek.test" })).toBeInTheDocument();
+  });
 });
 
 describe("TechnicianForm", () => {
@@ -157,5 +210,34 @@ describe("TechnicianForm", () => {
     view.unmount();
     expect(trigger).toHaveFocus();
     trigger.remove();
+  });
+
+  it.each([
+    ["El correo laboral ya está registrado.", "Correo laboral"],
+    ["El usuario seleccionado no es elegible como técnico.", "Usuario vinculado"],
+    ["El usuario seleccionado ya está vinculado a otro técnico.", "Usuario vinculado"],
+  ])("asocia el error API %s con su campo", (apiError, fieldLabel) => {
+    const pendingApi = api({ eligibleUsers: vi.fn(() => new Promise<EligibleUserPage>(() => undefined)) });
+    render(<TechnicianForm api={pendingApi} apiError={apiError} onSubmit={vi.fn(async () => false)} onCancel={vi.fn()} />);
+    const field = screen.getByRole(fieldLabel === "Usuario vinculado" ? "combobox" : "textbox", { name: fieldLabel });
+    const alert = screen.getByRole("alert");
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAttribute("aria-describedby", alert.id);
+  });
+
+  it("bloquea Escape desde el mismo instante en que comienza el envío", async () => {
+    const onCancel = vi.fn();
+    let finish: ((value: boolean) => void) | undefined;
+    const onSubmit = vi.fn(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      return new Promise<boolean>((resolve) => { finish = resolve; });
+    });
+    const pendingApi = api({ eligibleUsers: vi.fn(() => new Promise<EligibleUserPage>(() => undefined)) });
+    render(<TechnicianForm api={pendingApi} onSubmit={onSubmit} onCancel={onCancel} />);
+    fireEvent.change(screen.getByLabelText("Nombre completo"), { target: { value: "Ana López" } });
+    fireEvent.submit(screen.getByRole("dialog", { name: "Nuevo técnico" }));
+    expect(onCancel).not.toHaveBeenCalled();
+    finish?.(false);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Crear técnico" })).toBeEnabled());
   });
 });

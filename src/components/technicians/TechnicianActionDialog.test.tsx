@@ -12,6 +12,17 @@ const technician: Technician = {
 };
 
 describe("TechnicianActionDialog", () => {
+  it("enfoca el primer campo y restaura el foco al cerrar", () => {
+    const trigger = document.createElement("button");
+    document.body.append(trigger);
+    trigger.focus();
+    const view = render(<TechnicianActionDialog action={{ kind: "status", technician }} onCancel={vi.fn()} onConfirm={vi.fn(async () => true)} />);
+    expect(screen.getByLabelText("Nuevo estado")).toHaveFocus();
+    view.unmount();
+    expect(trigger).toHaveFocus();
+    trigger.remove();
+  });
+
   it("valida y confirma un nuevo estado operativo", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn(async () => true);
@@ -67,5 +78,20 @@ describe("TechnicianActionDialog", () => {
     view.rerender(<TechnicianActionDialog action={{ kind: "reactivate", technician: { ...technician, status: "INACTIVE", version: 5 } }} error="El registro cambió; revisa la versión actual." onCancel={onCancel} onConfirm={onConfirm} />);
     expect(screen.getByRole("alert")).toHaveTextContent("registro cambió");
     expect(screen.getByText("Ficha v5")).toBeInTheDocument();
+  });
+
+  it("bloquea Escape desde el mismo instante en que comienza el envío", async () => {
+    const onCancel = vi.fn();
+    let finish: ((value: boolean) => void) | undefined;
+    const onConfirm = vi.fn(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      return new Promise<boolean>((resolve) => { finish = resolve; });
+    });
+    render(<TechnicianActionDialog action={{ kind: "status", technician }} onCancel={onCancel} onConfirm={onConfirm} />);
+    fireEvent.change(screen.getByLabelText("Nuevo estado"), { target: { value: "BUSY" } });
+    fireEvent.submit(screen.getByRole("dialog", { name: "Cambiar estado" }));
+    expect(onCancel).not.toHaveBeenCalled();
+    finish?.(false);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Guardar estado" })).toBeEnabled());
   });
 });
