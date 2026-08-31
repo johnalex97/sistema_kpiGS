@@ -7,19 +7,6 @@ export type PagePath = "/resumen" | "/actividades" | "/tecnicos" | "/reincidenci
 export type WorkType = "Soporte" | "Instalación" | "Entrega";
 export type WorkStatus = "Finalizado" | "En curso" | "Pendiente";
 
-export interface Technician {
-  id: number;
-  name: string;
-  initials: string;
-  role: string;
-  color: string;
-  done: number;
-  goal: number;
-  score: number;
-  recurrence: number;
-  hours: string;
-}
-
 export interface Work {
   id: string;
   title: string;

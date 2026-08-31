@@ -6,9 +6,9 @@ Fecha de actualización: 26 de agosto de 2026.
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express,
 persistencia PostgreSQL mediante Prisma y autenticación con sesiones opacas. La
-SPA ya integra sesión, KPI y el flujo completo de Actividades; Técnicos,
-Evidencias, Reincidencias y la actividad reciente del Dashboard continúan en
-migración gradual.
+SPA ya integra sesión, KPI, el flujo completo de Actividades y la administración
+de Técnicos; Evidencias, Reincidencias y la actividad reciente del Dashboard
+continúan en migración gradual.
 
 ## Estructura encontrada
 
@@ -51,7 +51,7 @@ server/
 ```
 
 El frontend dispone de cliente HTTP con cookies, recuperación de sesión y
-fronteras API tipadas para KPI y Actividades. El backend consume persistencia
+fronteras API tipadas para KPI, Actividades y Técnicos. El backend consume persistencia
 para autenticación, técnicos, clientes, sucursales, contactos, órdenes,
 actividades, evidencias, reincidencias y KPI.
 
@@ -63,6 +63,8 @@ actividades, evidencias, reincidencias y KPI.
 - Inicio, pausa, reanudación, finalización, cancelación y ajuste auditado.
 - Recuperación de red, permisos, eliminaciones y conflictos de versión.
 - Dashboard KPI real y administración según capacidades.
+- Técnicos persistentes: búsqueda, filtros y paginación en URL, detalle,
+  ciclo laboral y selector de usuarios elegibles mediante API.
 - Menú lateral adaptable a teléfonos.
 - Tablas con desplazamiento horizontal en pantallas estrechas.
 - Compilación de producción con TypeScript estricto.
@@ -70,7 +72,6 @@ actividades, evidencias, reincidencias y KPI.
 ## Funcionalidades únicamente visuales
 
 - Línea de jornada.
-- Estados y disponibilidad de técnicos.
 - Casos de reincidencia.
 - Filtros, reportes, configuración y notificaciones.
 - Fechas, tiempos, costos y porcentajes mostrados.
@@ -81,17 +82,17 @@ Todos están declarados explícitamente en `src/mocks/data.ts`:
 
 | Constante | Contenido | Consumidores |
 | --- | --- | --- |
-| `technicians` | Técnicos y jornada visual | Dashboard y vista de técnicos |
+| `technicians` | Jornada visual temporal | Sólo Dashboard |
 | `initialWorks` | Actividad reciente de ejemplo | Sólo Dashboard |
 | `recurrenceJobs` | Casos de reincidencia | Vista de reincidencias |
 | `navItems` | Navegación principal | Menú lateral |
 
-El módulo de Actividades no importa ninguna de estas colecciones. Sus escrituras
-se ejecutan contra PostgreSQL mediante la API.
+Los módulos de Actividades y Técnicos no importan estas colecciones como fuente
+de verdad. Sus escrituras se ejecutan contra PostgreSQL mediante la API.
 
 ## Problemas técnicos
 
-1. Técnicos, Evidencias y Reincidencias todavía no consumen sus APIs en la SPA.
+1. Evidencias y Reincidencias todavía no consumen sus APIs en la SPA.
 2. La jornada y actividad reciente del Dashboard aún usan datos locales.
 3. Las pantallas de órdenes todavía no están integradas.
 4. Los usuarios demo no pueden iniciar sesión; el administrador requiere
@@ -273,9 +274,12 @@ recalcular la semana original. `KPI_TIME_ZONE=America/Tegucigalpa` define los
 límites locales.
 
 La SPA consume resumen, ranking e historial KPI real y ofrece metas,
-ponderaciones, cierre y recálculo según capacidades del usuario. Actividades
-también es persistente; los restantes paneles operativos conservan datos locales
-hasta completar la fase 12.
+ponderaciones, cierre y recálculo según capacidades del usuario. Actividades y
+Técnicos también son persistentes; los restantes paneles operativos conservan
+datos locales hasta completar la fase 12. El catálogo técnico permite
+`TECHNICIANS_VIEW`; el ciclo laboral y `GET /api/v1/technicians/eligible-users`
+requieren `TECHNICIANS_MANAGE`, mientras las métricas semanales requieren
+`KPI_VIEW_ALL`.
 
 Verificación local: `npm run kpis:verify`, `npm run test:db`, `npm test`,
 `npm run typecheck`, `npm run lint` y `npm run build` desde `server/`; desde la

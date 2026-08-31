@@ -42,6 +42,24 @@ describe("AppShell", () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("search=Caf%C3%A9+Central"))).toBe(true));
   });
 
+  it("entrega la búsqueda global al catálogo persistente de técnicos", async () => {
+    window.history.replaceState({}, "", "/tecnicos");
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname;
+      const data = path.endsWith("/kpis/dashboard")
+        ? { status: "PREVIEW", items: [], warnings: [], capabilities: {} }
+        : { items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } };
+      return new Response(JSON.stringify({ data }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const user = userEvent.setup();
+    renderWithAuth(<AppShell />);
+    vi.mocked(fetch).mockClear();
+
+    await user.type(screen.getByRole("textbox", { name: "Buscar orden, cliente o técnico" }), "Carla");
+
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/technicians?search=Carla"))).toBe(true));
+  });
+
   it("monta un unico formulario persistente y restaura el foco al cerrarlo", async () => {
     window.history.replaceState({}, "", "/actividades");
     vi.mocked(fetch).mockImplementation(async (input) => {

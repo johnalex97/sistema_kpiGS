@@ -9,7 +9,7 @@ cumplimiento, eficiencia y calidad.
 El repositorio contiene un frontend modular conectado gradualmente a una API
 Express independiente, persistencia PostgreSQL administrada mediante Prisma y
 autenticación con sesiones revocables. La sesión, el dashboard KPI y el módulo
-de Actividades ya consumen la API real. Técnicos, la jornada visual del resumen
+de Actividades y Técnicos ya consumen la API real. La jornada visual del resumen
 y Reincidencias todavía usan datos de demostración mientras avanza la fase 12.
 
 Consulta:
@@ -202,12 +202,14 @@ Los endpoints mutables de autenticación requieren un encabezado `Origin`
 incluido en `CORS_ORIGIN`. La cookie `gs_session` es `HttpOnly`,
 `SameSite=Lax` y no se guarda en `localStorage`.
 
-La API de técnicos requiere `TECHNICIANS_VIEW` para lecturas y
-`TECHNICIANS_MANAGE` para mutaciones. Las mutaciones también requieren
-`Origin: http://localhost:5173` en el entorno local. Usa control optimista con
-`version`; la desactivación es lógica, queda auditada y se bloquea cuando el
-técnico participa en una orden o actividad activa. La pantalla React de
-técnicos continúa usando mocks hasta la fase de integración del frontend.
+La API de técnicos requiere `TECHNICIANS_VIEW` para catálogo y detalle, y
+`TECHNICIANS_MANAGE` para crear, editar, cambiar estado, desactivar, reactivar
+y consultar `GET /api/v1/technicians/eligible-users`. Este último devuelve sólo
+`id`, correo y nombre visible de usuarios elegibles, sin datos sensibles. Las
+mutaciones también requieren `Origin: http://localhost:5173` en el entorno
+local. Usa control optimista con `version`; la desactivación es lógica, queda
+auditada y se bloquea cuando el técnico participa en una orden o actividad
+activa. La pantalla React consume este contrato con cookies y URL sincronizada.
 
 La API de clientes requiere `CLIENTS_VIEW` para lecturas; ADMIN, SUPERVISOR y
 TECHNICIAN lo reciben. Las mutaciones requieren `CLIENTS_MANAGE`, disponible
@@ -484,15 +486,17 @@ el análisis se exige una justificación temporal.
 | `npm run test:watch` | Ejecuta Vitest en modo interactivo |
 | `npm run preview` | Sirve localmente el build |
 
-Las pruebas del frontend cubren sesión, navegación, KPI y el ciclo persistente
-de Actividades: crear, iniciar, pausar, reanudar, completar, editar y recuperar
-conflictos. También verifican permisos, teclado, errores y validaciones.
+Las pruebas del frontend cubren sesión, navegación, KPI, el ciclo persistente
+de Actividades y la administración integrada de Técnicos: crear, editar,
+cambiar estado, desactivar, reactivar y recuperar conflictos. También verifican
+permisos, teclado, errores y validaciones.
 
 ## Datos de demostración
 
-Los técnicos, la jornada del Dashboard, su tabla de actividad reciente y las
-reincidencias visuales están identificados en `src/mocks/data.ts`. Actividades y
-KPIs ya no usan esas colecciones como fuente de verdad.
+La colección `technicians` queda limitada a la jornada visual del Dashboard;
+`initialWorks` también queda sólo en Dashboard y `recurrenceJobs` en
+Reincidencias. Técnicos, Actividades y KPIs no usan esas colecciones como fuente
+de verdad.
 
 PostgreSQL posee además un seed independiente con:
 
@@ -529,8 +533,8 @@ seguros, cierre controlado de Prisma, contraseñas `scrypt`, bloqueo temporal,
 sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 La SPA restaura sesiones con `GET /api/v1/auth/me`, usa la cookie opaca
-`gs_session` y obliga el cambio de contraseña provisional. Dashboard KPI y
-Actividades aplican permisos y alcance desde la API; Técnicos, Evidencias y
+`gs_session` y obliga el cambio de contraseña provisional. Dashboard KPI,
+Actividades y Técnicos aplican permisos y alcance desde la API; Evidencias y
 Reincidencias siguen pendientes de integración frontend. También faltan
 reportes, exportaciones y reemplazar los mocks restantes. No utilices el
 sistema para información sensible o datos personales reales hasta completar las

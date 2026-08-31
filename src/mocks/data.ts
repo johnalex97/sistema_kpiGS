@@ -7,11 +7,11 @@ import {
 import type {
   NavigationItem,
   RecurrenceJob,
-  Technician,
   Work,
 } from "../models/app";
 
-export const technicians: Technician[] = [
+// Fuente temporal exclusiva de la jornada visual de DashboardPage.
+export const technicians = [
   { id: 1, name: "Carlos Méndez", initials: "CM", role: "Técnico senior", color: "#29b8aa", done: 7, goal: 8, score: 94, recurrence: 3, hours: "6h 40m" },
   { id: 2, name: "Ana López", initials: "AL", role: "Instalaciones", color: "#4776e6", done: 6, goal: 7, score: 91, recurrence: 2, hours: "6h 05m" },
   { id: 3, name: "Luis Romero", initials: "LR", role: "Soporte técnico", color: "#e9a23b", done: 5, goal: 7, score: 86, recurrence: 5, hours: "5h 30m" },

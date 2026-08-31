@@ -16,7 +16,7 @@ import { AccessDeniedPage } from "../pages/AccessDeniedPage";
 function PageContent({ page, search, onGoRecurrence }: { page: Page; search: string; onGoRecurrence: () => void }) {
   switch (page) {
     case "Actividades": return <ActivitiesPage search={search} />;
-    case "Técnicos": return <TechniciansPage />;
+    case "Técnicos": return <TechniciansPage search={search} />;
     case "Reincidencias": return <RecurrencesPage />;
     default: return <DashboardPage works={initialWorks} onGoRecurrence={onGoRecurrence} />;
   }
