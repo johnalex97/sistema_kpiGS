@@ -76,6 +76,19 @@ export interface RecurrenceListFilters {
   pageSize: number;
 }
 
+export type RecurrenceSummaryFilters = Omit<RecurrenceListFilters, "page" | "pageSize">;
+
+export interface PublicRecurrenceSummaryMetrics {
+  totalCases: number;
+  openCases: number;
+  highImpactCases: number;
+  additionalVisits: number;
+  additionalMinutes: number;
+  estimatedCost: string;
+  completedBaseOrders: number;
+  recurrenceRate: string;
+}
+
 export interface Pagination {
   page: number;
   pageSize: number;

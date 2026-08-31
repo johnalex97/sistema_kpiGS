@@ -10,6 +10,8 @@ import type {
   RecurrenceAccessScope,
   RecurrenceActorContext,
   RecurrenceListFilters,
+  RecurrenceSummaryFilters,
+  PublicRecurrenceSummaryMetrics,
   ReportRecurrenceInput,
 } from "./recurrences.types.js";
 
@@ -121,6 +123,7 @@ export type RecurrenceMutationResult =
 export interface RecurrencesRepository {
   listCauses(): Promise<RecurrenceCauseRecord[]>;
   listRecurrences(filters: RecurrenceListFilters, scope: RecurrenceAccessScope): Promise<PageRecord<RecurrenceSummaryRecord>>;
+  summarizeRecurrences(filters: RecurrenceSummaryFilters, scope: RecurrenceAccessScope): Promise<PublicRecurrenceSummaryMetrics>;
   findRecurrence(id: string, scope: RecurrenceAccessScope): Promise<RecurrenceDetailRecord | null>;
   reportRecurrence(input: ReportRecurrenceInput, actor: RecurrenceActorContext, now: Date): Promise<RecurrenceMutationResult>;
   analyzeRecurrence(id: string, input: AnalyzeRecurrenceInput, actor: RecurrenceActorContext, now: Date, warningDays: number): Promise<RecurrenceMutationResult>;

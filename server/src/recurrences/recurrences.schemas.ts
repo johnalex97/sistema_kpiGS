@@ -27,6 +27,19 @@ const costSchema = z.string().trim().regex(decimalCostPattern);
 const dateSchema = z.string().trim().datetime({ offset: true }).transform((value) => new Date(value));
 const repeated = <T extends z.ZodType>(item: T) => z.union([item, z.array(item)]).transform((value) => [...new Set(Array.isArray(value) ? value : [value])]);
 
+const recurrenceFilterFields = {
+  search: z.string().trim().min(1).max(100).optional(),
+  status: repeated(statusSchema).optional(),
+  impact: repeated(impactSchema).optional(),
+  responsibility: repeated(responsibilitySchema).optional(),
+  originalOrderId: z.uuid().optional(),
+  technicianId: z.uuid().optional(),
+  clientId: z.uuid().optional(),
+  branchId: z.uuid().optional(),
+  detectedFrom: dateSchema.optional(),
+  detectedTo: dateSchema.optional(),
+};
+
 const qualityDecisionSchema = z.object({
   technicianId: z.uuid(),
   affectsQuality: z.boolean(),
@@ -80,24 +93,22 @@ function withPairedCost<T extends z.ZodType>(schema: T): T {
 
 export const recurrenceIdSchema = z.object({ recurrenceId: z.uuid() }).strict();
 
-export const recurrenceListQuerySchema = z.object({
-  search: z.string().trim().min(1).max(100).optional(),
-  status: repeated(statusSchema).optional(),
-  impact: repeated(impactSchema).optional(),
-  responsibility: repeated(responsibilitySchema).optional(),
-  originalOrderId: z.uuid().optional(),
-  technicianId: z.uuid().optional(),
-  clientId: z.uuid().optional(),
-  branchId: z.uuid().optional(),
-  detectedFrom: dateSchema.optional(),
-  detectedTo: dateSchema.optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
-}).strict().superRefine((value, context) => {
-  if (value.detectedFrom && value.detectedTo && value.detectedTo < value.detectedFrom) {
+const withDetectedDateRange = <T extends z.ZodType>(schema: T): T => schema.superRefine((value, context) => {
+  const filters = value as { detectedFrom?: Date; detectedTo?: Date };
+  if (filters.detectedFrom && filters.detectedTo && filters.detectedTo < filters.detectedFrom) {
     context.addIssue({ code: "custom", path: ["detectedTo"], message: "La fecha final no puede ser anterior a la inicial" });
   }
-});
+}) as T;
+
+export const recurrenceListQuerySchema = withDetectedDateRange(z.object({
+  ...recurrenceFilterFields,
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+}).strict());
+
+export const recurrenceSummaryQuerySchema = withDetectedDateRange(z.object({
+  ...recurrenceFilterFields,
+}).strict());
 
 export const reportRecurrenceSchema = z.object({
   originalOrderId: z.uuid(),

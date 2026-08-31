@@ -22,9 +22,11 @@ import type {
   PublicRecurrenceCatalog,
   PublicRecurrenceDetail,
   PublicRecurrenceSummary,
+  PublicRecurrenceSummaryMetrics,
   RecurrenceAccessScope,
   RecurrenceActorContext,
   RecurrenceListFilters,
+  RecurrenceSummaryFilters,
   ReportRecurrenceInput,
 } from "./recurrences.types.js";
 
@@ -33,6 +35,7 @@ export type PaginatedRecurrences = PaginatedResult<PublicRecurrenceSummary>;
 export interface RecurrenceService {
   getCatalog(actor: RecurrenceActorContext): Promise<PublicRecurrenceCatalog>;
   list(filters: RecurrenceListFilters, actor: RecurrenceActorContext): Promise<PaginatedRecurrences>;
+  summary(filters: RecurrenceSummaryFilters, actor: RecurrenceActorContext): Promise<PublicRecurrenceSummaryMetrics>;
   get(id: string, actor: RecurrenceActorContext): Promise<PublicRecurrenceDetail>;
   report(input: ReportRecurrenceInput, actor: RecurrenceActorContext): Promise<PublicRecurrenceDetail>;
   analyze(id: string, input: AnalyzeRecurrenceInput, actor: RecurrenceActorContext): Promise<PublicRecurrenceDetail>;
@@ -184,6 +187,10 @@ export function createRecurrenceService(
           pagination: pagination(filters, result.totalItems),
         };
       });
+    },
+
+    async summary(filters, actor) {
+      return publicOperation(() => repository.summarizeRecurrences(filters, accessScope(actor)));
     },
 
     async get(id, actor) {

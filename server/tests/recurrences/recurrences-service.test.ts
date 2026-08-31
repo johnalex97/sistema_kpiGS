@@ -18,6 +18,7 @@ import type {
   DismissRecurrenceInput,
   RecurrenceActorContext,
   RecurrenceListFilters,
+  RecurrenceSummaryFilters,
   ReportRecurrenceInput,
 } from "../../src/recurrences/recurrences.types.js";
 
@@ -27,6 +28,7 @@ const technicianId = "10000000-0000-4000-8000-000000000002";
 const foreignTechnicianId = "10000000-0000-4000-8000-000000000003";
 const absentRecurrenceId = "10000000-0000-4000-8000-000000000099";
 const listFilters: RecurrenceListFilters = { page: 2, pageSize: 10 };
+const summaryFilters: RecurrenceSummaryFilters = {};
 const reportInput: ReportRecurrenceInput = {
   originalOrderId: "20000000-0000-4000-8000-000000000001",
   correctionOrderId: "20000000-0000-4000-8000-000000000002",
@@ -109,6 +111,16 @@ function repositoryWith(
   return {
     listCauses: vi.fn(async () => [{ id: analyzeInput.causeId, code: "INSTALL", name: "Instalación" }]),
     listRecurrences: vi.fn(async () => ({ items: [summaryRecord()], totalItems: 11 })),
+    summarizeRecurrences: vi.fn(async () => ({
+      totalCases: 11,
+      openCases: 3,
+      highImpactCases: 2,
+      additionalVisits: 4,
+      additionalMinutes: 120,
+      estimatedCost: "250.00",
+      completedBaseOrders: 100,
+      recurrenceRate: "11.00",
+    })),
     findRecurrence: vi.fn(async () => detail),
     reportRecurrence: vi.fn(async () => ({ kind: "CREATED" as const, recurrence: detail })),
     analyzeRecurrence: vi.fn(async () => mutation),
@@ -185,6 +197,29 @@ describe("RecurrenceService read permission matrix", () => {
     );
     expect(repository.findRecurrence).toHaveBeenCalledWith(
       recurrenceId,
+      { kind: "TECHNICIAN", technicianId },
+    );
+  });
+
+  // Mutation caught: resolving the summary with technician scope for management
+  // would hide cases that the actor is permitted to aggregate.
+  it("uses ALL scope for a management summary", async () => {
+    const repository = repositoryWith();
+
+    await service(repository).summary(summaryFilters, actor(["RECURRENCES_REVIEW"]));
+
+    expect(repository.summarizeRecurrences).toHaveBeenCalledWith(summaryFilters, { kind: "ALL" });
+  });
+
+  // Mutation caught: resolving the summary with ALL scope for an own-view actor
+  // would expose recurrence metrics outside the linked technician's cases.
+  it("uses the linked technician scope for an own-view summary", async () => {
+    const repository = repositoryWith();
+
+    await service(repository).summary(summaryFilters, actor(["RECURRENCES_VIEW_OWN"], technicianId));
+
+    expect(repository.summarizeRecurrences).toHaveBeenCalledWith(
+      summaryFilters,
       { kind: "TECHNICIAN", technicianId },
     );
   });

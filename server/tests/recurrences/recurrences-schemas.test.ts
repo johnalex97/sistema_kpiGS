@@ -5,6 +5,7 @@ import {
   analyzeRecurrenceSchema,
   correctRecurrenceSchema,
   recurrenceListQuerySchema,
+  recurrenceSummaryQuerySchema,
   reportRecurrenceSchema,
 } from "../../src/recurrences/recurrences.schemas.js";
 
@@ -131,5 +132,22 @@ describe("recurrence request schemas", () => {
     });
     expect(() => recurrenceListQuerySchema.parse({ clientId: "not-a-uuid" })).toThrow();
     expect(() => recurrenceListQuerySchema.parse({ branchId: "not-a-uuid" })).toThrow();
+  });
+
+  // Mutation caught: allowing list pagination or omitting strict/range validation
+  // lets summary requests silently alter the aggregation scope.
+  it("accepts repeated summary filters and offset dates while rejecting pagination, unknown keys, and inverted ranges", () => {
+    expect(recurrenceSummaryQuerySchema.safeParse({
+      status: ["OPEN", "ANALYSIS"],
+      detectedFrom: "2026-08-01T00:00:00-06:00",
+      detectedTo: "2026-08-31T23:59:59.999-06:00",
+    }).success).toBe(true);
+    expect(recurrenceSummaryQuerySchema.safeParse({ page: "1" }).success).toBe(false);
+    expect(recurrenceSummaryQuerySchema.safeParse({ pageSize: "20" }).success).toBe(false);
+    expect(recurrenceSummaryQuerySchema.safeParse({ unknown: "value" }).success).toBe(false);
+    expect(recurrenceSummaryQuerySchema.safeParse({
+      detectedFrom: "2026-08-02T00:00:00-06:00",
+      detectedTo: "2026-08-01T00:00:00-06:00",
+    }).success).toBe(false);
   });
 });
