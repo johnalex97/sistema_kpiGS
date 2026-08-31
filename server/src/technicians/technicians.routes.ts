@@ -10,6 +10,7 @@ import {
 } from "../middlewares/permission.middleware.js";
 import { createTechniciansController } from "./technicians.controller.js";
 import { createTechniciansRepository } from "./technicians.repository.js";
+import { businessDate, createTechnicianSchemas } from "./technicians.schemas.js";
 import { createTechniciansService } from "./technicians.service.js";
 
 export function createTechniciansRouter(
@@ -19,17 +20,14 @@ export function createTechniciansRouter(
 ) {
   const router = Router();
   const authentication = createAuthenticationMiddleware(authService);
+  const today = () => businessDate(new Date(), env.KPI_TIME_ZONE);
   const controller = createTechniciansController(
     createTechniciansService({
       repository: createTechniciansRepository(database),
       now: () => new Date(),
-      today: () => {
-        const now = new Date();
-        const month = String(now.getMonth() + 1).padStart(2, "0");
-        const day = String(now.getDate()).padStart(2, "0");
-        return `${now.getFullYear()}-${month}-${day}`;
-      },
+      today,
     }),
+    createTechnicianSchemas(today),
   );
   const readSecurity = [
     authentication,

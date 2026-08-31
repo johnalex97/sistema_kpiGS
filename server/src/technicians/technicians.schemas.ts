@@ -12,13 +12,17 @@ const technicianStatusSchema = z.enum([
   "INACTIVE",
 ]);
 const positiveVersionSchema = z.number().int().positive();
+export const DEFAULT_BUSINESS_TIME_ZONE = "America/Tegucigalpa";
 
-function currentLocalDate(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+export function businessDate(now: Date, timeZone = DEFAULT_BUSINESS_TIME_ZONE): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
 }
 
 function isCalendarDate(value: string): boolean {
@@ -155,4 +159,4 @@ export const {
   changeTechnicianStatusSchema,
   deactivateTechnicianSchema,
   reactivateTechnicianSchema,
-} = createTechnicianSchemas(currentLocalDate);
+} = createTechnicianSchemas(() => businessDate(new Date()));

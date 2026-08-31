@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { createTechnicianSchemas } from "../../src/technicians/technicians.schemas.js";
+import { businessDate, createTechnicianSchemas } from "../../src/technicians/technicians.schemas.js";
 
 const schemas = createTechnicianSchemas(() => "2026-07-30");
 
 describe("technician request schemas", () => {
+  it("uses Tegucigalpa business date across the UTC boundary", () => {
+    const atHonduranPreviousDay = new Date("2026-08-01T05:30:00.000Z");
+    const hondurasToday = businessDate(atHonduranPreviousDay, "America/Tegucigalpa");
+    const businessSchemas = createTechnicianSchemas(() => hondurasToday);
+
+    expect(hondurasToday).toBe("2026-07-31");
+    expect(businessSchemas.createTechnicianSchema.safeParse({ fullName: "Ana", hiredOn: "2026-08-01" }).success).toBe(false);
+    expect(businessSchemas.deactivateTechnicianSchema.safeParse({ version: 1, leftOn: "2026-08-01", reason: "Fin de relacion laboral" }).success).toBe(false);
+  });
+
   it("normalizes and validates eligible user list queries", () => {
     const technicianId = "10000000-0000-4000-8000-000000000001";
 

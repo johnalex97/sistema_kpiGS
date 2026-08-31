@@ -1,5 +1,5 @@
 import { ChevronDown, LoaderCircle, Search, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { TechnicianApi } from "../../api/technicians";
 import type { EligibleTechnicianUser } from "../../models/technician";
 
@@ -25,6 +25,7 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
   const [totalPages, setTotalPages] = useState(1);
   const [items, setItems] = useState<EligibleTechnicianUser[]>([]);
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [requestRevision, setRequestRevision] = useState(0);
@@ -86,6 +87,7 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
     setQuery(next);
     setSearch(next);
     setPage(1);
+    setActiveIndex(-1);
     setOpen(true);
     setLoading(true);
     setLoadError(false);
@@ -98,6 +100,7 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
     setQuery("");
     setSearch("");
     setPage(1);
+    setActiveIndex(-1);
     setOpen(true);
     setLoading(true);
     setLoadError(false);
@@ -113,18 +116,54 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
     setRequestRevision((current) => current + 1);
   };
 
+  const selectUser = (user: EligibleTechnicianUser) => {
+    selectedRef.current = user;
+    setQuery(optionLabel(user));
+    setSearch("");
+    setActiveIndex(-1);
+    setOpen(false);
+    onChange(user);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setOpen(true);
+      if (items.length > 0) {
+        const direction = event.key === "ArrowDown" ? 1 : -1;
+        setActiveIndex((current) => current < 0
+          ? direction > 0 ? 0 : items.length - 1
+          : (current + direction + items.length) % items.length);
+      }
+      return;
+    }
+    if (event.key === "Escape" && open) {
+      event.preventDefault();
+      setActiveIndex(-1);
+      setOpen(false);
+      return;
+    }
+    if (event.key === "Enter" && open) {
+      event.preventDefault();
+      const activeUser = items[activeIndex];
+      if (activeUser) selectUser(activeUser);
+    }
+  };
+
+  const activeUser = activeIndex >= 0 ? items[activeIndex] : undefined;
+
   return <div className="lookup-combobox technician-user-combobox">
     <label htmlFor={inputId}>Usuario vinculado</label>
     <p className="technician-user-combobox__hint">Conecta el perfil laboral con su acceso a Geek Solution.</p>
     <div className="lookup-combobox__input">
       <Search size={14} aria-hidden="true" />
-      <input id={inputId} name="eligible-user-search" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={listId} aria-invalid={invalid || undefined} aria-describedby={describedBy} autoComplete="off" placeholder="Buscar nombre o correo…" value={query} disabled={disabled} onFocus={() => setOpen(true)} onChange={(event) => changeQuery(event.target.value)} />
+      <input id={inputId} name="eligible-user-search" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={listId} aria-activedescendant={activeUser ? `${listId}-option-${activeUser.id}` : undefined} aria-invalid={invalid || undefined} aria-describedby={describedBy} autoComplete="off" placeholder="Buscar nombre o correo…" value={query} disabled={disabled} onFocus={() => setOpen(true)} onChange={(event) => changeQuery(event.target.value)} onKeyDown={handleKeyDown} />
       {value && !disabled ? <button type="button" className="icon-button" aria-label="Quitar usuario vinculado" onClick={clear}><X size={14} aria-hidden="true" /></button> : loading ? <LoaderCircle className="lookup-combobox__loader" size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
     </div>
     {open && !disabled && <div className="lookup-combobox__list" id={listId} role="listbox" aria-label="Usuarios elegibles">
       {!loading && loadError && <div role="alert"><p>No fue posible cargar los usuarios elegibles.</p><button type="button" aria-label="Reintentar usuarios elegibles" onClick={retry}>Reintentar</button></div>}
       {!loading && !loadError && items.length === 0 && <p>No hay usuarios elegibles para esta búsqueda.</p>}
-      {items.map((user) => <button type="button" role="option" aria-selected={value?.id === user.id} key={user.id} onClick={() => { selectedRef.current = user; setQuery(optionLabel(user)); setSearch(""); setOpen(false); onChange(user); }}>{optionLabel(user)}</button>)}
+      {items.map((user, index) => <button id={`${listId}-option-${user.id}`} type="button" role="option" aria-selected={value?.id === user.id} data-active={activeIndex === index || undefined} key={user.id} onClick={() => selectUser(user)}>{optionLabel(user)}</button>)}
       {!loading && !loadError && page < totalPages && <button className="lookup-combobox__more" type="button" aria-label="Cargar más usuarios" onClick={() => { setLoading(true); setPage((current) => current + 1); }}>Cargar más</button>}
     </div>}
   </div>;

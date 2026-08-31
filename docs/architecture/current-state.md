@@ -107,7 +107,7 @@ de verdad. Sus escrituras se ejecutan contra PostgreSQL mediante la API.
 | `npm run build` | Correcto; TypeScript y Vite compilan |
 | `npm run dev -- --host 127.0.0.1 --port 5173` | Correcto; respuesta HTTP 200 |
 | `npm run lint` | Correcto; 0 advertencias |
-| `npm run test` | Correcto; 128 pruebas en 22 archivos |
+| `npm run test` | Correcto; 214 pruebas en 30 archivos (suite frontend vigente, incluido Técnicos) |
 | `npm audit --audit-level=moderate` | 0 vulnerabilidades |
 
 Backend, ejecutado desde `server/`:
@@ -285,5 +285,8 @@ Verificación local: `npm run kpis:verify`, `npm run test:db`, `npm test`,
 `npm run typecheck`, `npm run lint` y `npm run build` desde `server/`; desde la
 raíz, `npm test`, `npm run lint` y `npm run build`. PostgreSQL puede emitir la
 advertencia no bloqueante conocida de `pg` sobre `client.query()` concurrente.
-La matriz de cierre de esta fase aprobó 462 pruebas unitarias del backend (una
-omitida), 401 pruebas de persistencia y 11 pruebas del frontend.
+La matriz vigente de Técnicos distingue el alcance para no mezclar pruebas y
+archivos: frontend completo con 214 pruebas en 30 archivos; backend unitario
+focal con 30 pruebas en 2 archivos; y persistencia/HTTP con 13 pruebas en 2
+archivos contra `schema=test`. Estas cifras son la verificación actual del
+módulo, no totales históricos globales de otras fases.

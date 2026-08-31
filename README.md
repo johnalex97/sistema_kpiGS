@@ -124,6 +124,7 @@ POST /api/v1/auth/logout
 GET /api/v1/auth/me
 POST /api/v1/auth/change-password
 GET /api/v1/technicians
+GET /api/v1/technicians/eligible-users
 GET /api/v1/technicians/:id
 POST /api/v1/technicians
 PATCH /api/v1/technicians/:id

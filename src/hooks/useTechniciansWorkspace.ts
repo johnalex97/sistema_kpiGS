@@ -153,9 +153,17 @@ export function useTechniciansWorkspace({
     const controller = new AbortController();
     listControllerRef.current = controller;
     const generation = ++listGenerationRef.current;
+    const requestedQuery = queryRef.current;
     try {
-      const nextPage = await api.list(queryRef.current.filters, controller.signal);
-      if (controller.signal.aborted || generation !== listGenerationRef.current) return;
+      const nextPage = await api.list(requestedQuery.filters, controller.signal);
+      if (controller.signal.aborted || generation !== listGenerationRef.current || queryRef.current !== requestedQuery) return;
+      const lastAvailablePage = Math.max(1, nextPage.pagination.totalPages);
+      if (requestedQuery.filters.page > lastAvailablePage) {
+        setQuery((current) => current === requestedQuery
+          ? { ...current, filters: { ...current.filters, page: lastAvailablePage } }
+          : current);
+        return;
+      }
       pageRef.current = nextPage;
       setPage(nextPage);
       setListState(nextPage.items.length ? "ready" : "empty");

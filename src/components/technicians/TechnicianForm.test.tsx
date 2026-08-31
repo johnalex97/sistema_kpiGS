@@ -200,6 +200,28 @@ describe("EligibleUserCombobox", () => {
 });
 
 describe("TechnicianForm", () => {
+  it("selecciona un usuario elegible con teclado sin enviar el formulario", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(async () => true);
+    const eligibleUsers = vi.fn(async () => ({ items: [eligibleAna, eligibleBeto], pagination: { ...pagination, totalItems: 2 } }));
+    render(<TechnicianForm api={api({ eligibleUsers })} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+    const combobox = screen.getByRole("combobox", { name: "Usuario vinculado" });
+    await user.click(combobox);
+    const firstOption = await screen.findByRole("option", { name: /Ana L/ });
+    await user.keyboard("{ArrowDown}");
+    expect(combobox).toHaveAttribute("aria-activedescendant", firstOption.id);
+    await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
+
+    expect(combobox).toHaveValue("Ana López · ana@geek.test");
+    expect(combobox).toHaveAttribute("aria-expanded", "false");
+    expect(onSubmit).not.toHaveBeenCalled();
+    await user.keyboard("{ArrowDown}");
+    expect(combobox).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Escape}");
+    expect(combobox).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("normaliza y envía únicamente los campos laborales permitidos", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn(async (value: CreateTechnicianInput) => Boolean(value.fullName));

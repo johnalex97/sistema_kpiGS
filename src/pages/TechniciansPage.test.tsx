@@ -201,6 +201,20 @@ describe("TechniciansPage", () => {
     expect(createButton).toHaveFocus();
   });
 
+  it("mantiene formularios y acciones dentro de un backdrop de overlay", async () => {
+    const user = userEvent.setup();
+    const current = workspace({ selected: technician, detailState: "ready" });
+    const view = render(pageView(current, ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+
+    await user.click(screen.getByRole("button", { name: "Nuevo técnico" }));
+    expect(screen.getByRole("dialog", { name: "Nuevo técnico" }).closest(".activity-form-backdrop")).toHaveClass("technician-form-backdrop");
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    view.unmount();
+    render(pageView(workspace({ selected: technician, detailState: "ready" }), ["TECHNICIANS_VIEW", "TECHNICIANS_MANAGE"]));
+    await user.click(screen.getByRole("button", { name: "Cambiar estado" }));
+    expect(screen.getByRole("dialog", { name: "Cambiar estado" }).closest(".activity-form-backdrop")).toHaveClass("technician-action-backdrop");
+  });
+
   it("restaura el foco a la acción exacta del detalle al cerrar overlays", async () => {
     const user = userEvent.setup();
     const current = workspace({ selected: technician, detailState: "ready" });

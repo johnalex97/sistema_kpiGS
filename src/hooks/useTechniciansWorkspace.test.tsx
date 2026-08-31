@@ -176,7 +176,7 @@ describe("useTechniciansWorkspace", () => {
 
   it("conserva la búsqueda persistida en URL cuando la búsqueda externa está vacía", async () => {
     window.history.replaceState({}, "", "/tecnicos?technicianSearch=Ana&technicianStatus=BUSY&technicianPage=3");
-    const api = technicianApiMock();
+    const api = technicianApiMock({ list: vi.fn(async (filters) => ({ ...page, pagination: { ...page.pagination, page: filters.page, totalItems: 41, totalPages: 3 } })) });
 
     const { result } = renderHook(() => useTechniciansWorkspace({ api, kpiApi: kpiApiMock(), search: "", canViewKpi: false }));
 
@@ -188,7 +188,7 @@ describe("useTechniciansWorkspace", () => {
 
   it("restaura exactamente búsqueda y filtros desde URL al navegar con popstate", async () => {
     window.history.replaceState({}, "", "/tecnicos?technicianSearch=Ana&technicianStatus=BUSY&technicianPage=3");
-    const api = technicianApiMock();
+    const api = technicianApiMock({ list: vi.fn(async (filters) => ({ ...page, pagination: { ...page.pagination, page: filters.page, totalItems: 41, totalPages: 3 } })) });
     const { result } = renderHook(() => useTechniciansWorkspace({ api, kpiApi: kpiApiMock(), search: "", canViewKpi: false }));
     await waitFor(() => expect(result.current.listState).toBe("ready"));
 
@@ -244,6 +244,29 @@ describe("useTechniciansWorkspace", () => {
     await act(async () => expect(await result.current.createTechnician({ fullName: "Beatriz" })).toBe(true));
     expect(api.create).toHaveBeenCalledWith({ fullName: "Beatriz" });
     expect(api.list).toHaveBeenCalledTimes(2);
+  });
+
+  it("vuelve a la ultima pagina disponible cuando una desactivacion reduce el catalogo", async () => {
+    window.history.replaceState({}, "", "/tecnicos?technicianIncludeInactive=true&technicianPage=2");
+    const inactive = { ...technician, status: "INACTIVE" as const, version: 2 };
+    const api = technicianApiMock({
+      list: vi.fn()
+        .mockResolvedValueOnce({ ...page, pagination: { page: 2, pageSize: 20, totalItems: 21, totalPages: 2 } })
+        .mockResolvedValueOnce({ items: [], pagination: { page: 2, pageSize: 20, totalItems: 1, totalPages: 1 } })
+        .mockResolvedValueOnce({ items: [inactive], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }),
+      deactivate: vi.fn(async () => inactive),
+    });
+    const { result } = renderHook(() => useTechniciansWorkspace({ api, kpiApi: kpiApiMock(), search: "", canViewKpi: false }));
+
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(technician.id));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+    await act(async () => expect(await result.current.deactivate({ reason: "Salida autorizada" })).toBe(true));
+
+    await waitFor(() => expect(result.current.query.filters.page).toBe(1));
+    await waitFor(() => expect(result.current.page?.pagination.page).toBe(1));
+    expect(vi.mocked(api.list).mock.calls.map(([filters]) => filters.page)).toEqual([2, 2, 1]);
+    expect(new URLSearchParams(window.location.search).get("technicianPage")).toBe("1");
   });
 
   it("edita y usa la versión seleccionada", async () => {

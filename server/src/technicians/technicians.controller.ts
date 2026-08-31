@@ -2,14 +2,8 @@ import type { NextFunction, Request, Response } from "express";
 import type { ZodError } from "zod";
 import { ApiError } from "../utils/api-error.js";
 import {
-  changeTechnicianStatusSchema,
-  createTechnicianSchema,
-  deactivateTechnicianSchema,
-  eligibleUserListQuerySchema,
-  reactivateTechnicianSchema,
-  technicianIdSchema,
-  technicianListQuerySchema,
-  updateTechnicianSchema,
+  businessDate,
+  createTechnicianSchemas,
 } from "./technicians.schemas.js";
 import type { TechniciansService } from "./technicians.service.js";
 
@@ -51,7 +45,12 @@ function success(
   });
 }
 
-export function createTechniciansController(service: TechniciansService) {
+const defaultSchemas = createTechnicianSchemas(() => businessDate(new Date()));
+
+export function createTechniciansController(
+  service: TechniciansService,
+  schemas = defaultSchemas,
+) {
   const parse = <T>(
     result: { success: true; data: T } | { success: false; error: ZodError },
   ): T => {
@@ -62,13 +61,13 @@ export function createTechniciansController(service: TechniciansService) {
   return {
     list: async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const query = parse(technicianListQuerySchema.safeParse(req.query));
+        const query = parse(schemas.technicianListQuerySchema.safeParse(req.query));
         success(req, res, 200, "Técnicos consultados", await service.list(query));
       } catch (error) { next(error); }
     },
     eligibleUsers: async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const query = parse(eligibleUserListQuerySchema.safeParse(req.query));
+        const query = parse(schemas.eligibleUserListQuerySchema.safeParse(req.query));
         success(
           req,
           res,
@@ -80,41 +79,41 @@ export function createTechniciansController(service: TechniciansService) {
     },
     get: async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const { id } = parse(technicianIdSchema.safeParse(req.params));
+        const { id } = parse(schemas.technicianIdSchema.safeParse(req.params));
         success(req, res, 200, "Técnico consultado", await service.getById(id));
       } catch (error) { next(error); }
     },
     create: async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const body = parse(createTechnicianSchema.safeParse(req.body));
+        const body = parse(schemas.createTechnicianSchema.safeParse(req.body));
         success(req, res, 201, "Técnico creado", await service.create(body, actor(req)));
       } catch (error) { next(error); }
     },
     update: async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const { id } = parse(technicianIdSchema.safeParse(req.params));
-        const body = parse(updateTechnicianSchema.safeParse(req.body));
+        const { id } = parse(schemas.technicianIdSchema.safeParse(req.params));
+        const body = parse(schemas.updateTechnicianSchema.safeParse(req.body));
         success(req, res, 200, "Técnico actualizado", await service.update(id, body, actor(req)));
       } catch (error) { next(error); }
     },
     changeStatus: async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const { id } = parse(technicianIdSchema.safeParse(req.params));
-        const body = parse(changeTechnicianStatusSchema.safeParse(req.body));
+        const { id } = parse(schemas.technicianIdSchema.safeParse(req.params));
+        const body = parse(schemas.changeTechnicianStatusSchema.safeParse(req.body));
         success(req, res, 200, "Estado del técnico actualizado", await service.changeStatus(id, body, actor(req)));
       } catch (error) { next(error); }
     },
     deactivate: async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const { id } = parse(technicianIdSchema.safeParse(req.params));
-        const body = parse(deactivateTechnicianSchema.safeParse(req.body));
+        const { id } = parse(schemas.technicianIdSchema.safeParse(req.params));
+        const body = parse(schemas.deactivateTechnicianSchema.safeParse(req.body));
         success(req, res, 200, "Técnico desactivado", await service.deactivate(id, body, actor(req)));
       } catch (error) { next(error); }
     },
     reactivate: async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const { id } = parse(technicianIdSchema.safeParse(req.params));
-        const body = parse(reactivateTechnicianSchema.safeParse(req.body));
+        const { id } = parse(schemas.technicianIdSchema.safeParse(req.params));
+        const body = parse(schemas.reactivateTechnicianSchema.safeParse(req.body));
         success(req, res, 200, "Técnico reactivado", await service.reactivate(id, body, actor(req)));
       } catch (error) { next(error); }
     },
