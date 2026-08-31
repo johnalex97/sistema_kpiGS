@@ -139,6 +139,7 @@ export function EligibleUserCombobox({ api, value, technicianId, disabled = fals
     }
     if (event.key === "Escape" && open) {
       event.preventDefault();
+      event.stopPropagation();
       setActiveIndex(-1);
       setOpen(false);
       return;
