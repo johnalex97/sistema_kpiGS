@@ -128,7 +128,7 @@ La URL será la fuente compartible de:
 - página;
 - caso seleccionado.
 
-El rango predeterminado será el mes calendario vigente en `America/Tegucigalpa`. Los valores vacíos se omiten; el periodo predeterminado también se materializa en la URL para que la consulta sea reproducible. Cambiar un filtro vuelve a la página 1. Si una mutación reduce el número de páginas y la página actual queda fuera de rango, el workspace navega a la última página válida y recarga una sola vez.
+El rango predeterminado será el mes calendario vigente en `America/Tegucigalpa`: inicio a las `00:00:00.000` del primer día y final inclusivo a las `23:59:59.999` del último día, coherente con el `lte` vigente del listado. Los valores vacíos se omiten; el periodo predeterminado también se materializa en la URL para que la consulta sea reproducible. Cambiar un filtro vuelve a la página 1. Si una mutación reduce el número de páginas y la página actual queda fuera de rango, el workspace navega a la última página válida y recarga una sola vez.
 
 Listado y resumen se cargan en paralelo bajo la misma instantánea de filtros. Cada recurso tiene error y reintento independientes. Cambios de consulta abortan solicitudes anteriores; una generación de consulta impide publicar respuestas obsoletas aunque el transporte ignore el aborto.
 
