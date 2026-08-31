@@ -91,6 +91,8 @@ describe("recorrido integrado de técnicos", () => {
 
     await user.click(screen.getByRole("button", { name: "Nuevo técnico" }));
     await waitFor(() => expect(requests.some(({ path }) => path.includes("/technicians/eligible-users"))).toBe(true));
+    await user.click(screen.getByRole("combobox", { name: "Usuario vinculado" }));
+    await user.click(await screen.findByRole("option", { name: "Carla Usuario · carla.usuario@geek.test" }));
     await user.type(screen.getByLabelText("Nombre completo"), "Carla Mejía");
     await user.click(screen.getByRole("button", { name: "Crear técnico" }));
     await screen.findByRole("button", { name: "Ver técnico Carla Mejía" });
@@ -122,6 +124,10 @@ describe("recorrido integrado de técnicos", () => {
       { method: "DELETE", path: `/api/v1/technicians/${technicianId}`, version: 3 },
       { method: "POST", path: `/api/v1/technicians/${technicianId}/reactivate`, version: 4 },
     ]);
+    expect(requests.find(({ method, path }) => method === "POST" && path.endsWith("/technicians"))?.body).toMatchObject({
+      fullName: "Carla Mejía",
+      userId: "user-eligible",
+    });
     expect(requests.some(({ path }) => path.includes("/technicians/eligible-users?page=1&pageSize=20"))).toBe(true);
   });
 });
