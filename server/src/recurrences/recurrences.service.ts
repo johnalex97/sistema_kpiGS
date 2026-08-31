@@ -31,6 +31,8 @@ import type {
 } from "./recurrences.types.js";
 
 export type PaginatedRecurrences = PaginatedResult<PublicRecurrenceSummary>;
+type RecurrenceServiceRepository = Omit<RecurrencesRepository, "summarizeRecurrences">
+  & Partial<Pick<RecurrencesRepository, "summarizeRecurrences">>;
 
 export interface RecurrenceService {
   getCatalog(actor: RecurrenceActorContext): Promise<PublicRecurrenceCatalog>;
@@ -146,7 +148,7 @@ async function publicOperation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export function createRecurrenceService(
-  repository: RecurrencesRepository,
+  repository: RecurrenceServiceRepository,
   now: () => Date,
   warningDays: number,
   processRevisionRequests: (limit: number, now: Date) => Promise<unknown> = async () => undefined,
@@ -190,7 +192,10 @@ export function createRecurrenceService(
     },
 
     async summary(filters, actor) {
-      return publicOperation(() => repository.summarizeRecurrences(filters, accessScope(actor)));
+      return publicOperation(() => {
+        if (repository.summarizeRecurrences === undefined) throw internalError();
+        return repository.summarizeRecurrences(filters, accessScope(actor));
+      });
     },
 
     async get(id, actor) {
