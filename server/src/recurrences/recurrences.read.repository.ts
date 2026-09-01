@@ -13,6 +13,7 @@ import {
 import type {
   RecurrenceAccessScope,
   RecurrenceListFilters,
+  RecurrenceSummaryFilters,
 } from "./recurrences.types.js";
 
 type RecurrencesReadRepository = Pick<
@@ -37,8 +38,8 @@ function scopedRecurrenceWhere(
   };
 }
 
-function listRecurrenceWhere(
-  filters: RecurrenceListFilters,
+export function recurrenceWhere(
+  filters: RecurrenceSummaryFilters,
   scope: RecurrenceAccessScope,
 ): Prisma.ReincidenciaWhereInput {
   const constraints: Prisma.ReincidenciaWhereInput[] = [
@@ -117,7 +118,7 @@ export function createRecurrencesReadRepository(
     },
 
     async listRecurrences(filters, scope) {
-      const where = listRecurrenceWhere(filters, scope);
+      const where = recurrenceWhere(filters, scope);
       return database.$transaction(
         (transaction) => loadRecurrencePage(transaction, where, filters),
         consistentReadOptions,

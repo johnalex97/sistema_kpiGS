@@ -12,6 +12,7 @@ import { createRecurrencesController } from "./recurrences.controller.js";
 import { createRecurrencesReadRepository } from "./recurrences.read.repository.js";
 import { createRecurrencesReportRepository } from "./recurrences.report.repository.js";
 import { createRecurrenceService } from "./recurrences.service.js";
+import { createRecurrencesSummaryRepository } from "./recurrences.summary.repository.js";
 import { createRecurrencesWorkflowRepository } from "./recurrences.workflow.repository.js";
 
 export function createRecurrencesRouter(
@@ -26,6 +27,7 @@ export function createRecurrencesRouter(
     createRecurrenceService(
       {
         ...createRecurrencesReadRepository(database),
+        ...createRecurrencesSummaryRepository(database),
         ...createRecurrencesReportRepository(database),
         ...createRecurrencesWorkflowRepository(database),
       },
@@ -62,6 +64,7 @@ export function createRecurrencesRouter(
   router.get("/catalog", ...readSecurity, controller.catalog);
   router.get("/", ...readSecurity, controller.list);
   router.post("/", ...reportSecurity, controller.report);
+  router.get("/summary", ...readSecurity, controller.summary);
   router.get("/:recurrenceId", ...readSecurity, controller.detail);
   router.post("/:recurrenceId/analysis", ...reviewSecurity, controller.analyze);
   router.post("/:recurrenceId/correction", ...reviewSecurity, controller.correct);

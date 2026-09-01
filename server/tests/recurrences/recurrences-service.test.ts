@@ -133,12 +133,6 @@ function repositoryWith(
   };
 }
 
-function repositoryWithoutSummary(): Omit<RecurrencesRepository, "summarizeRecurrences"> {
-  const repository = repositoryWith();
-  delete (repository as Partial<RecurrencesRepository>).summarizeRecurrences;
-  return repository;
-}
-
 function expectForbidden(operation: Promise<unknown>) {
   return expect(operation).rejects.toMatchObject({
     statusCode: 403,
@@ -153,6 +147,11 @@ function service(repository: RecurrencesRepository = repositoryWith()) {
 
 // @ts-expect-error RecurrenceService must receive the validated environment threshold.
 createRecurrenceService(repositoryWith(), () => fixedNow);
+
+const repositoryWithoutSummary: Omit<RecurrencesRepository, "summarizeRecurrences"> = repositoryWith();
+delete (repositoryWithoutSummary as Partial<RecurrencesRepository>).summarizeRecurrences;
+// @ts-expect-error RecurrenceService requires the summary repository capability after assembly.
+createRecurrenceService(repositoryWithoutSummary, () => fixedNow, 30);
 
 describe("RecurrenceService read permission matrix", () => {
   it.each([
@@ -228,15 +227,6 @@ describe("RecurrenceService read permission matrix", () => {
       summaryFilters,
       { kind: "TECHNICIAN", technicianId },
     );
-  });
-
-  // Mutation caught: attempting access resolution before checking the temporary
-  // assembly capability exposes an authorization error instead of the safe failure.
-  it("returns the safe internal error when the summary capability is absent", async () => {
-    const recurrenceService = createRecurrenceService(repositoryWithoutSummary(), () => fixedNow, 30);
-
-    await expect(recurrenceService.summary(summaryFilters, actor([])))
-      .rejects.toMatchObject({ statusCode: 500, code: "INTERNAL_ERROR", message: "Ocurrió un error interno" });
   });
 
   it("keeps INTERNAL evidence metadata out of every technician detail hydration", async () => {

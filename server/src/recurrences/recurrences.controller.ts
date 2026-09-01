@@ -11,6 +11,7 @@ import {
   dismissRecurrenceSchema,
   recurrenceIdSchema,
   recurrenceListQuerySchema,
+  recurrenceSummaryQuerySchema,
   reportRecurrenceSchema,
 } from "./recurrences.schemas.js";
 import type { RecurrenceService } from "./recurrences.service.js";
@@ -19,6 +20,7 @@ import type { RecurrenceActorContext } from "./recurrences.types.js";
 const messages = {
   catalog: "Catálogo de reincidencias consultado",
   list: "Reincidencias consultadas",
+  summary: "Resumen de reincidencias obtenido",
   detail: "Reincidencia consultada",
   report: "Reincidencia reportada",
   analyze: "Reincidencia analizada",
@@ -112,6 +114,14 @@ export function createRecurrencesController(service: RecurrenceService) {
       try {
         const query = parse(recurrenceListQuerySchema.safeParse(request.query));
         success(request, response, 200, messages.list, await service.list(query, actor(request)));
+      } catch (error) {
+        next(error);
+      }
+    },
+    summary: async (request: Request, response: Response, next: NextFunction) => {
+      try {
+        const query = parse(recurrenceSummaryQuerySchema.safeParse(request.query));
+        success(request, response, 200, messages.summary, await service.summary(query, actor(request)));
       } catch (error) {
         next(error);
       }

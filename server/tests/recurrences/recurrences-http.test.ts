@@ -39,6 +39,10 @@ const users = {
     id: randomUUID(),
     email: `recurrences.http.provisional.${randomUUID()}@example.test`,
   },
+  noRead: {
+    id: randomUUID(),
+    email: `recurrences.http.no-read.${randomUUID()}@example.test`,
+  },
 } as const;
 const ids = {
   supervisorTechnician: randomUUID(),
@@ -234,6 +238,7 @@ beforeAll(async () => {
       { ...users.reporter, displayName: "Técnico reportante HTTP", status: "ACTIVE", mustChangePassword: false, passwordHash },
       { ...users.foreign, displayName: "Técnico ajeno HTTP", status: "ACTIVE", mustChangePassword: false, passwordHash },
       { ...users.provisional, displayName: "Usuario provisional HTTP", status: "ACTIVE", mustChangePassword: true, passwordHash },
+      { ...users.noRead, displayName: "Usuario sin lectura de reincidencias", status: "ACTIVE", mustChangePassword: false, passwordHash },
     ],
   });
   await database.usuarioRol.createMany({
@@ -311,8 +316,9 @@ beforeAll(async () => {
         id: ids.deletedRecurrence,
         recurrenceNumber: `RI-2996-${String(parseInt(suffix, 16) % 10_000).padStart(4, "0")}`,
         originalOrderId: ids.deletedOriginal,
+        causeId: ids.cause,
         reportedById: users.supervisor.id,
-        status: "OPEN",
+        status: "ANALYSIS",
         detectedProblem: "Existing soft-deleted-pair report",
       },
     ],
@@ -384,10 +390,16 @@ describe("recurrences HTTP security", () => {
       .get("/api/v1/recurrences")
       .expect(401);
     expect(errorCode(unauthenticatedRead)).toBe("AUTHENTICATION_REQUIRED");
+    const unauthenticatedSummary = await request(app)
+      .get("/api/v1/recurrences/summary")
+      .expect(401);
+    expect(errorCode(unauthenticatedSummary)).toBe("AUTHENTICATION_REQUIRED");
 
     const provisional = await authenticatedAgent(users.provisional);
     const provisionalRead = await provisional.get("/api/v1/recurrences").expect(403);
     expect(errorCode(provisionalRead)).toBe("PASSWORD_CHANGE_REQUIRED");
+    const provisionalSummary = await provisional.get("/api/v1/recurrences/summary").expect(403);
+    expect(errorCode(provisionalSummary)).toBe("PASSWORD_CHANGE_REQUIRED");
     const provisionalWrite = await provisional
       .post("/api/v1/recurrences")
       .set("Origin", allowedOrigin)
@@ -398,10 +410,40 @@ describe("recurrences HTTP security", () => {
       })
       .expect(403);
     expect(errorCode(provisionalWrite)).toBe("PASSWORD_CHANGE_REQUIRED");
+
+    const noRead = await authenticatedAgent(users.noRead);
+    const forbiddenSummary = await noRead.get("/api/v1/recurrences/summary").expect(403);
+    expect(errorCode(forbiddenSummary)).toBe("FORBIDDEN");
   });
 });
 
 describe("recurrences DB-backed HTTP contract", () => {
+  // Mutation caught: registering /:recurrenceId before /summary treats the literal
+  // segment as a UUID; collapsing repeated status filters drops one of these cases.
+  it("serves a permission-protected summary with repeated filters before the UUID route", async () => {
+    const supervisor = await authenticatedAgent(users.supervisor);
+    const response = await supervisor
+      .get(`/api/v1/recurrences/summary?status=OPEN&status=ANALYSIS&clientId=${ids.client}`)
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      success: true,
+      message: "Resumen de reincidencias obtenido",
+      data: {
+        totalCases: 2,
+        openCases: 2,
+        highImpactCases: 0,
+        additionalVisits: 2,
+        additionalMinutes: 0,
+        estimatedCost: "0.00",
+        completedBaseOrders: expect.any(Number),
+        recurrenceRate: expect.stringMatching(/^\d+\.\d{2}$/),
+      },
+      errors: [],
+      meta: { requestId: expect.any(String) },
+    });
+  });
+
   // Mutation caught: checking pair duplication or business compatibility before
   // order visibility lets a report endpoint disclose hidden order existence.
   it("conceals absent, nonparticipant, and soft-deleted orders without report mutations", async () => {

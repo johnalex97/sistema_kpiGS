@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRecurrencesReadRepository } from "../../src/recurrences/recurrences.read.repository.js";
+import { createRecurrencesSummaryRepository } from "../../src/recurrences/recurrences.summary.repository.js";
 import type { RecurrenceListFilters } from "../../src/recurrences/recurrences.types.js";
 import { database, disconnectTestDatabase } from "./database-test-context.js";
 import {
@@ -168,5 +169,237 @@ describe("recurrences read repository", () => {
     expect(management.totalItems).toBe(6);
     expect(authorizedEmpty).toEqual({ items: [], totalItems: 6 });
     expect(denied).toBeNull();
+  });
+
+  describe("filtered summary aggregates", () => {
+    const summaryIds = {
+      otherClient: "83100000-0000-4000-8000-000000000001",
+      otherBranch: "83100000-0000-4000-8000-000000000002",
+      otherOrder: "83100000-0000-4000-8000-000000000003",
+      otherRecurrence: "83100000-0000-4000-8000-000000000004",
+      otherSnapshot: "83100000-0000-4000-8000-000000000005",
+    } as const;
+    const additionalOrderIds = [
+      "83100000-0000-4000-8000-000000000011",
+      "83100000-0000-4000-8000-000000000012",
+      "83100000-0000-4000-8000-000000000013",
+      "83100000-0000-4000-8000-000000000014",
+      "83100000-0000-4000-8000-000000000015",
+      "83100000-0000-4000-8000-000000000016",
+      "83100000-0000-4000-8000-000000000017",
+      "83100000-0000-4000-8000-000000000018",
+    ] as const;
+    const detectedFrom = new Date("2026-08-01T00:00:00-06:00");
+    const detectedTo = new Date("2026-08-31T23:59:59.999-06:00");
+
+    beforeAll(async () => {
+      await database.ordenTrabajo.update({
+        where: { id: fixture.originalOrderId },
+        data: { status: "COMPLETED", endedAt: new Date("2026-08-04T12:00:00.000Z") },
+      });
+      await database.ordenTrabajo.update({
+        where: { id: fixture.correctionOrderId },
+        data: { status: "COMPLETED", endedAt: new Date("2026-08-08T12:00:00.000Z") },
+      });
+      await database.cliente.create({
+        data: { id: summaryIds.otherClient, code: "RR-OTHER-CLIENT", tradeName: "Read Other Client" },
+      });
+      await database.sucursalCliente.create({
+        data: {
+          id: summaryIds.otherBranch,
+          clienteId: summaryIds.otherClient,
+          code: "RR-OTHER-BRANCH",
+          name: "Read Other Branch",
+          address: "Other fixture address",
+        },
+      });
+      await database.ordenTrabajo.createMany({
+        data: [
+          ...additionalOrderIds.map((id, index) => ({
+            id,
+            orderNumber: `OT-READ-SUMMARY-${index + 1}`,
+            sucursalId: fixture.branchId,
+            tipoServicioId: "83000000-0000-4000-8000-000000000023",
+            status: "COMPLETED" as const,
+            endedAt: new Date(`2026-08-${String(index + 10).padStart(2, "0")}T12:00:00.000Z`),
+            reportedProblem: `Summary base order ${index + 1}`,
+          })),
+          {
+            id: summaryIds.otherOrder,
+            orderNumber: "OT-READ-SUMMARY-OTHER",
+            sucursalId: summaryIds.otherBranch,
+            tipoServicioId: "83000000-0000-4000-8000-000000000023",
+            status: "COMPLETED",
+            endedAt: new Date("2026-08-18T12:00:00.000Z"),
+            reportedProblem: "Summary order for another client",
+          },
+        ],
+      });
+      await database.ordenTecnico.createMany({
+        data: [
+          ...additionalOrderIds.map((ordenId, index) => ({
+            ordenId,
+            tecnicoId: index < 5 ? fixture.technicianId : fixture.foreignTechnicianId,
+            role: "PRIMARY" as const,
+            assignedAt: new Date("2026-08-01T08:00:00.000Z"),
+            unassignedAt: new Date("2026-08-20T08:00:00.000Z"),
+          })),
+          {
+            ordenId: summaryIds.otherOrder,
+            tecnicoId: fixture.foreignTechnicianId,
+            role: "PRIMARY",
+            assignedAt: new Date("2026-08-01T08:00:00.000Z"),
+            unassignedAt: new Date("2026-08-20T08:00:00.000Z"),
+          },
+        ],
+      });
+      await database.reincidencia.update({
+        where: { id: fixture.reporterRecurrenceId },
+        data: { additionalMinutes: 120, estimatedCost: "4000.00" },
+      });
+      await database.reincidencia.update({
+        where: { id: fixture.originalParticipantRecurrenceId },
+        data: { additionalMinutes: 60, estimatedCost: "2240.00" },
+      });
+      await database.reincidencia.create({
+        data: {
+          id: summaryIds.otherRecurrence,
+          recurrenceNumber: "RI-2037-9199",
+          originalOrderId: summaryIds.otherOrder,
+          reportedById: fixture.supervisorUserId,
+          status: "OPEN",
+          impact: "HIGH",
+          detectedProblem: "Case for another client and technician",
+          detectedAt: new Date("2026-08-07T12:00:00.000Z"),
+          additionalMinutes: 999,
+          estimatedCost: "9999.99",
+        },
+      });
+      await database.reincidenciaTecnico.create({
+        data: {
+          id: summaryIds.otherSnapshot,
+          reincidenciaId: summaryIds.otherRecurrence,
+          tecnicoId: fixture.foreignTechnicianId,
+          participation: "ORIGINAL_RESPONSIBLE",
+        },
+      });
+      await database.reincidenciaOrden.createMany({
+        data: [
+          { reincidenciaId: fixture.reporterRecurrenceId, ordenId: additionalOrderIds[0], visitNumber: 1 },
+          { reincidenciaId: fixture.reporterRecurrenceId, ordenId: additionalOrderIds[1], visitNumber: 2 },
+          { reincidenciaId: fixture.originalParticipantRecurrenceId, ordenId: additionalOrderIds[2], visitNumber: 1 },
+        ],
+      });
+    });
+
+    afterAll(async () => {
+      const createdOrderIds = [...additionalOrderIds, summaryIds.otherOrder];
+      await database.reincidenciaTecnico.deleteMany({ where: { reincidenciaId: summaryIds.otherRecurrence } });
+      await database.reincidenciaOrden.deleteMany({ where: { ordenId: { in: createdOrderIds } } });
+      await database.reincidencia.deleteMany({ where: { id: summaryIds.otherRecurrence } });
+      await database.ordenTecnico.deleteMany({ where: { ordenId: { in: createdOrderIds } } });
+      await database.ordenTrabajo.deleteMany({ where: { id: { in: createdOrderIds } } });
+      await database.sucursalCliente.deleteMany({ where: { id: summaryIds.otherBranch } });
+      await database.cliente.deleteMany({ where: { id: summaryIds.otherClient } });
+    });
+
+    // Mutation caught: hydrating/filtering the wrong rows, summing costs as JS numbers,
+    // or applying recurrence-only filters to the denominator changes these literals.
+    it("calculates exact filtered metrics without leaking another client", async () => {
+      const repository = createRecurrencesSummaryRepository(database);
+
+      await expect(repository.summarizeRecurrences({
+        status: ["OPEN", "ANALYSIS"],
+        clientId: fixture.clientId,
+        branchId: fixture.branchId,
+        detectedFrom,
+        detectedTo,
+      }, { kind: "ALL" })).resolves.toEqual({
+        totalCases: 2,
+        openCases: 2,
+        highImpactCases: 1,
+        additionalVisits: 3,
+        additionalMinutes: 180,
+        estimatedCost: "6240.00",
+        completedBaseOrders: 10,
+        recurrenceRate: "20.00",
+      });
+    });
+
+    // Mutation caught: the extracted predicate diverges between list and summary,
+    // or base orders incorrectly inherit search/status/impact/responsibility/originalOrderId.
+    it("preserves list filters when sharing the recurrence predicate", async () => {
+      const filters = {
+        search: "ORIGINAL PARTICIPANT",
+        status: ["ANALYSIS" as const],
+        impact: ["MEDIUM" as const],
+        responsibility: ["EQUIPMENT" as const],
+        originalOrderId: fixture.originalOrderId,
+        technicianId: fixture.technicianId,
+        clientId: fixture.clientId,
+        branchId: fixture.branchId,
+        detectedFrom,
+        detectedTo,
+      };
+      const list = await createRecurrencesReadRepository(database).listRecurrences(
+        { ...filters, page: 1, pageSize: 20 },
+        { kind: "ALL" },
+      );
+      const summary = await createRecurrencesSummaryRepository(database)
+        .summarizeRecurrences(filters, { kind: "ALL" });
+
+      expect(list).toMatchObject({
+        items: [{ id: fixture.originalParticipantRecurrenceId }],
+        totalItems: 1,
+      });
+      expect(summary).toEqual({
+        totalCases: 1,
+        openCases: 1,
+        highImpactCases: 0,
+        additionalVisits: 1,
+        additionalMinutes: 60,
+        estimatedCost: "2240.00",
+        completedBaseOrders: 7,
+        recurrenceRate: "14.29",
+      });
+    });
+
+    // Mutation caught: technician scope is omitted from either recurrence or base-order aggregates.
+    it("applies own-technician scope to cases and completed base orders", async () => {
+      const summary = await createRecurrencesSummaryRepository(database).summarizeRecurrences({
+        status: ["OPEN", "ANALYSIS"],
+        clientId: fixture.clientId,
+        branchId: fixture.branchId,
+        detectedFrom,
+        detectedTo,
+      }, { kind: "TECHNICIAN", technicianId: fixture.technicianId });
+
+      expect(summary).toMatchObject({
+        totalCases: 2,
+        completedBaseOrders: 7,
+        recurrenceRate: "28.57",
+      });
+    });
+
+    // Mutation caught: zero denominators yield NaN/Infinity or lose fixed decimal formatting.
+    it("returns a fixed zero rate when no completed base orders match", async () => {
+      const repository = createRecurrencesSummaryRepository(database);
+
+      await expect(repository.summarizeRecurrences({
+        clientId: fixture.clientId,
+        branchId: fixture.branchId,
+        detectedFrom: new Date("2026-09-01T00:00:00-06:00"),
+        detectedTo: new Date("2026-09-30T23:59:59.999-06:00"),
+      }, { kind: "ALL" })).resolves.toEqual({
+        totalCases: 0,
+        openCases: 0,
+        highImpactCases: 0,
+        additionalVisits: 0,
+        additionalMinutes: 0,
+        estimatedCost: "0.00",
+        completedBaseOrders: 0,
+        recurrenceRate: "0.00",
+      });
+    });
   });
 });
