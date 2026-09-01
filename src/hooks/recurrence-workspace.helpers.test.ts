@@ -43,6 +43,26 @@ describe("estado URL de reincidencias", () => {
     });
   });
 
+  it("conserva fechas UTC vÃ¡lidas aceptadas por el contrato", () => {
+    expect(parseRecurrenceSearch(
+      "?recurrenceFrom=2026-03-01T00%3A00%3A00Z&recurrenceTo=2026-03-31T23%3A59%3A59.999Z",
+      new Date("2026-03-10T12:00:00.000Z"),
+    ).filters).toMatchObject({
+      detectedFrom: "2026-03-01T00:00:00Z",
+      detectedTo: "2026-03-31T23:59:59.999Z",
+    });
+  });
+
+  it("conserva fracciones de segundo vÃ¡lidas aceptadas por el contrato", () => {
+    expect(parseRecurrenceSearch(
+      "?recurrenceFrom=2026-03-01T00%3A00%3A00.1234Z&recurrenceTo=2026-03-31T23%3A59%3A59.999999Z",
+      new Date("2026-03-10T12:00:00.000Z"),
+    ).filters).toMatchObject({
+      detectedFrom: "2026-03-01T00:00:00.1234Z",
+      detectedTo: "2026-03-31T23:59:59.999999Z",
+    });
+  });
+
   it("descarta valores invÃ¡lidos y usa defaults reproducibles", () => {
     expect(parseRecurrenceSearch(
       "?recurrenceStatus=UNKNOWN&recurrenceImpact=SEVERE&recurrenceResponsibility=HACKED" +
@@ -58,6 +78,16 @@ describe("estado URL de reincidencias", () => {
         pageSize: 20,
       },
     });
+  });
+
+  it.each([
+    ["dÃ­a inexistente", "2026-02-30T00:00:00-06:00", "2026-03-10T12:00:00.000Z"],
+    ["29 de febrero de un aÃ±o no bisiesto", "2025-02-29T00:00:00-06:00", "2025-03-10T12:00:00.000Z"],
+  ])("no acepta un %s al parsear el periodo", (_case, invalidFrom, now) => {
+    expect(parseRecurrenceSearch(
+      `?recurrenceFrom=${encodeURIComponent(invalidFrom)}&recurrenceTo=${encodeURIComponent(invalidFrom.slice(0, 7) + "-31T23:59:59.999-06:00")}`,
+      new Date(now),
+    ).filters).toMatchObject(currentRecurrenceMonth(new Date(now)));
   });
 
   it("conserva parÃ¡metros ajenos, reemplaza los propios y materializa el periodo", () => {
@@ -87,6 +117,25 @@ describe("estado URL de reincidencias", () => {
     expect(query.get("recurrenceTo")).toBe("2026-09-30T23:59:59.999-06:00");
     expect(query.has("recurrenceSearch")).toBe(false);
     expect(query.has("recurrenceImpact")).toBe(false);
+  });
+
+  it.each([
+    ["dÃ­a inexistente", "2026-02-30T00:00:00-06:00", "2026-03-10T12:00:00.000Z"],
+    ["29 de febrero de un aÃ±o no bisiesto", "2025-02-29T00:00:00-06:00", "2025-03-10T12:00:00.000Z"],
+  ])("no serializa un %s y materializa el periodo vigente", (_case, invalidFrom, now) => {
+    const query = serializeRecurrenceSearch("?source=shell", {
+      selectedId: null,
+      filters: {
+        detectedFrom: invalidFrom,
+        detectedTo: `${invalidFrom.slice(0, 7)}-31T23:59:59.999-06:00`,
+        page: 1,
+        pageSize: 20,
+      },
+    }, new Date(now));
+
+    expect(query.get("recurrenceFrom")).toBe(currentRecurrenceMonth(new Date(now)).detectedFrom);
+    expect(query.get("recurrenceTo")).toBe(currentRecurrenceMonth(new Date(now)).detectedTo);
+    expect(query.toString()).not.toContain(encodeURIComponent(invalidFrom));
   });
 });
 

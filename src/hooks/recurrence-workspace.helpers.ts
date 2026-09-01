@@ -37,7 +37,7 @@ const ownedSearchParams = [
   "recurrencePageSize",
   "recurrenceSelectedId",
 ] as const;
-const isoDateWithOffset = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+const isoDateWithOffset = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function positiveInteger(value: string | null, maximum = Number.MAX_SAFE_INTEGER): number | null {
@@ -58,7 +58,16 @@ function identifier(value: string | null): string | undefined {
 
 function date(value: string | null): string | undefined {
   const normalized = value?.trim();
-  return normalized && isoDateWithOffset.test(normalized) && Number.isFinite(Date.parse(normalized)) ? normalized : undefined;
+  const match = normalized && isoDateWithOffset.exec(normalized);
+  if (!match) return undefined;
+
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = match.slice(1).map(Number);
+  const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const valid = month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1] &&
+    hour <= 23 && minute <= 59 && second <= 59 &&
+    (Number.isNaN(offsetHour) && Number.isNaN(offsetMinute) || offsetHour <= 23 && offsetMinute <= 59);
+  return valid && Number.isFinite(Date.parse(normalized)) ? normalized : undefined;
 }
 
 function repeated<T extends string>(query: URLSearchParams, key: string, allowed: readonly T[]): T[] | undefined {
