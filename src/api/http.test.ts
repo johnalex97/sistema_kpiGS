@@ -51,7 +51,7 @@ describe("requestJson", () => {
 });
 
 describe("requestFormData", () => {
-  it("envía el formulario con cookies sin fijar Content-Type", async () => {
+  it("envía el formulario con cookies y elimina un Content-Type recibido", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
       data: { id: "evidence-1" },
     }), { status: 201, headers: { "Content-Type": "application/json" } }));
@@ -60,7 +60,10 @@ describe("requestFormData", () => {
 
     await requestFormData<{ id: string }>("/recurrences/r-1/evidences", form, {
       method: "POST",
-      headers: { "X-Request-Source": "recurrences" },
+      headers: {
+        "Content-Type": "multipart/form-data; boundary=manual",
+        "X-Request-Source": "recurrences",
+      },
     });
 
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
@@ -136,6 +139,24 @@ describe("requestBlob", () => {
     }));
 
     await expect(requestBlob("/evidences/e-1/download")).resolves.toMatchObject({ filename: null });
+  });
+
+  it("usa filename como respaldo cuando filename* está malformado", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response("archivo", {
+      headers: {
+        "Content-Disposition": "attachment; filename=\"reporte-valido.pdf\"; filename*=UTF-8''%E0%A4%A",
+      },
+    }));
+
+    await expect(requestBlob("/evidences/e-1/download")).resolves.toMatchObject({
+      filename: "reporte-valido.pdf",
+    });
+  });
+
+  it("distingue una falla de red al descargar", async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(requestBlob("/evidences/e-1/download")).rejects.toBeInstanceOf(ApiNetworkError);
   });
 
   it("traduce errores JSON y notifica 401 antes de leer el binario", async () => {

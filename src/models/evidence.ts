@@ -15,6 +15,9 @@ export interface Evidence {
   description: string | null;
   accessLevel: EvidenceAccessLevel;
   uploadedBy: { id: string; displayName: string };
+  resourceType: "ORDER" | "ACTIVITY" | "RECURRENCE";
+  resourceId: string;
+  checksumSha256: string;
   version: number;
   createdAt: string;
   updatedAt: string;

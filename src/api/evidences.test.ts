@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEvidenceApi } from "./evidences";
-import type { EvidenceAccessLevel, EvidenceUploadInput } from "../models/evidence";
+import type { Evidence, EvidenceAccessLevel, EvidenceUploadInput } from "../models/evidence";
 
 const validAccessLevels = ["TECHNICIAN", "INTERNAL"] as const satisfies readonly EvidenceAccessLevel[];
 // @ts-expect-error CLIENT pertenece al backend y no es un nivel aceptado por el frontend.
@@ -29,7 +29,7 @@ const evidence = {
   version: 1,
   createdAt: "2026-08-31T13:00:00.000Z",
   updatedAt: "2026-08-31T13:00:00.000Z",
-};
+} satisfies Evidence;
 
 afterEach(() => vi.mocked(fetch).mockReset());
 
