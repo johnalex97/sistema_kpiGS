@@ -63,6 +63,16 @@ describe("estado URL de reincidencias", () => {
     });
   });
 
+  it.each([
+    ["UTC", "2026-03-01T00:00Z", "2026-03-31T23:59Z"],
+    ["offset -06:00", "2026-03-01T00:00-06:00", "2026-03-31T23:59-06:00"],
+  ])("acepta fechas sin segundos con %s al parsear", (_zone, detectedFrom, detectedTo) => {
+    expect(parseRecurrenceSearch(
+      `?recurrenceFrom=${encodeURIComponent(detectedFrom)}&recurrenceTo=${encodeURIComponent(detectedTo)}`,
+      new Date("2026-03-10T12:00:00.000Z"),
+    ).filters).toMatchObject({ detectedFrom, detectedTo });
+  });
+
   it("descarta valores invÃ¡lidos y usa defaults reproducibles", () => {
     expect(parseRecurrenceSearch(
       "?recurrenceStatus=UNKNOWN&recurrenceImpact=SEVERE&recurrenceResponsibility=HACKED" +
@@ -136,6 +146,19 @@ describe("estado URL de reincidencias", () => {
     expect(query.get("recurrenceFrom")).toBe(currentRecurrenceMonth(new Date(now)).detectedFrom);
     expect(query.get("recurrenceTo")).toBe(currentRecurrenceMonth(new Date(now)).detectedTo);
     expect(query.toString()).not.toContain(encodeURIComponent(invalidFrom));
+  });
+
+  it.each([
+    ["UTC", "2026-03-01T00:00Z", "2026-03-31T23:59Z"],
+    ["offset -06:00", "2026-03-01T00:00-06:00", "2026-03-31T23:59-06:00"],
+  ])("serializa fechas sin segundos con %s", (_zone, detectedFrom, detectedTo) => {
+    const query = serializeRecurrenceSearch("", {
+      selectedId: null,
+      filters: { detectedFrom, detectedTo, page: 1, pageSize: 20 },
+    });
+
+    expect(query.get("recurrenceFrom")).toBe(detectedFrom);
+    expect(query.get("recurrenceTo")).toBe(detectedTo);
   });
 });
 
