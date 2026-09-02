@@ -86,6 +86,11 @@ export class RecurrencePermissionError extends Error {
   }
 }
 
+interface AuxiliaryRequest {
+  controller: AbortController;
+  cleanup(): void;
+}
+
 const systemNow = () => new Date();
 
 function isAbortError(error: unknown): boolean {
@@ -106,6 +111,41 @@ function summaryFilters(filters: RecurrenceListFilters): RecurrenceSummaryFilter
 
 function permissionKey(permissions: readonly string[]): string {
   return [...new Set(permissions)].sort().join("\u0000");
+}
+
+function summaryKey(filters: RecurrenceListFilters): string {
+  return JSON.stringify(summaryFilters(filters));
+}
+
+function listKey(filters: RecurrenceListFilters): string {
+  return JSON.stringify(filters);
+}
+
+function frozenArray<T>(values: T[] | undefined): T[] | undefined {
+  return values ? Object.freeze([...values]) as T[] : undefined;
+}
+
+function createSummarySnapshot(filters: RecurrenceSummaryFilters): RecurrenceSummaryFilters {
+  const snapshot: RecurrenceSummaryFilters = { ...filters };
+  if (filters.status) snapshot.status = frozenArray(filters.status);
+  if (filters.impact) snapshot.impact = frozenArray(filters.impact);
+  if (filters.responsibility) snapshot.responsibility = frozenArray(filters.responsibility);
+  return Object.freeze(snapshot);
+}
+
+function createListSnapshot(
+  filters: RecurrenceListFilters,
+  summary: RecurrenceSummaryFilters,
+): RecurrenceListFilters {
+  return Object.freeze({ ...summary, page: filters.page, pageSize: filters.pageSize });
+}
+
+function isolateFilterArrays(filters: RecurrenceListFilters): RecurrenceListFilters {
+  const isolated = { ...filters };
+  if (filters.status) isolated.status = frozenArray(filters.status);
+  if (filters.impact) isolated.impact = frozenArray(filters.impact);
+  if (filters.responsibility) isolated.responsibility = frozenArray(filters.responsibility);
+  return isolated;
 }
 
 function deriveCapabilities(permissions: readonly string[]): RecurrenceCapabilities {
@@ -149,8 +189,8 @@ export function useRecurrencesWorkspace({
     const parsed = parseRecurrenceSearch(window.location.search, (now ?? systemNow)());
     const externalSearch = search.trim();
     return externalSearch
-      ? { ...parsed, filters: { ...parsed.filters, search: externalSearch, page: 1 } }
-      : parsed;
+      ? { ...parsed, filters: isolateFilterArrays({ ...parsed.filters, search: externalSearch, page: 1 }) }
+      : { ...parsed, filters: isolateFilterArrays(parsed.filters) };
   });
   const [catalog, setCatalog] = useState<RecurrenceCatalog | null>(null);
   const [page, setPage] = useState<RecurrencePage | null>(null);
@@ -165,7 +205,16 @@ export function useRecurrencesWorkspace({
   const [actionMode, setActionModeState] = useState<RecurrenceActionMode | null>(null);
 
   const permissionsKey = permissionKey(permissions);
-  const summaryRequestKey = JSON.stringify(summaryFilters(query.filters));
+  const listRequestKey = listKey(query.filters);
+  const summaryRequestKey = summaryKey(query.filters);
+  const summarySnapshot = useMemo(
+    () => createSummarySnapshot(JSON.parse(summaryRequestKey) as RecurrenceSummaryFilters),
+    [summaryRequestKey],
+  );
+  const listSnapshot = useMemo(
+    () => createListSnapshot(JSON.parse(listRequestKey) as RecurrenceListFilters, summarySnapshot),
+    [listRequestKey, summarySnapshot],
+  );
   const capabilities = useMemo(() => deriveCapabilities(permissions), [permissions]);
   const capabilitiesRef = useRef(capabilities);
 
@@ -183,8 +232,26 @@ export function useRecurrencesWorkspace({
   const summaryGenerationRef = useRef(0);
   const detailGenerationRef = useRef(0);
   const auxiliaryGenerationRef = useRef(0);
-  const auxiliaryControllersRef = useRef(new Map<string, AbortController>());
+  const auxiliaryRequestsRef = useRef(new Map<string, AuxiliaryRequest>());
   const previousPermissionsKeyRef = useRef(permissionsKey);
+
+  const invalidateList = useCallback(() => {
+    listGenerationRef.current += 1;
+    listControllerRef.current?.abort();
+    listControllerRef.current = null;
+  }, []);
+
+  const invalidateSummary = useCallback(() => {
+    summaryGenerationRef.current += 1;
+    summaryControllerRef.current?.abort();
+    summaryControllerRef.current = null;
+  }, []);
+
+  const invalidateDetail = useCallback(() => {
+    detailGenerationRef.current += 1;
+    detailControllerRef.current?.abort();
+    detailControllerRef.current = null;
+  }, []);
 
   const loadCatalog = useCallback(async (): Promise<void> => {
     catalogControllerRef.current?.abort();
@@ -203,7 +270,7 @@ export function useRecurrencesWorkspace({
   }, [api]);
 
   const loadList = useCallback(async (
-    requestedQuery: RecurrenceQueryState,
+    requestedKey: string,
     requestedFilters: RecurrenceListFilters,
   ): Promise<void> => {
     listControllerRef.current?.abort();
@@ -212,12 +279,16 @@ export function useRecurrencesWorkspace({
     const generation = ++listGenerationRef.current;
     try {
       const incoming = await api.list(requestedFilters, controller.signal);
-      if (controller.signal.aborted || generation !== listGenerationRef.current || queryRef.current !== requestedQuery) return;
+      if (controller.signal.aborted || generation !== listGenerationRef.current || listKey(queryRef.current.filters) !== requestedKey) return;
       const lastPage = Math.max(1, incoming.pagination.totalPages);
       if (requestedFilters.page > lastPage) {
-        setQuery((current) => current === requestedQuery
-          ? { ...current, filters: { ...current.filters, page: lastPage } }
-          : current);
+        invalidateList();
+        setQuery((current) => {
+          if (listKey(current.filters) !== requestedKey) return current;
+          const next = { ...current, filters: { ...current.filters, page: lastPage } };
+          queryRef.current = next;
+          return next;
+        });
         return;
       }
       pageRef.current = incoming;
@@ -235,7 +306,7 @@ export function useRecurrencesWorkspace({
         setListStale(false);
       }
     }
-  }, [api]);
+  }, [api, invalidateList]);
 
   const loadSummary = useCallback(async (requestedFilters: RecurrenceSummaryFilters): Promise<void> => {
     summaryControllerRef.current?.abort();
@@ -255,14 +326,16 @@ export function useRecurrencesWorkspace({
 
   const removeSelection = useCallback(() => {
     selectedIdRef.current = null;
-    detailGenerationRef.current += 1;
-    detailControllerRef.current?.abort();
+    invalidateDetail();
     selectedRef.current = null;
     setSelected(null);
     setDetailState("idle");
     setActionModeState(null);
-    setQuery((current) => current.selectedId === null ? current : { ...current, selectedId: null });
-  }, []);
+    const current = queryRef.current;
+    const next = current.selectedId === null ? current : { ...current, selectedId: null };
+    queryRef.current = next;
+    setQuery(next);
+  }, [invalidateDetail]);
 
   const loadDetail = useCallback(async (id: string, silent = false): Promise<void> => {
     detailControllerRef.current?.abort();
@@ -293,20 +366,32 @@ export function useRecurrencesWorkspace({
     operation: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> => {
     if (!allowed()) throw new RecurrencePermissionError();
-    auxiliaryControllersRef.current.get(key)?.abort();
+    if (externalSignal?.aborted) throw abortError();
+    const previous = auxiliaryRequestsRef.current.get(key);
+    previous?.cleanup();
+    previous?.controller.abort();
     const controller = new AbortController();
-    auxiliaryControllersRef.current.set(key, controller);
     const generation = auxiliaryGenerationRef.current;
-    const abortFromCaller = () => controller.abort();
-    if (externalSignal?.aborted) controller.abort();
-    else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+    let cleaned = false;
+    function abortFromCaller() {
+      cleanup();
+      controller.abort();
+    }
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      externalSignal?.removeEventListener("abort", abortFromCaller);
+      if (auxiliaryRequestsRef.current.get(key) === request) auxiliaryRequestsRef.current.delete(key);
+    }
+    const request: AuxiliaryRequest = { controller, cleanup };
+    auxiliaryRequestsRef.current.set(key, request);
+    externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
     try {
       const result = await operation(controller.signal);
       if (controller.signal.aborted || generation !== auxiliaryGenerationRef.current || !allowed()) throw abortError();
       return result;
     } finally {
-      externalSignal?.removeEventListener("abort", abortFromCaller);
-      if (auxiliaryControllersRef.current.get(key) === controller) auxiliaryControllersRef.current.delete(key);
+      cleanup();
     }
   }, []);
 
@@ -372,17 +457,15 @@ export function useRecurrencesWorkspace({
 
   useEffect(() => {
     let active = true;
-    const snapshot = Object.freeze({ ...query.filters });
-    void Promise.resolve().then(() => active ? loadList(query, snapshot) : undefined);
+    void Promise.resolve().then(() => active ? loadList(listRequestKey, listSnapshot) : undefined);
     return () => { active = false; };
-  }, [loadList, query]);
+  }, [listRequestKey, listSnapshot, loadList]);
 
   useEffect(() => {
     let active = true;
-    const snapshot = Object.freeze(JSON.parse(summaryRequestKey) as RecurrenceSummaryFilters);
-    void Promise.resolve().then(() => active ? loadSummary(snapshot) : undefined);
+    void Promise.resolve().then(() => active ? loadSummary(summarySnapshot) : undefined);
     return () => { active = false; };
-  }, [loadSummary, summaryRequestKey]);
+  }, [loadSummary, summarySnapshot]);
 
   useEffect(() => {
     const selectedId = query.selectedId;
@@ -419,34 +502,68 @@ export function useRecurrencesWorkspace({
     if (normalized === externalSearchRef.current) return;
     externalSearchRef.current = normalized;
     const timer = window.setTimeout(() => {
-      setListState("loading");
-      setListStale(false);
-      setSummaryState("loading");
-      setQuery((current) => ({
+      const current = queryRef.current;
+      const next = {
         ...current,
         filters: { ...current.filters, search: normalized || undefined, page: 1 },
-      }));
+      };
+      if (listKey(current.filters) !== listKey(next.filters)) {
+        invalidateList();
+        setListState("loading");
+        setListStale(false);
+      }
+      if (summaryKey(current.filters) !== summaryKey(next.filters)) {
+        invalidateSummary();
+        setSummaryState("loading");
+      }
+      queryRef.current = next;
+      setQuery(next);
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [invalidateList, invalidateSummary, search]);
 
   useEffect(() => {
     const handlePopState = () => {
-      setListState("loading");
-      setListStale(false);
-      setSummaryState("loading");
-      setQuery(parseRecurrenceSearch(window.location.search, clock()));
+      const parsed = parseRecurrenceSearch(window.location.search, clock());
+      const globalSearch = externalSearchRef.current;
+      const next = globalSearch
+        ? { ...parsed, filters: isolateFilterArrays({ ...parsed.filters, search: globalSearch, page: 1 }) }
+        : { ...parsed, filters: isolateFilterArrays(parsed.filters) };
+      const current = queryRef.current;
+      if (listKey(current.filters) !== listKey(next.filters)) {
+        invalidateList();
+        setListState("loading");
+        setListStale(false);
+      }
+      if (summaryKey(current.filters) !== summaryKey(next.filters)) {
+        invalidateSummary();
+        setSummaryState("loading");
+      }
+      if (current.selectedId !== next.selectedId) {
+        invalidateDetail();
+        selectedIdRef.current = next.selectedId;
+        selectedRef.current = null;
+        setSelected(null);
+        setActionModeState(null);
+        setDetailState(next.selectedId ? "loading" : "idle");
+        if (next.selectedId) void loadDetail(next.selectedId);
+      }
+      queryRef.current = next;
+      setQuery(next);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [clock]);
+  }, [clock, invalidateDetail, invalidateList, invalidateSummary, loadDetail]);
 
   useEffect(() => {
     if (previousPermissionsKeyRef.current === permissionsKey) return;
     previousPermissionsKeyRef.current = permissionsKey;
     auxiliaryGenerationRef.current += 1;
-    auxiliaryControllersRef.current.forEach((controller) => controller.abort());
-    auxiliaryControllersRef.current.clear();
+    auxiliaryRequestsRef.current.forEach((request) => {
+      request.cleanup();
+      request.controller.abort();
+    });
+    auxiliaryRequestsRef.current.clear();
     setActionModeState((current) => current && !actionAllowed(current, capabilities) ? null : current);
   }, [capabilities, permissionsKey]);
 
@@ -460,19 +577,31 @@ export function useRecurrencesWorkspace({
     listControllerRef.current?.abort();
     summaryControllerRef.current?.abort();
     detailControllerRef.current?.abort();
-    auxiliaryControllersRef.current.forEach((controller) => controller.abort());
-    auxiliaryControllersRef.current.clear();
+    auxiliaryRequestsRef.current.forEach((request) => {
+      request.cleanup();
+      request.controller.abort();
+    });
+    auxiliaryRequestsRef.current.clear();
   }, []);
 
   const setFilters = useCallback((patch: Partial<RecurrenceListFilters>) => {
-    setListState("loading");
-    setListStale(false);
-    setSummaryState("loading");
-    setQuery((current) => ({
+    const current = queryRef.current;
+    const next = {
       ...current,
-      filters: { ...current.filters, ...patch, page: patch.page ?? 1 },
-    }));
-  }, []);
+      filters: isolateFilterArrays({ ...current.filters, ...patch, page: patch.page ?? 1 }),
+    };
+    if (listKey(current.filters) !== listKey(next.filters)) {
+      invalidateList();
+      setListState("loading");
+      setListStale(false);
+    }
+    if (summaryKey(current.filters) !== summaryKey(next.filters)) {
+      invalidateSummary();
+      setSummaryState("loading");
+    }
+    queryRef.current = next;
+    setQuery(next);
+  }, [invalidateList, invalidateSummary]);
 
   const select = useCallback((id: string) => {
     selectedIdRef.current = id;
@@ -493,15 +622,17 @@ export function useRecurrencesWorkspace({
 
   const retryList = useCallback(() => {
     const requestedQuery = queryRef.current;
+    const requestedSummary = createSummarySnapshot(summaryFilters(requestedQuery.filters));
+    const requestedList = createListSnapshot(requestedQuery.filters, requestedSummary);
     setListState("loading");
     setListStale(false);
-    void loadList(requestedQuery, Object.freeze({ ...requestedQuery.filters }));
+    void loadList(listKey(requestedQuery.filters), requestedList);
   }, [loadList]);
 
   const retrySummary = useCallback(() => {
     const requestedQuery = queryRef.current;
     setSummaryState("loading");
-    void loadSummary(Object.freeze(summaryFilters(requestedQuery.filters)));
+    void loadSummary(createSummarySnapshot(summaryFilters(requestedQuery.filters)));
   }, [loadSummary]);
 
   const retryDetail = useCallback(() => {

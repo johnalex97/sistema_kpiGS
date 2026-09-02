@@ -174,6 +174,32 @@ describe("useRecurrencesWorkspace", () => {
     await waitFor(() => expect(result.current).toMatchObject({ listState: "ready", summaryState: "ready" }));
   });
 
+  it("clona y congela profundamente un snapshot compartido por listado y resumen", async () => {
+    const api = recurrenceApi();
+    const statuses: Array<"OPEN" | "ANALYSIS"> = ["OPEN", "ANALYSIS"];
+    const impacts: Array<"HIGH"> = ["HIGH"];
+    const responsibilities: Array<"TECHNICAL_WORK"> = ["TECHNICAL_WORK"];
+    const { result } = renderWorkspace({ api });
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+
+    act(() => result.current.setFilters({ status: statuses, impact: impacts, responsibility: responsibilities }));
+    statuses.push("OPEN");
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+    const listFilters = vi.mocked(api.list).mock.calls[1]?.[0];
+    const summaryFilters = vi.mocked(api.summary).mock.calls[1]?.[0];
+
+    expect(listFilters).not.toBe(result.current.query.filters);
+    expect(result.current.query.filters.status).toEqual(["OPEN", "ANALYSIS"]);
+    expect(listFilters.status).not.toBe(statuses);
+    expect(Object.isFrozen(listFilters)).toBe(true);
+    expect(Object.isFrozen(listFilters.status)).toBe(true);
+    expect(Object.isFrozen(listFilters.impact)).toBe(true);
+    expect(Object.isFrozen(listFilters.responsibility)).toBe(true);
+    expect(summaryFilters.status).toBe(listFilters.status);
+    expect(summaryFilters.impact).toBe(listFilters.impact);
+    expect(summaryFilters.responsibility).toBe(listFilters.responsibility);
+  });
+
   it("mantiene el listado stale ante un error de recarga sin bloquear resumen ni catálogo", async () => {
     const api = recurrenceApi({ list: vi.fn().mockResolvedValueOnce(page).mockRejectedValueOnce(new Error("sin red")) });
     const { result } = renderWorkspace({ api });
@@ -204,6 +230,38 @@ describe("useRecurrencesWorkspace", () => {
     expect(result.current.page).toBeNull();
     currentList.resolve({ ...page, items: [{ ...detail, detectedProblem: "Vigente" }] });
     await waitFor(() => expect(result.current.page?.items[0]?.detectedProblem).toBe("Vigente"));
+  });
+
+  it("invalida listado y resumen antes del microtask de la consulta siguiente", async () => {
+    const oldList = deferred<RecurrencePage>();
+    const oldSummary = deferred<RecurrenceSummaryMetrics>();
+    const newList = deferred<RecurrencePage>();
+    const newSummary = deferred<RecurrenceSummaryMetrics>();
+    const api = recurrenceApi({
+      list: vi.fn().mockImplementationOnce(() => oldList.promise).mockImplementationOnce(() => newList.promise),
+      summary: vi.fn().mockImplementationOnce(() => oldSummary.promise).mockImplementationOnce(() => newSummary.promise),
+    });
+    const { result } = renderWorkspace({ api });
+    await waitFor(() => expect(api.summary).toHaveBeenCalledTimes(1));
+    const oldListSignal = vi.mocked(api.list).mock.calls[0]?.[1] as AbortSignal;
+    const oldSummarySignal = vi.mocked(api.summary).mock.calls[0]?.[1] as AbortSignal;
+
+    act(() => {
+      result.current.setFilters({ impact: ["HIGH"] });
+      oldList.resolve({ ...page, items: [{ ...detail, detectedProblem: "Lista obsoleta" }] });
+      oldSummary.resolve({ ...summary, totalCases: 99 });
+    });
+
+    expect(oldListSignal.aborted).toBe(true);
+    expect(oldSummarySignal.aborted).toBe(true);
+    await flushPromises();
+    expect(result.current.page).toBeNull();
+    expect(result.current.summary).toBeNull();
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+    newList.resolve(page);
+    newSummary.resolve(summary);
+    await waitFor(() => expect(result.current.page).toBe(page));
+    expect(result.current.summary).toBe(summary);
   });
 
   it("aborta todas las lecturas principales pendientes al desmontarse", async () => {
@@ -255,6 +313,30 @@ describe("useRecurrencesWorkspace", () => {
     expect(query.get("source")).toBe("shell");
   });
 
+  it("no recarga listado al seleccionar, cerrar o retirar un detalle 404", async () => {
+    const api = recurrenceApi({
+      detail: vi.fn()
+        .mockResolvedValueOnce(detail)
+        .mockRejectedValueOnce(new ApiClientError(404, "NOT_FOUND", "interno")),
+    });
+    const { result } = renderWorkspace({ api });
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+    expect(api.list).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.closeDetail());
+    expect(result.current.detailState).toBe("idle");
+    await flushPromises();
+    expect(api.list).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.query.selectedId).toBeNull());
+    expect(result.current.detailState).toBe("idle");
+    expect(api.list).toHaveBeenCalledTimes(1);
+  });
+
   it("reconcilia la selección por versión y descarta el detalle anterior", async () => {
     const oldDetail = deferred<RecurrenceDetail>();
     const newDetail = deferred<RecurrenceDetail>();
@@ -268,6 +350,69 @@ describe("useRecurrencesWorkspace", () => {
     await flushPromises();
     expect(result.current.selected).toBeNull();
     newDetail.resolve({ ...detail, id: anotherRecurrenceId, recurrenceNumber: "RI-2026-0002", version: 2 });
+    await waitFor(() => expect(result.current.selected?.id).toBe(anotherRecurrenceId));
+  });
+
+  it("reconcilia respuestas del mismo ID conservando la versión superior", async () => {
+    const version3 = { ...detail, version: 3, detectedProblem: "Versión tres" };
+    const version2 = { ...detail, version: 2, detectedProblem: "Versión obsoleta" };
+    const version4 = { ...detail, version: 4, detectedProblem: "Versión cuatro" };
+    const api = recurrenceApi({
+      detail: vi.fn().mockResolvedValueOnce(version3).mockResolvedValueOnce(version2).mockResolvedValueOnce(version4),
+    });
+    const { result } = renderWorkspace({ api });
+
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(version3));
+    act(() => result.current.retryDetail());
+    await waitFor(() => expect(api.detail).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+    expect(result.current.selected).toEqual(version3);
+
+    act(() => result.current.retryDetail());
+    await waitFor(() => expect(api.detail).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(result.current.selected).toEqual(version4));
+  });
+
+  it("cierra un detalle cargado ante 404 de retry sin recargar listado", async () => {
+    const api = recurrenceApi({
+      detail: vi.fn().mockResolvedValueOnce(detail).mockRejectedValueOnce(new ApiClientError(404, "NOT_FOUND", "interno")),
+    });
+    const { result } = renderWorkspace({ api });
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+
+    act(() => result.current.retryDetail());
+    await waitFor(() => expect(result.current.detailState).toBe("idle"));
+
+    expect(result.current.selected).toBeNull();
+    expect(result.current.query.selectedId).toBeNull();
+    expect(api.list).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalida detalle de popstate antes del microtask de la selección siguiente", async () => {
+    const oldDetail = deferred<RecurrenceDetail>();
+    const newDetail = deferred<RecurrenceDetail>();
+    const api = recurrenceApi({
+      detail: vi.fn().mockImplementationOnce(() => oldDetail.promise).mockImplementationOnce(() => newDetail.promise),
+    });
+    window.history.replaceState({}, "", `/reincidencias?recurrenceSelectedId=${recurrenceId}`);
+    const { result } = renderWorkspace({ api });
+    await waitFor(() => expect(api.detail).toHaveBeenCalledTimes(1));
+    const oldSignal = vi.mocked(api.detail).mock.calls[0]?.[1] as AbortSignal;
+
+    act(() => {
+      window.history.pushState({}, "", `/reincidencias?recurrenceSelectedId=${anotherRecurrenceId}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      oldDetail.resolve(detail);
+    });
+
+    expect(oldSignal.aborted).toBe(true);
+    await flushPromises();
+    expect(result.current.selected).toBeNull();
+    await waitFor(() => expect(api.detail).toHaveBeenCalledTimes(2));
+    newDetail.resolve({ ...detail, id: anotherRecurrenceId });
     await waitFor(() => expect(result.current.selected?.id).toBe(anotherRecurrenceId));
   });
 
@@ -286,6 +431,35 @@ describe("useRecurrencesWorkspace", () => {
 
     await waitFor(() => expect(result.current.query).toMatchObject({ filters: { status: ["ANALYSIS"], page: 2 }, selectedId: anotherRecurrenceId }));
     await waitFor(() => expect(result.current.selected?.id).toBe(anotherRecurrenceId));
+  });
+
+  it("impone la búsqueda global vigente en popstate y conserva filtros locales", async () => {
+    const api = recurrenceApi({
+      list: vi.fn(async (filters) => ({
+        ...page,
+        pagination: { ...page.pagination, page: filters.page, totalItems: 41, totalPages: 3 },
+      })),
+    });
+    const { result } = renderWorkspace({ api, search: " router global " });
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+
+    act(() => {
+      window.history.pushState({}, "", "/reincidencias?recurrenceSearch=historial&recurrenceStatus=ANALYSIS&recurrenceImpact=HIGH&recurrencePage=2");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    await waitFor(() => expect(result.current.query.filters).toMatchObject({
+      search: "router global",
+      status: ["ANALYSIS"],
+      impact: ["HIGH"],
+      page: 1,
+    }));
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      search: "router global",
+      status: ["ANALYSIS"],
+      impact: ["HIGH"],
+      page: 1,
+    }), expect.any(AbortSignal));
   });
 
   it("sincroniza búsqueda externa en página 1 conservando filtros locales", async () => {
@@ -320,6 +494,36 @@ describe("useRecurrencesWorkspace", () => {
     expect(api.summary).toHaveBeenCalledTimes(1);
     expect(result.current.query.filters.page).toBe(2);
     expect(new URLSearchParams(window.location.search).get("recurrencePage")).toBe("2");
+  });
+
+  it("mantiene el resumen ready sin refetch al cambiar página, tamaño o selección", async () => {
+    const api = recurrenceApi({
+      list: vi.fn(async (filters) => ({
+        ...page,
+        pagination: { page: filters.page, pageSize: filters.pageSize, totalItems: 60, totalPages: 3 },
+      })),
+    });
+    const { result } = renderWorkspace({ api });
+    await waitFor(() => expect(result.current.summaryState).toBe("ready"));
+
+    act(() => result.current.setFilters({ page: 2 }));
+    await waitFor(() => expect(result.current.query.filters.page).toBe(2));
+    expect(result.current.summaryState).toBe("ready");
+    expect(api.summary).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.setFilters({ pageSize: 40 }));
+    await waitFor(() => expect(result.current.query.filters.pageSize).toBe(40));
+    expect(result.current.summaryState).toBe("ready");
+    expect(api.summary).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.detailState).toBe("ready"));
+    expect(result.current.summaryState).toBe("ready");
+    expect(api.summary).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.closeDetail());
+    expect(result.current.summaryState).toBe("ready");
+    expect(api.summary).toHaveBeenCalledTimes(1);
   });
 
   it("expone reintentos aislados y limpia el único estado de mutación", async () => {
@@ -370,6 +574,40 @@ describe("useRecurrencesWorkspace", () => {
 
     await expect(result.current.lookupApi.orders("OT-1", ["COMPLETED"], 1)).rejects.toMatchObject({ name: "RecurrencePermissionError" });
     expect(rawLookups.orders).not.toHaveBeenCalled();
+  });
+
+  it("no inicia un lookup cuando la señal externa ya está abortada", async () => {
+    const rawLookups = lookupApi();
+    const external = new AbortController();
+    external.abort();
+    const { result } = renderWorkspace({ lookupApi: rawLookups, permissions: ["RECURRENCES_VIEW_ALL", "ORDERS_VIEW_ALL"] });
+
+    await expect(result.current.lookupApi.orders("OT-1", ["COMPLETED"], 1, external.signal))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(rawLookups.orders).not.toHaveBeenCalled();
+  });
+
+  it.each(["revocación", "desmontaje"])("retira listeners externos al invalidar por %s", async (reason) => {
+    const pending = deferred<Awaited<ReturnType<RecurrenceLookupApi["orders"]>>>();
+    const rawLookups = lookupApi({ orders: vi.fn(() => pending.promise) });
+    const external = new AbortController();
+    const removeListener = vi.spyOn(external.signal, "removeEventListener");
+    const stableOptions = options({ lookupApi: rawLookups });
+    const { result, rerender, unmount } = renderHook(
+      ({ permissions }) => useRecurrencesWorkspace({ ...stableOptions, permissions }),
+      { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "ORDERS_VIEW_ALL"] } },
+    );
+    const request = result.current.lookupApi.orders("OT-1", ["COMPLETED"], 1, external.signal);
+    void request.catch(() => undefined);
+    await waitFor(() => expect(rawLookups.orders).toHaveBeenCalledTimes(1));
+
+    if (reason === "revocación") rerender({ permissions: ["RECURRENCES_VIEW_ALL"] });
+    else unmount();
+    await flushPromises();
+
+    expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
+    pending.resolve({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } });
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("aborta e invalida lookups pendientes al revocar permisos sin borrar detalle permitido", async () => {
