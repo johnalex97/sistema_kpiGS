@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRecurrenceApi } from "./recurrences";
+import type { RecurrenceListFilters } from "../models/recurrence";
 
 function jsonResponse<T>(data: T, status = 200) {
   return new Response(JSON.stringify({ data }), {
@@ -103,6 +104,33 @@ describe("createRecurrenceApi", () => {
     expect(summaryInit).toEqual(expect.objectContaining({ signal: controller.signal, credentials: "include" }));
     expect(String(detailUrl)).toContain("/recurrences/rec%2Fid%20con%20espacio");
     expect(detailInit).toEqual(expect.objectContaining({ signal: controller.signal, credentials: "include" }));
+  });
+
+  it("omits pagination from summary when structurally given list filters", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({
+      totalCases: 0,
+      openCases: 0,
+      highImpactCases: 0,
+      additionalVisits: 0,
+      additionalMinutes: 0,
+      estimatedCost: "0.00",
+      completedBaseOrders: 0,
+      recurrenceRate: "0.00",
+    }));
+    const listFilters: RecurrenceListFilters = {
+      search: "enlace",
+      status: ["OPEN"],
+      page: 7,
+      pageSize: 100,
+    };
+
+    await createRecurrenceApi().summary(listFilters);
+
+    const query = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0])).searchParams;
+    expect(query.get("search")).toBe("enlace");
+    expect(query.getAll("status")).toEqual(["OPEN"]);
+    expect(query.has("page")).toBe(false);
+    expect(query.has("pageSize")).toBe(false);
   });
 
   it.each<{

@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRecurrenceLookupApi } from "./recurrence-lookups";
+import {
+  createRecurrenceLookupApi,
+  recurrenceLookupPermissionPrerequisites,
+  type RecurrenceLookupOperation,
+  type RecurrenceLookupPermission,
+} from "./recurrence-lookups";
 import type { OrderStatus } from "../models/order-lookup";
 
 function jsonResponse<T>(data: T) {
@@ -98,6 +103,21 @@ const branchPage = {
 afterEach(() => vi.mocked(fetch).mockReset());
 
 describe("createRecurrenceLookupApi", () => {
+  it("exports the typed permission prerequisites for every reused lookup endpoint", () => {
+    const expected = {
+      orders: ["ORDERS_VIEW_ALL", "ORDERS_VIEW_OWN"],
+      technicians: ["TECHNICIANS_VIEW"],
+      clients: ["CLIENTS_VIEW"],
+      branches: ["CLIENTS_VIEW"],
+    } as const satisfies Record<
+      RecurrenceLookupOperation,
+      readonly RecurrenceLookupPermission[]
+    >;
+    const typedContract: typeof expected = recurrenceLookupPermissionPrerequisites;
+
+    expect(typedContract).toEqual(expected);
+  });
+
   it("busca la orden original completada y mapea sólo el resultado mínimo", async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(orderPage));
 

@@ -9,6 +9,10 @@ import type {
 
 type RecurrencesSummaryRepository = Pick<RecurrencesRepository, "summarizeRecurrences">;
 
+const consistentReadOptions = {
+  isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+} as const;
+
 function baseOrderWhere(
   filters: RecurrenceSummaryFilters,
   scope: RecurrenceAccessScope,
@@ -68,7 +72,7 @@ export function createRecurrencesSummaryRepository(
           database.ordenTrabajo.count({
             where: baseOrderWhere(filters, scope),
           }),
-        ]);
+        ], consistentReadOptions);
       const totalCases = totals._count._all;
       const estimatedCost = totals._sum.estimatedCost ?? new Prisma.Decimal(0);
       const recurrenceRate = completedBaseOrders === 0

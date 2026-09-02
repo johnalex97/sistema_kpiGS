@@ -10,6 +10,12 @@ import {
 const originalOrderId = "11111111-1111-4111-8111-111111111111";
 const technicianId = "22222222-2222-4222-8222-222222222222";
 const selectedId = "33333333-3333-4333-8333-333333333333";
+const uuidCases = {
+  version1: "11111111-1111-1111-8111-111111111111",
+  version8: "88888888-8888-8888-b888-888888888888",
+  nil: "00000000-0000-0000-0000-000000000000",
+  max: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+} as const;
 
 function recurrence(id: string, version: number): RecurrenceDetail {
   return { id, version } as RecurrenceDetail;
@@ -89,6 +95,58 @@ describe("estado URL de reincidencias", () => {
       },
     });
   });
+
+  it.each([
+    ["version 0", "11111111-1111-0111-8111-111111111111"],
+    ["version 9", "11111111-1111-9111-8111-111111111111"],
+    ["variant 7", "11111111-1111-4111-7111-111111111111"],
+    ["variant c", "11111111-1111-4111-c111-111111111111"],
+  ])("rejects a UUID with invalid %s while parsing and serializing", (_case, invalidId) => {
+    const parsed = parseRecurrenceSearch(
+      `?recurrenceOriginalOrderId=${invalidId}&recurrenceSelectedId=${invalidId}`,
+      new Date("2026-09-10T12:00:00.000Z"),
+    );
+    const serialized = serializeRecurrenceSearch("", {
+      selectedId: invalidId,
+      filters: {
+        originalOrderId: invalidId,
+        detectedFrom: "2026-09-01T00:00:00-06:00",
+        detectedTo: "2026-09-30T23:59:59.999-06:00",
+        page: 1,
+        pageSize: 20,
+      },
+    });
+
+    expect(parsed.filters.originalOrderId).toBeUndefined();
+    expect(parsed.selectedId).toBeNull();
+    expect(serialized.has("recurrenceOriginalOrderId")).toBe(false);
+    expect(serialized.has("recurrenceSelectedId")).toBe(false);
+  });
+
+  it.each(Object.entries(uuidCases))(
+    "accepts the RFC or special UUID %s while parsing and serializing",
+    (_case, validId) => {
+      const parsed = parseRecurrenceSearch(
+        `?recurrenceOriginalOrderId=${validId}&recurrenceSelectedId=${validId}`,
+        new Date("2026-09-10T12:00:00.000Z"),
+      );
+      const serialized = serializeRecurrenceSearch("", {
+        selectedId: validId,
+        filters: {
+          originalOrderId: validId,
+          detectedFrom: "2026-09-01T00:00:00-06:00",
+          detectedTo: "2026-09-30T23:59:59.999-06:00",
+          page: 1,
+          pageSize: 20,
+        },
+      });
+
+      expect(parsed.filters.originalOrderId).toBe(validId);
+      expect(parsed.selectedId).toBe(validId);
+      expect(serialized.get("recurrenceOriginalOrderId")).toBe(validId);
+      expect(serialized.get("recurrenceSelectedId")).toBe(validId);
+    },
+  );
 
   it.each([
     ["dÃ­a inexistente", "2026-02-30T00:00:00-06:00", "2026-03-10T12:00:00.000Z"],

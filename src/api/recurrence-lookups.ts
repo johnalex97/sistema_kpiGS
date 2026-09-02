@@ -16,6 +16,28 @@ export interface RecurrenceLookupApi {
   branches(clientId: string, search: string, page: number, signal?: AbortSignal): Promise<BranchLookupPage>;
 }
 
+export type RecurrenceLookupOperation = keyof RecurrenceLookupApi;
+export type RecurrenceLookupPermission =
+  | "ORDERS_VIEW_ALL"
+  | "ORDERS_VIEW_OWN"
+  | "TECHNICIANS_VIEW"
+  | "CLIENTS_VIEW";
+
+/**
+ * Frontend prerequisites for the existing auxiliary endpoints. Having at
+ * least one listed permission lets consumers avoid unsupported lookups, but a
+ * backend 403 remains authoritative after revocation or for a custom role.
+ */
+export const recurrenceLookupPermissionPrerequisites = {
+  orders: ["ORDERS_VIEW_ALL", "ORDERS_VIEW_OWN"],
+  technicians: ["TECHNICIANS_VIEW"],
+  clients: ["CLIENTS_VIEW"],
+  branches: ["CLIENTS_VIEW"],
+} as const satisfies Record<
+  RecurrenceLookupOperation,
+  readonly RecurrenceLookupPermission[]
+>;
+
 interface RawPage<T> {
   items: T[];
   pagination: LookupPagination;

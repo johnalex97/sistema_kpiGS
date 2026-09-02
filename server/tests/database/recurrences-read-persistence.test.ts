@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Prisma } from "../../generated/prisma/client.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRecurrencesReadRepository } from "../../src/recurrences/recurrences.read.repository.js";
 import { createRecurrencesSummaryRepository } from "../../src/recurrences/recurrences.summary.repository.js";
 import type { RecurrenceListFilters } from "../../src/recurrences/recurrences.types.js";
@@ -301,6 +302,26 @@ describe("recurrences read repository", () => {
       await database.ordenTrabajo.deleteMany({ where: { id: { in: createdOrderIds } } });
       await database.sucursalCliente.deleteMany({ where: { id: summaryIds.otherBranch } });
       await database.cliente.deleteMany({ where: { id: summaryIds.otherClient } });
+    });
+
+    // Mutation caught: omitting RepeatableRead lets the aggregate queries observe different snapshots.
+    it("runs every summary aggregate in one repeatable-read snapshot", async () => {
+      const transaction = vi.spyOn(database, "$transaction");
+
+      try {
+        await createRecurrencesSummaryRepository(database).summarizeRecurrences({
+          clientId: fixture.clientId,
+          detectedFrom,
+          detectedTo,
+        }, { kind: "ALL" });
+
+        expect(transaction.mock.calls.at(-1)?.[0]).toHaveLength(5);
+        expect(transaction.mock.calls.at(-1)?.[1]).toEqual({
+          isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        });
+      } finally {
+        transaction.mockRestore();
+      }
     });
 
     // Mutation caught: hydrating/filtering the wrong rows, summing costs as JS numbers,

@@ -31,10 +31,15 @@ export interface RecurrenceApi {
   adjust(id: string, input: AdjustRecurrenceInput): Promise<RecurrenceDetail>;
 }
 
-function recurrenceQuery(filters: RecurrenceSummaryFilters | RecurrenceListFilters): string {
+function recurrenceQuery(
+  filters: RecurrenceSummaryFilters | RecurrenceListFilters,
+  omitPagination = false,
+): string {
   const query = new URLSearchParams();
 
   for (const [key, value] of Object.entries(filters)) {
+    if (omitPagination && (key === "page" || key === "pageSize")) continue;
+
     if (Array.isArray(value)) {
       value.forEach((item) => query.append(key, item));
       continue;
@@ -65,7 +70,7 @@ export function createRecurrenceApi(): RecurrenceApi {
   return {
     catalog: (signal) => requestJson<RecurrenceCatalog>("/recurrences/catalog", { signal }),
     list: (filters, signal) => requestJson<RecurrencePage>(`/recurrences?${recurrenceQuery(filters)}`, { signal }),
-    summary: (filters, signal) => requestJson<RecurrenceSummaryMetrics>(`/recurrences/summary?${recurrenceQuery(filters)}`, { signal }),
+    summary: (filters, signal) => requestJson<RecurrenceSummaryMetrics>(`/recurrences/summary?${recurrenceQuery(filters, true)}`, { signal }),
     detail: (id, signal) => requestJson<RecurrenceDetail>(recurrencePath(id), { signal }),
     report: (input) => mutation("/recurrences", input),
     analyze: (id, input) => mutation(recurrencePath(id, "analysis"), input),
