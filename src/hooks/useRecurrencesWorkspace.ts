@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { EvidenceApi } from "../api/evidences";
 import { ApiClientError } from "../api/http";
 import {
@@ -447,7 +447,19 @@ export function useRecurrencesWorkspace({
   useEffect(() => { pageRef.current = page; }, [page]);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { nowRef.current = now; }, [now]);
-  useEffect(() => { capabilitiesRef.current = capabilities; }, [capabilities]);
+
+  useLayoutEffect(() => {
+    capabilitiesRef.current = capabilities;
+    if (previousPermissionsKeyRef.current === permissionsKey) return;
+    previousPermissionsKeyRef.current = permissionsKey;
+    auxiliaryGenerationRef.current += 1;
+    auxiliaryRequestsRef.current.forEach((request) => {
+      request.cleanup();
+      request.controller.abort();
+    });
+    auxiliaryRequestsRef.current.clear();
+    setActionModeState((current) => current && !actionAllowed(current, capabilities) ? null : current);
+  }, [capabilities, permissionsKey]);
 
   useEffect(() => {
     let active = true;
@@ -555,18 +567,6 @@ export function useRecurrencesWorkspace({
     return () => window.removeEventListener("popstate", handlePopState);
   }, [clock, invalidateDetail, invalidateList, invalidateSummary, loadDetail]);
 
-  useEffect(() => {
-    if (previousPermissionsKeyRef.current === permissionsKey) return;
-    previousPermissionsKeyRef.current = permissionsKey;
-    auxiliaryGenerationRef.current += 1;
-    auxiliaryRequestsRef.current.forEach((request) => {
-      request.cleanup();
-      request.controller.abort();
-    });
-    auxiliaryRequestsRef.current.clear();
-    setActionModeState((current) => current && !actionAllowed(current, capabilities) ? null : current);
-  }, [capabilities, permissionsKey]);
-
   useEffect(() => () => {
     catalogGenerationRef.current += 1;
     listGenerationRef.current += 1;
@@ -609,7 +609,10 @@ export function useRecurrencesWorkspace({
     setSelected(null);
     setActionModeState(null);
     setDetailState("loading");
-    setQuery((current) => current.selectedId === id ? current : { ...current, selectedId: id });
+    const current = queryRef.current;
+    const next = current.selectedId === id ? current : { ...current, selectedId: id };
+    queryRef.current = next;
+    setQuery(next);
     void loadDetail(id);
   }, [loadDetail]);
 

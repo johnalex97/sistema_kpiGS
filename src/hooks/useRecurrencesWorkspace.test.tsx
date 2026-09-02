@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EvidenceApi } from "../api/evidences";
@@ -526,6 +527,34 @@ describe("useRecurrencesWorkspace", () => {
     expect(api.summary).toHaveBeenCalledTimes(1);
   });
 
+  it("compone select y setFilters batched conservando selección, URL y filtro de loader", async () => {
+    const api = recurrenceApi({
+      list: vi.fn(async (filters) => ({
+        ...page,
+        pagination: { ...page.pagination, page: filters.page, totalItems: 41, totalPages: 3 },
+      })),
+    });
+    const { result } = renderWorkspace({ api });
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+
+    act(() => {
+      result.current.select(anotherRecurrenceId);
+      result.current.setFilters({ impact: ["HIGH"] });
+    });
+
+    await waitFor(() => expect(result.current.query).toMatchObject({
+      selectedId: anotherRecurrenceId,
+      filters: { impact: ["HIGH"], page: 1 },
+    }));
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ impact: ["HIGH"], page: 1 }), expect.any(AbortSignal));
+    await waitFor(() => {
+      const url = new URLSearchParams(window.location.search);
+      expect(url.get("recurrenceSelectedId")).toBe(anotherRecurrenceId);
+      expect(url.getAll("recurrenceImpact")).toEqual(["HIGH"]);
+    });
+  });
+
   it("expone reintentos aislados y limpia el único estado de mutación", async () => {
     const api = recurrenceApi({
       catalog: vi.fn().mockRejectedValueOnce(new Error("catálogo")).mockResolvedValueOnce(catalog),
@@ -631,6 +660,34 @@ describe("useRecurrencesWorkspace", () => {
     expect(result.current.capabilities.lookupCapabilities.orders).toBe(false);
     expect(result.current.selected).toEqual(detail);
     pending.resolve({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } });
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("aborta el lookup en layout antes de resolver durante el commit revocado", async () => {
+    const pending = deferred<Awaited<ReturnType<RecurrenceLookupApi["orders"]>>>();
+    const rawLookups = lookupApi({ orders: vi.fn(() => pending.promise) });
+    const stableOptions = options({ lookupApi: rawLookups });
+    const commitObservation: { signal?: AbortSignal; aborted?: boolean } = {};
+    const { result, rerender } = renderHook(
+      ({ permissions }) => {
+        const workspace = useRecurrencesWorkspace({ ...stableOptions, permissions });
+        useLayoutEffect(() => {
+          if (permissions.includes("ORDERS_VIEW_ALL") || !commitObservation.signal) return;
+          commitObservation.aborted = commitObservation.signal.aborted;
+          pending.resolve({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } });
+        }, [permissions]);
+        return workspace;
+      },
+      { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "ORDERS_VIEW_ALL"] } },
+    );
+    const request = result.current.lookupApi.orders("OT-1", ["COMPLETED"], 1);
+    void request.catch(() => undefined);
+    await waitFor(() => expect(rawLookups.orders).toHaveBeenCalledTimes(1));
+    commitObservation.signal = vi.mocked(rawLookups.orders).mock.calls[0]?.[3] as AbortSignal;
+
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL"] });
+
+    expect(commitObservation.aborted).toBe(true);
     await expect(request).rejects.toMatchObject({ name: "AbortError" });
   });
 
