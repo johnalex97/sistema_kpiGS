@@ -5,6 +5,7 @@ import { AuthContext, type AuthContextValue } from "../auth/AuthContext";
 import type { RecurrencesWorkspace } from "../hooks/useRecurrencesWorkspace";
 import type { RecurrenceDetail, RecurrenceSummary } from "../models/recurrence";
 import { RecurrencesPage } from "./RecurrencesPage";
+import "../styles.css";
 
 const item: RecurrenceSummary = {
   id: "rec-1",
@@ -198,6 +199,9 @@ describe("RecurrencesPage", () => {
     expect(current.retrySummary).toHaveBeenCalledTimes(1);
     expect(current.retryCatalog).toHaveBeenCalledTimes(1);
     expect(current.retryDetail).toHaveBeenCalledTimes(1);
+    const close = screen.getByRole("button", { name: "Cerrar" });
+    expect(getComputedStyle(close).minHeight).toBe("44px");
+    expect(getComputedStyle(close).touchAction).toBe("manipulation");
   });
 
   it("no muestra alcance global ni acciones futuras a un lector propio", () => {

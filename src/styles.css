@@ -22,11 +22,10 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: #eef3f5; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.skip-link { position: fixed; top: 8px; left: 8px; z-index: 200; min-height: 44px; padding: 10px 14px; display: inline-flex; align-items: center; border-radius: 7px; color: #fff; background: #0b2340; transform: translateY(calc(-100% - 16px)); transition: transform .16s ease; }
-.skip-link:focus { transform: translateY(0); }
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 200; min-height: 44px; padding: 10px 14px; display: inline-flex; align-items: center; border-radius: 7px; color: #fff; background: #0b2340; touch-action: manipulation; -webkit-tap-highlight-color: transparent; transform: translateY(calc(-100% - 16px)); transition: transform .16s ease; }
+.skip-link:focus-visible { transform: translateY(0); }
 button, input, select, textarea { font: inherit; }
 button { color: inherit; }
-button, a { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(71, 118, 230, .28); outline-offset: 2px; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
@@ -344,7 +343,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 
 /* Reincidencias: registro operativo. La regla vertical conserva el impacto entre listado y detalle. */
 .recurrence-workspace { min-width: 0; border: 1px solid var(--line); border-radius: 11px; background: #f7fafb; overflow: hidden; }
-.recurrence-workspace button { touch-action: manipulation; }
+.recurrence-workspace button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .recurrence-summary, .recurrence-table, .recurrence-cards, .recurrence-detail { font-variant-numeric: tabular-nums; }
 .recurrence-workspace__heading { min-height: 91px; padding: 19px 22px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); background: #fff; }
 .recurrence-workspace__heading h2 { margin: 4px 0 0; color: #0b2340; font: 700 22px/1.12 "Bahnschrift", "Arial Narrow", sans-serif; letter-spacing: -.02em; }
@@ -384,6 +383,9 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-filters__state--error button { margin-left: auto; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; }
 .recurrence-filters__state--stale { display: flex; align-items: center; gap: 8px; color: #78531b; background: #fff7e8; }
 .recurrence-filters__state--stale button { margin-left: auto; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+@media (hover: hover) {
+  .recurrence-summary__warning button:hover, .recurrence-filters__state--error button:hover, .recurrence-filters__state--stale button:hover, .recurrence-stale button:hover { color: #0b4656; text-decoration-thickness: 2px; }
+}
 
 .recurrence-stale { margin: 12px 22px 0; padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-left: 4px solid #d99426; border-radius: 5px; color: #78531b; background: #fff7e8; font-size: 11px; }
 .recurrence-stale button { margin-left: auto; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
@@ -424,7 +426,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-list-state strong, .recurrence-detail-state strong { color: #29485d; font-size: 13px; }
 .recurrence-list-state p, .recurrence-detail-state p { max-width: 310px; margin: 0; line-height: 1.45; }
 .recurrence-list-state--error, .recurrence-detail-state--error { color: #8f4034; background: #fff9f7; }
-.recurrence-detail-state--error > button:last-child { min-height: 36px; padding: 0 10px; border: 0; color: #596f7c; background: transparent; cursor: pointer; font-weight: 700; }
+.recurrence-detail-state--error > button:last-child { min-height: 44px; padding: 0 10px; border: 0; color: #596f7c; background: transparent; cursor: pointer; font-weight: 700; }
 .recurrence-pagination { min-height: 58px; padding: 10px 13px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid #e5edef; color: #617886; font-size: 11px; }
 .recurrence-pagination b { color: #0b2340; font-family: "Consolas", monospace; }
 
@@ -487,6 +489,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-detail__visits small, .recurrence-detail__notes small { display: block; margin-top: 4px; color: #788d98; font-size: 10px; line-height: 1.4; }
 .recurrence-detail__stacked { margin: 12px 0 0; display: grid; gap: 10px; }
 .recurrence-detail__notes p { margin: 0; color: #3d5b6d; font-size: 11px; line-height: 1.45; }
+.recurrence-detail__narrative p, .recurrence-detail__technicians em, .recurrence-detail__stacked dd, .recurrence-detail__notes p { overflow-wrap: anywhere; }
 .recurrence-detail__evidences li { padding: 9px; display: flex; align-items: flex-start; gap: 8px; border: 1px solid #e1e9ec; border-radius: 7px; }
 .recurrence-detail__muted { margin: 10px 0 0; color: #758a95; font-size: 11px; line-height: 1.4; }
 .recurrence-detail__audit { margin: 15px 0 0; color: #83939c; font: 700 10px/1.4 "Consolas", monospace; }

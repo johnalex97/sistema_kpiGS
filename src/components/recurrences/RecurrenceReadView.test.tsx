@@ -13,6 +13,7 @@ import { RecurrenceDetail } from "./RecurrenceDetail";
 import { RecurrenceFilters } from "./RecurrenceFilters";
 import { RecurrenceSummaryCards } from "./RecurrenceSummaryCards";
 import { RecurrenceTable } from "./RecurrenceTable";
+import "../../styles.css";
 
 const summary: RecurrenceSummaryMetrics = {
   totalCases: 7000,
@@ -135,7 +136,10 @@ describe("lectura de reincidencias", () => {
     expect(screen.getByLabelText("Estado")).toHaveAttribute("name", "recurrenceStatus");
     expect(screen.getByLabelText("Orden original")).toHaveAttribute("autocomplete", "off");
     expect(screen.getByLabelText("Orden original")).toHaveAttribute("spellcheck", "false");
-    expect(screen.getByLabelText("Orden original")).toHaveAttribute("placeholder", "Ej. ID de orden…");
+    expect(screen.getByLabelText("Orden original")).toHaveAttribute("placeholder", "Ej. 123e4567-e89b-12d3-a456-426614174000…");
+    for (const name of ["Orden original", "Técnico", "Cliente", "Sucursal"]) {
+      expect(screen.getByLabelText(name).getAttribute("placeholder")).toMatch(/^[^…]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}…$/u);
+    }
 
     onChange.mockClear();
     await user.type(screen.getByLabelText("Orden original"), "order-1");
@@ -251,6 +255,19 @@ describe("lectura de reincidencias", () => {
     expect(screen.getByText("Incidencia confirmada fuera de la ventana estándar.")).toBeInTheDocument();
     expect(screen.getByText("La visita adicional corresponde a una ampliación solicitada.")).toBeInTheDocument();
     expect(screen.getByText("Fecha de descarte")).toBeInTheDocument();
+  });
+
+  it("permite quebrar textos operativos extensos dentro del detalle", () => {
+    render(<RecurrenceDetail recurrence={detail} capabilities={capabilities} onClose={vi.fn()} />);
+
+    for (const content of [
+      detail.analysis!,
+      detail.technicians[0]!.justification!,
+      detail.observations!,
+      detail.notes[0]!.content,
+    ]) {
+      expect(getComputedStyle(screen.getByText(content)).overflowWrap).toBe("anywhere");
+    }
   });
 
   it("muestra la fecha de cierre persistida", () => {
