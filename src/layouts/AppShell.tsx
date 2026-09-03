@@ -17,7 +17,7 @@ function PageContent({ page, search, onGoRecurrence }: { page: Page; search: str
   switch (page) {
     case "Actividades": return <ActivitiesPage search={search} />;
     case "Técnicos": return <TechniciansPage search={search} />;
-    case "Reincidencias": return <RecurrencesPage />;
+    case "Reincidencias": return <RecurrencesPage search={search} />;
     default: return <DashboardPage works={initialWorks} onGoRecurrence={onGoRecurrence} />;
   }
 }

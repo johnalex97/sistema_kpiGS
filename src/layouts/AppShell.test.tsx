@@ -60,6 +60,29 @@ describe("AppShell", () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/technicians?search=Carla"))).toBe(true));
   });
 
+  it("entrega la búsqueda global al registro persistente de reincidencias", async () => {
+    window.history.replaceState({}, "", "/reincidencias");
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname;
+      const data = path.endsWith("/recurrences/catalog")
+        ? { causes: [], states: ["OPEN"], impacts: ["LOW"], responsibilities: ["UNDETERMINED"], transitions: [] }
+        : path.endsWith("/recurrences/summary")
+          ? { totalCases: 0, openCases: 0, highImpactCases: 0, additionalVisits: 0, additionalMinutes: 0, estimatedCost: "0.00", completedBaseOrders: 0, recurrenceRate: "0.00" }
+          : { items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } };
+      return new Response(JSON.stringify({ data }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const user = userEvent.setup();
+    renderWithAuth(<AppShell />);
+    vi.mocked(fetch).mockClear();
+
+    await user.type(screen.getByRole("textbox", { name: "Buscar orden, cliente o técnico" }), "enlace norte");
+
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => {
+      const request = new URL(String(url));
+      return request.pathname.endsWith("/recurrences") && request.searchParams.get("search") === "enlace norte";
+    })).toBe(true));
+  });
+
   it("monta un unico formulario persistente y restaura el foco al cerrarlo", async () => {
     window.history.replaceState({}, "", "/actividades");
     vi.mocked(fetch).mockImplementation(async (input) => {
