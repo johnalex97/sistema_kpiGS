@@ -5,6 +5,7 @@ import type { EvidenceApi } from "../api/evidences";
 import { ApiClientError } from "../api/http";
 import type { RecurrenceLookupApi } from "../api/recurrence-lookups";
 import type { RecurrenceApi } from "../api/recurrences";
+import type { Evidence } from "../models/evidence";
 import type { RecurrenceCatalog, RecurrenceDetail, RecurrencePage, RecurrenceSummaryMetrics } from "../models/recurrence";
 import { useRecurrencesWorkspace } from "./useRecurrencesWorkspace";
 
@@ -64,6 +65,23 @@ const summary: RecurrenceSummaryMetrics = {
   estimatedCost: "0.00",
   completedBaseOrders: 10,
   recurrenceRate: "10.00",
+};
+
+const uploadedEvidence: Evidence = {
+  id: "evidence-1",
+  originalName: "router.png",
+  mimeType: "image/png",
+  fileExtension: "png",
+  sizeBytes: 120,
+  description: null,
+  accessLevel: "TECHNICIAN",
+  uploadedBy: { id: "user-1", displayName: "Ana López" },
+  resourceType: "RECURRENCE",
+  resourceId: recurrenceId,
+  checksumSha256: "abc",
+  version: 2,
+  createdAt: "2026-09-01T10:00:00.000Z",
+  updatedAt: "2026-09-01T10:00:00.000Z",
 };
 
 interface Deferred<T> {
@@ -729,5 +747,132 @@ describe("useRecurrencesWorkspace", () => {
     expect(signal.aborted).toBe(true);
     pending.resolve({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } });
     await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("reports once, publishes version 1, selects the detail in URL and refreshes list and summary", async () => {
+    const pending = deferred<RecurrenceDetail>();
+    const api = recurrenceApi({ report: vi.fn(() => pending.promise) });
+    const { result } = renderWorkspace({
+      api,
+      permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REPORT_OWN", "ORDERS_VIEW_OWN", "EVIDENCES_UPLOAD"],
+    });
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    const input = { originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "Falla repetida" };
+
+    let first!: Promise<boolean>;
+    let duplicate!: Promise<boolean>;
+    act(() => {
+      first = result.current.reportRecurrence(input);
+      duplicate = result.current.reportRecurrence(input);
+    });
+    await expect(duplicate).resolves.toBe(false);
+    expect(api.report).toHaveBeenCalledTimes(1);
+    pending.resolve({ ...detail, version: 1 });
+    await expect(first).resolves.toBe(true);
+
+    await waitFor(() => expect(result.current.selected).toMatchObject({ id: recurrenceId, version: 1 }));
+    expect(result.current.detailState).toBe("ready");
+    expect(result.current.query.selectedId).toBe(recurrenceId);
+    expect(new URLSearchParams(window.location.search).get("recurrenceSelectedId")).toBe(recurrenceId);
+    expect(result.current.evidencePromptForId).toBe(recurrenceId);
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+    expect(api.summary).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["RECURRENCE_DUPLICATE", "Ya existe una reincidencia para estas órdenes."],
+    ["RECURRENCE_ORDER_MISMATCH", "Las órdenes no corresponden al mismo cliente y sucursal."],
+    ["ORDER_NOT_FOUND", "Una de las órdenes ya no está disponible."],
+  ])("translates report error %s and keeps report mode open", async (code, message) => {
+    const api = recurrenceApi({ report: vi.fn().mockRejectedValue(new ApiClientError(code === "ORDER_NOT_FOUND" ? 404 : 409, code, "interno")) });
+    const { result } = renderWorkspace({
+      api,
+      permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REPORT_OWN", "ORDERS_VIEW_OWN"],
+    });
+    act(() => result.current.setActionMode("report"));
+    await act(async () => {
+      expect(await result.current.reportRecurrence({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "Falla" })).toBe(false);
+    });
+
+    expect(result.current.actionMode).toBe("report");
+    expect(result.current.mutation).toMatchObject({ name: "report", pending: false, error: message });
+  });
+
+  it("prevents report and evidence mutations after their permissions are revoked", async () => {
+    const api = recurrenceApi({ report: vi.fn().mockResolvedValue(detail) });
+    const rawEvidence = evidenceApi({ uploadRecurrence: vi.fn().mockResolvedValue(uploadedEvidence), archive: vi.fn().mockResolvedValue(uploadedEvidence) });
+    const stableOptions = options({ api, evidenceApi: rawEvidence });
+    const { result, rerender } = renderHook(
+      ({ permissions }) => useRecurrencesWorkspace({ ...stableOptions, permissions }),
+      { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REPORT_OWN", "ORDERS_VIEW_OWN", "EVIDENCES_UPLOAD", "EVIDENCES_MANAGE"] } },
+    );
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL"] });
+    await flushPromises();
+
+    await expect(result.current.reportRecurrence({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "Falla" })).resolves.toBe(false);
+    await expect(result.current.uploadEvidence({ file: new File(["x"], "x.png", { type: "image/png" }), accessLevel: "TECHNICIAN" })).resolves.toBe(false);
+    await expect(result.current.archiveEvidence(uploadedEvidence, "Duplicada")).resolves.toBe(false);
+    expect(api.report).not.toHaveBeenCalled();
+    expect(rawEvidence.uploadRecurrence).not.toHaveBeenCalled();
+    expect(rawEvidence.archive).not.toHaveBeenCalled();
+  });
+
+  it("keeps the evidence prompt after upload failure, retries the same case and rejects INTERNAL without manage", async () => {
+    const rawEvidence = evidenceApi({
+      uploadRecurrence: vi.fn()
+        .mockRejectedValueOnce(new Error("storage privado"))
+        .mockResolvedValueOnce(uploadedEvidence),
+    });
+    const api = recurrenceApi({ report: vi.fn().mockResolvedValue(detail) });
+    const { result } = renderWorkspace({
+      api,
+      evidenceApi: rawEvidence,
+      permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REPORT_OWN", "ORDERS_VIEW_ALL", "EVIDENCES_UPLOAD"],
+    });
+    await act(async () => {
+      await result.current.reportRecurrence({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "Falla" });
+    });
+    const technicianInput = { file: new File(["x"], "router.png", { type: "image/png" as const }), accessLevel: "TECHNICIAN" as const };
+
+    await act(async () => expect(await result.current.uploadEvidence(technicianInput)).toBe(false));
+    expect(result.current.evidencePromptForId).toBe(recurrenceId);
+    expect(result.current.mutation).toMatchObject({ name: "evidence", error: "No fue posible subir la evidencia." });
+    await act(async () => expect(await result.current.uploadEvidence(technicianInput)).toBe(true));
+    expect(rawEvidence.uploadRecurrence).toHaveBeenNthCalledWith(2, recurrenceId, technicianInput);
+    expect(result.current.evidencePromptForId).toBeNull();
+
+    await act(async () => expect(await result.current.uploadEvidence({ ...technicianInput, accessLevel: "INTERNAL" })).toBe(false));
+    expect(rawEvidence.uploadRecurrence).toHaveBeenCalledTimes(2);
+    expect(result.current.mutation?.error).toBe("No tienes permiso para subir evidencia interna.");
+  });
+
+  it("downloads with a safe filename and always revokes the object URL", async () => {
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:recurrence-evidence");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    let downloadName: string | undefined;
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloadName = this.download;
+    });
+    const rawEvidence = evidenceApi({ download: vi.fn().mockResolvedValue({ blob: new Blob(["x"]), filename: "../\u0000informe.pdf" }) });
+    const { result } = renderWorkspace({ evidenceApi: rawEvidence, permissions: ["RECURRENCES_VIEW_ALL", "EVIDENCES_VIEW"] });
+
+    await act(async () => expect(await result.current.downloadEvidence({ ...uploadedEvidence, originalName: "fallback.png" })).toBe(true));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(downloadName).toBe("informe.pdf");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:recurrence-evidence");
+    click.mockRestore();
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+  });
+
+  it("archives evidence with its version and a normalized reason", async () => {
+    const rawEvidence = evidenceApi({ archive: vi.fn().mockResolvedValue(uploadedEvidence) });
+    const { result } = renderWorkspace({ evidenceApi: rawEvidence, permissions: ["RECURRENCES_VIEW_ALL", "EVIDENCES_MANAGE"] });
+
+    await act(async () => expect(await result.current.archiveEvidence(uploadedEvidence, "  Documento reemplazado  ")).toBe(true));
+
+    expect(rawEvidence.archive).toHaveBeenCalledWith(uploadedEvidence.id, { version: 2, reason: "Documento reemplazado" });
   });
 });

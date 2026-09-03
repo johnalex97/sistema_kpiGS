@@ -1,11 +1,13 @@
-import { AlertTriangle, RefreshCw, Search } from "lucide-react";
+import { AlertTriangle, FilePlus2, RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
 import { createEvidenceApi, type EvidenceApi } from "../api/evidences";
 import { createRecurrenceLookupApi, type RecurrenceLookupApi } from "../api/recurrence-lookups";
 import { createRecurrenceApi, type RecurrenceApi } from "../api/recurrences";
 import { useAuth } from "../auth/useAuth";
 import { RecurrenceDetail } from "../components/recurrences/RecurrenceDetail";
+import { RecurrenceEvidencePanel } from "../components/recurrences/RecurrenceEvidencePanel";
 import { RecurrenceFilters } from "../components/recurrences/RecurrenceFilters";
+import { RecurrenceReportForm } from "../components/recurrences/RecurrenceReportForm";
 import { RecurrenceSummaryCards } from "../components/recurrences/RecurrenceSummaryCards";
 import { RecurrenceTable } from "../components/recurrences/RecurrenceTable";
 import { useRecurrencesWorkspace, type RecurrencesWorkspace } from "../hooks/useRecurrencesWorkspace";
@@ -52,6 +54,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
   const listRegionRef = useRef<HTMLDivElement | null>(null);
   const previousSelectedIdRef = useRef(workspace.query.selectedId);
+  const reportTriggerRef = useRef<HTMLButtonElement | null>(null);
   const pagination = workspace.page?.pagination;
   const select = workspace.select;
   const closeWorkspaceDetail = workspace.closeDetail;
@@ -81,6 +84,26 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
   const hasDetailRegion = workspace.detailState === "loading"
     || workspace.detailState === "error"
     || workspace.selected !== null;
+  const canOpenReport = workspace.capabilities.canReport && workspace.capabilities.lookupCapabilities.orders;
+  const showReport = canOpenReport && workspace.actionMode === "report";
+  const promptedRecurrence = workspace.evidencePromptForId
+    ? workspace.selected?.id === workspace.evidencePromptForId
+      ? workspace.selected
+      : workspace.page?.items.find((item) => item.id === workspace.evidencePromptForId)
+    : null;
+  const showEvidencePrompt = Boolean(workspace.evidencePromptForId && workspace.capabilities.canUploadEvidence);
+
+  const openReport = (trigger: HTMLButtonElement) => {
+    reportTriggerRef.current = trigger;
+    workspace.clearMutationError();
+    workspace.setActionMode("report");
+  };
+
+  const closeReport = () => {
+    workspace.clearMutationError();
+    workspace.setActionMode(null);
+    reportTriggerRef.current?.focus();
+  };
 
   return <section className="recurrence-workspace" aria-label="Registro de reincidencias">
     <header className="recurrence-workspace__heading">
@@ -89,9 +112,10 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
         <h2>Casos con visitas repetidas</h2>
         <p>Prioriza el impacto y consulta la trazabilidad de cada reincidencia.</p>
       </div>
-      <button className="button button--ghost" type="button" onClick={workspace.retryList}>
-        <RefreshCw size={15} aria-hidden="true" />Actualizar casos
-      </button>
+      <div className="recurrence-workspace__actions">
+        {canOpenReport && <button className="button button--primary" type="button" onClick={(event) => openReport(event.currentTarget)}><FilePlus2 size={16} aria-hidden="true" />Reportar reincidencia</button>}
+        <button className="button button--ghost" type="button" onClick={workspace.retryList}><RefreshCw size={15} aria-hidden="true" />Actualizar casos</button>
+      </div>
     </header>
 
     <RecurrenceSummaryCards metrics={workspace.summary} state={workspace.summaryState} onRetry={workspace.retrySummary} />
@@ -124,5 +148,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
         {workspace.selected && <RecurrenceDetail recurrence={workspace.selected} capabilities={workspace.capabilities} onClose={closeDetail} />}
       </div>}
     </div>
+    {showReport && <div className="recurrence-action-backdrop"><RecurrenceReportForm lookupApi={workspace.lookupApi} apiError={workspace.mutation?.name === "report" ? workspace.mutation.error : null} onCancel={closeReport} onSubmit={workspace.reportRecurrence} /></div>}
+    {showEvidencePrompt && workspace.evidencePromptForId && <div className="recurrence-action-backdrop recurrence-action-backdrop--evidence"><RecurrenceEvidencePanel recurrenceId={workspace.evidencePromptForId} recurrenceNumber={promptedRecurrence?.recurrenceNumber ?? workspace.evidencePromptForId} evidences={[]} canView={workspace.capabilities.canViewEvidence} canManage={workspace.capabilities.canManageEvidence} error={workspace.mutation?.name === "evidence" ? workspace.mutation.error : null} onUpload={workspace.uploadEvidence} onDownload={workspace.downloadEvidence} onArchive={workspace.archiveEvidence} onClose={workspace.clearEvidencePrompt} /></div>}
   </section>;
 }

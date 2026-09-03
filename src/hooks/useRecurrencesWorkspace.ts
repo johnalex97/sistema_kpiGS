@@ -7,6 +7,7 @@ import {
   type RecurrenceLookupOperation,
 } from "../api/recurrence-lookups";
 import type { RecurrenceApi } from "../api/recurrences";
+import type { Evidence, EvidenceUploadInput } from "../models/evidence";
 import type {
   RecurrenceCatalog,
   RecurrenceDetail,
@@ -14,6 +15,7 @@ import type {
   RecurrencePage,
   RecurrenceSummaryFilters,
   RecurrenceSummaryMetrics,
+  ReportRecurrenceInput,
 } from "../models/recurrence";
 import {
   parseRecurrenceSearch,
@@ -55,6 +57,7 @@ export interface RecurrencesWorkspace {
   detailState: LoadState;
   listStale: boolean;
   mutation: RecurrenceMutationState | null;
+  evidencePromptForId: string | null;
   capabilities: RecurrenceCapabilities;
   actionMode: RecurrenceActionMode | null;
   lookupApi: RecurrenceLookupApi;
@@ -66,6 +69,11 @@ export interface RecurrencesWorkspace {
   retryList(): void;
   retrySummary(): void;
   retryDetail(): void;
+  reportRecurrence(input: ReportRecurrenceInput): Promise<boolean>;
+  uploadEvidence(input: EvidenceUploadInput): Promise<boolean>;
+  downloadEvidence(evidence: Evidence): Promise<boolean>;
+  archiveEvidence(evidence: Evidence, reason: string): Promise<boolean>;
+  clearEvidencePrompt(): void;
   setActionMode(mode: RecurrenceActionMode | null): void;
   clearMutationError(): void;
 }
@@ -175,6 +183,40 @@ function actionAllowed(mode: RecurrenceActionMode, capabilities: RecurrenceCapab
   return capabilities.canReview;
 }
 
+function reportMutationError(error: unknown): { message: string; conflict: boolean } {
+  if (!(error instanceof ApiClientError)) return { message: "No fue posible reportar la reincidencia.", conflict: false };
+  const messages: Record<string, string> = {
+    RECURRENCE_DUPLICATE: "Ya existe una reincidencia para estas órdenes.",
+    RECURRENCE_ORDER_MISMATCH: "Las órdenes no corresponden al mismo cliente y sucursal.",
+    ORDER_NOT_FOUND: "Una de las órdenes ya no está disponible.",
+  };
+  if (error.status === 403) return { message: "No tienes permiso para reportar reincidencias.", conflict: false };
+  return { message: messages[error.code] ?? "No fue posible reportar la reincidencia.", conflict: error.status === 409 };
+}
+
+function evidenceMutationError(error: unknown, action: "upload" | "download" | "archive"): { message: string; conflict: boolean } {
+  const fallback = action === "upload"
+    ? "No fue posible subir la evidencia."
+    : action === "download" ? "No fue posible descargar la evidencia." : "No fue posible archivar la evidencia.";
+  if (!(error instanceof ApiClientError)) return { message: fallback, conflict: false };
+  if (error.status === 403) return { message: "No tienes permiso para realizar esta acción con evidencia.", conflict: false };
+  if (error.code === "VERSION_CONFLICT") return { message: "La evidencia cambió en el servidor. Actualiza el caso antes de continuar.", conflict: true };
+  if (error.code === "EVIDENCE_NOT_FOUND") return { message: "La evidencia ya no está disponible.", conflict: false };
+  if (error.code === "EVIDENCE_TOO_LARGE") return { message: "El archivo no puede superar 10 MiB.", conflict: false };
+  if (error.code === "INVALID_EVIDENCE_FILE") return { message: "El archivo debe ser JPEG, PNG, WebP o PDF.", conflict: false };
+  return { message: fallback, conflict: error.status === 409 };
+}
+
+function safeDownloadFilename(value: string): string {
+  const cleaned = Array.from(value).filter((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && codePoint > 0x1f && codePoint !== 0x7f;
+  }).join("");
+  const segments = cleaned.trim().split(/[\\/]/);
+  const candidate = segments[segments.length - 1]?.trim();
+  return candidate && candidate !== "." && candidate !== ".." ? candidate : "evidencia";
+}
+
 export function useRecurrencesWorkspace({
   api,
   evidenceApi: rawEvidenceApi,
@@ -202,6 +244,7 @@ export function useRecurrencesWorkspace({
   const [detailState, setDetailState] = useState<LoadState>("idle");
   const [listStale, setListStale] = useState(false);
   const [mutation, setMutation] = useState<RecurrenceMutationState | null>(null);
+  const [evidencePrompt, setEvidencePrompt] = useState<{ id: string; permissionsKey: string } | null>(null);
   const [actionMode, setActionModeState] = useState<RecurrenceActionMode | null>(null);
 
   const permissionsKey = permissionKey(permissions);
@@ -234,6 +277,8 @@ export function useRecurrencesWorkspace({
   const auxiliaryGenerationRef = useRef(0);
   const auxiliaryRequestsRef = useRef(new Map<string, AuxiliaryRequest>());
   const previousPermissionsKeyRef = useRef(permissionsKey);
+  const mutationPendingRef = useRef(false);
+  const evidencePromptRef = useRef<string | null>(null);
 
   const invalidateList = useCallback(() => {
     listGenerationRef.current += 1;
@@ -430,6 +475,7 @@ export function useRecurrencesWorkspace({
       (controlledSignal) => rawEvidenceApi.listRecurrence(recurrenceId, evidencePage, controlledSignal),
     ),
     uploadRecurrence: (recurrenceId, input) => capabilitiesRef.current.canUploadEvidence
+      && (input.accessLevel !== "INTERNAL" || capabilitiesRef.current.canManageEvidence)
       ? rawEvidenceApi.uploadRecurrence(recurrenceId, input)
       : Promise.reject(new RecurrencePermissionError()),
     download: (id, signal) => runAuxiliary(
@@ -459,6 +505,9 @@ export function useRecurrencesWorkspace({
     });
     auxiliaryRequestsRef.current.clear();
     setActionModeState((current) => current && !actionAllowed(current, capabilities) ? null : current);
+    if (!capabilities.canUploadEvidence) {
+      evidencePromptRef.current = null;
+    }
   }, [capabilities, permissionsKey]);
 
   useEffect(() => {
@@ -646,6 +695,144 @@ export function useRecurrencesWorkspace({
     }
   }, [loadDetail]);
 
+  const reportRecurrence = useCallback(async (input: ReportRecurrenceInput): Promise<boolean> => {
+    if (mutationPendingRef.current) return false;
+    if (!actionAllowed("report", capabilitiesRef.current)) {
+      setMutation({ name: "report", pending: false, error: "No tienes permiso para reportar reincidencias.", conflict: false });
+      return false;
+    }
+    mutationPendingRef.current = true;
+    setMutation({ name: "report", pending: true, error: null, conflict: false });
+    try {
+      const incoming = await api.report(input);
+      invalidateDetail();
+      selectedIdRef.current = incoming.id;
+      selectedRef.current = incoming;
+      setSelected(incoming);
+      setDetailState("ready");
+      const current = queryRef.current;
+      const next = { ...current, selectedId: incoming.id };
+      queryRef.current = next;
+      setQuery(next);
+      setActionModeState(null);
+      const promptId = capabilitiesRef.current.canUploadEvidence ? incoming.id : null;
+      evidencePromptRef.current = promptId;
+      setEvidencePrompt(promptId ? { id: promptId, permissionsKey: previousPermissionsKeyRef.current } : null);
+      setMutation({ name: "report", pending: false, error: null, conflict: false });
+
+      const requestedSummary = createSummarySnapshot(summaryFilters(current.filters));
+      const requestedList = createListSnapshot(current.filters, requestedSummary);
+      setListState("loading");
+      setListStale(false);
+      setSummaryState("loading");
+      void loadList(listKey(current.filters), requestedList);
+      void loadSummary(requestedSummary);
+      return true;
+    } catch (error: unknown) {
+      const failure = reportMutationError(error);
+      setMutation({ name: "report", pending: false, error: failure.message, conflict: failure.conflict });
+      return false;
+    } finally {
+      mutationPendingRef.current = false;
+    }
+  }, [api, invalidateDetail, loadList, loadSummary]);
+
+  const uploadEvidence = useCallback(async (input: EvidenceUploadInput): Promise<boolean> => {
+    if (mutationPendingRef.current) return false;
+    const targetId = evidencePromptRef.current ?? selectedIdRef.current;
+    if (!capabilitiesRef.current.canUploadEvidence || !targetId) {
+      setMutation({ name: "evidence", pending: false, error: "No tienes permiso para subir evidencia.", conflict: false });
+      return false;
+    }
+    if (input.accessLevel === "INTERNAL" && !capabilitiesRef.current.canManageEvidence) {
+      setMutation({ name: "evidence", pending: false, error: "No tienes permiso para subir evidencia interna.", conflict: false });
+      return false;
+    }
+    mutationPendingRef.current = true;
+    setMutation({ name: "evidence", pending: true, error: null, conflict: false });
+    try {
+      await rawEvidenceApi.uploadRecurrence(targetId, input);
+      if (evidencePromptRef.current === targetId) {
+        evidencePromptRef.current = null;
+        setEvidencePrompt(null);
+      }
+      setMutation({ name: "evidence", pending: false, error: null, conflict: false });
+      if (selectedIdRef.current === targetId) void loadDetail(targetId, true);
+      return true;
+    } catch (error: unknown) {
+      const failure = evidenceMutationError(error, "upload");
+      setMutation({ name: "evidence", pending: false, error: failure.message, conflict: failure.conflict });
+      return false;
+    } finally {
+      mutationPendingRef.current = false;
+    }
+  }, [loadDetail, rawEvidenceApi]);
+
+  const downloadEvidence = useCallback(async (item: Evidence): Promise<boolean> => {
+    if (mutationPendingRef.current) return false;
+    if (!capabilitiesRef.current.canViewEvidence) {
+      setMutation({ name: "evidence", pending: false, error: "No tienes permiso para descargar evidencia.", conflict: false });
+      return false;
+    }
+    mutationPendingRef.current = true;
+    setMutation({ name: "evidence", pending: true, error: null, conflict: false });
+    let objectUrl: string | null = null;
+    let anchor: HTMLAnchorElement | null = null;
+    try {
+      const downloaded = await rawEvidenceApi.download(item.id);
+      objectUrl = URL.createObjectURL(downloaded.blob);
+      anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = safeDownloadFilename(downloaded.filename ?? item.originalName);
+      anchor.hidden = true;
+      document.body.append(anchor);
+      anchor.click();
+      setMutation({ name: "evidence", pending: false, error: null, conflict: false });
+      return true;
+    } catch (error: unknown) {
+      const failure = evidenceMutationError(error, "download");
+      setMutation({ name: "evidence", pending: false, error: failure.message, conflict: failure.conflict });
+      return false;
+    } finally {
+      anchor?.remove();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      mutationPendingRef.current = false;
+    }
+  }, [rawEvidenceApi]);
+
+  const archiveEvidence = useCallback(async (item: Evidence, rawReason: string): Promise<boolean> => {
+    if (mutationPendingRef.current) return false;
+    if (!capabilitiesRef.current.canManageEvidence) {
+      setMutation({ name: "evidence", pending: false, error: "No tienes permiso para archivar evidencia.", conflict: false });
+      return false;
+    }
+    const reason = rawReason.trim();
+    if (reason.length < 10 || reason.length > 500) {
+      setMutation({ name: "evidence", pending: false, error: "El motivo para archivar debe tener entre 10 y 500 caracteres.", conflict: false });
+      return false;
+    }
+    mutationPendingRef.current = true;
+    setMutation({ name: "evidence", pending: true, error: null, conflict: false });
+    try {
+      await rawEvidenceApi.archive(item.id, { version: item.version, reason });
+      setMutation({ name: "evidence", pending: false, error: null, conflict: false });
+      if (selectedIdRef.current === item.resourceId) void loadDetail(item.resourceId, true);
+      return true;
+    } catch (error: unknown) {
+      const failure = evidenceMutationError(error, "archive");
+      setMutation({ name: "evidence", pending: false, error: failure.message, conflict: failure.conflict });
+      return false;
+    } finally {
+      mutationPendingRef.current = false;
+    }
+  }, [loadDetail, rawEvidenceApi]);
+
+  const clearEvidencePrompt = useCallback(() => {
+    evidencePromptRef.current = null;
+    setEvidencePrompt(null);
+    setMutation((current) => current?.name === "evidence" ? null : current);
+  }, []);
+
   const setActionMode = useCallback((mode: RecurrenceActionMode | null) => {
     setActionModeState(mode && actionAllowed(mode, capabilitiesRef.current) ? mode : null);
   }, []);
@@ -664,6 +851,9 @@ export function useRecurrencesWorkspace({
     detailState,
     listStale,
     mutation,
+    evidencePromptForId: capabilities.canUploadEvidence && evidencePrompt?.permissionsKey === permissionsKey
+      ? evidencePrompt.id
+      : null,
     capabilities,
     actionMode,
     lookupApi,
@@ -675,6 +865,11 @@ export function useRecurrencesWorkspace({
     retryList,
     retrySummary,
     retryDetail,
+    reportRecurrence,
+    uploadEvidence,
+    downloadEvidence,
+    archiveEvidence,
+    clearEvidencePrompt,
     setActionMode,
     clearMutationError,
   };

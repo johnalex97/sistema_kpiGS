@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "../auth/AuthContext";
 import type { RecurrencesWorkspace } from "../hooks/useRecurrencesWorkspace";
+import type { OrderLookup } from "../models/order-lookup";
 import type { RecurrenceDetail, RecurrenceSummary } from "../models/recurrence";
 import { RecurrencesPage } from "./RecurrencesPage";
 import "../styles.css";
@@ -70,6 +71,7 @@ function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWo
     detailState: "idle",
     listStale: false,
     mutation: null,
+    evidencePromptForId: null,
     capabilities: {
       canReport: false,
       canReview: false,
@@ -80,7 +82,12 @@ function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWo
       lookupCapabilities: { orders: false, technicians: false, clients: false, branches: false },
     },
     actionMode: null,
-    lookupApi: {} as RecurrencesWorkspace["lookupApi"],
+    lookupApi: {
+      orders: vi.fn().mockResolvedValue({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } }),
+      technicians: vi.fn(),
+      clients: vi.fn(),
+      branches: vi.fn(),
+    } as RecurrencesWorkspace["lookupApi"],
     evidenceApi: {} as RecurrencesWorkspace["evidenceApi"],
     setFilters: vi.fn(),
     select: vi.fn(),
@@ -89,6 +96,11 @@ function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWo
     retryList: vi.fn(),
     retrySummary: vi.fn(),
     retryDetail: vi.fn(),
+    reportRecurrence: vi.fn(async () => true),
+    uploadEvidence: vi.fn(async () => true),
+    downloadEvidence: vi.fn(async () => true),
+    archiveEvidence: vi.fn(async () => true),
+    clearEvidencePrompt: vi.fn(),
     setActionMode: vi.fn(),
     clearMutationError: vi.fn(),
     ...overrides,
@@ -215,5 +227,89 @@ describe("RecurrencesPage", () => {
     expect(screen.queryByLabelText("Técnico")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /reportar reincidencia/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /analizar caso/i })).not.toBeInTheDocument();
+  });
+
+  it("opens report only with the orders prerequisite and submits the selected pair", async () => {
+    const user = userEvent.setup();
+    const original: OrderLookup = { id: "order-1", orderNumber: "OT-100", clientName: "Hospital Norte", branchName: "Central", status: "COMPLETED" };
+    const correction: OrderLookup = { id: "order-2", orderNumber: "OT-200", clientName: "Hospital Norte", branchName: "Central", status: "IN_PROGRESS" };
+    const orders = vi.fn(async (_search: string, statuses: string[]) => ({
+      items: statuses.length === 1 ? [original] : [correction],
+      pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+    }));
+    const current = workspace({
+      capabilities: { ...workspace().capabilities, canReport: true, lookupCapabilities: { ...workspace().capabilities.lookupCapabilities, orders: true } },
+      lookupApi: { orders } as unknown as RecurrencesWorkspace["lookupApi"],
+    });
+    const rendered = render(view(current));
+
+    const trigger = screen.getByRole("button", { name: "Reportar reincidencia" });
+    await user.click(trigger);
+    expect(current.setActionMode).toHaveBeenCalledWith("report");
+    rendered.rerender(view({ ...current, actionMode: "report" }));
+    await user.click(screen.getByRole("combobox", { name: "Orden original" }));
+    await user.click(await screen.findByRole("option", { name: /OT-100/ }));
+    await user.click(screen.getByRole("combobox", { name: "Orden correctiva" }));
+    await user.click(await screen.findByRole("option", { name: /OT-200/ }));
+    await user.type(screen.getByLabelText("Problema detectado"), "La falla reapareció");
+    await user.click(within(screen.getByRole("dialog", { name: "Reportar reincidencia" })).getByRole("button", { name: "Reportar reincidencia" }));
+
+    expect(current.reportRecurrence).toHaveBeenCalledWith({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "La falla reapareció" });
+  });
+
+  it("shows immediate evidence for the created detail and restores focus when skipped", async () => {
+    const user = userEvent.setup();
+    const current = workspace({
+      selected: { ...selected, id: "rec-created", recurrenceNumber: "RI-2026-0042", version: 1 },
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: "rec-created" },
+      detailState: "ready",
+      evidencePromptForId: "rec-created",
+      capabilities: { ...workspace().capabilities, canUploadEvidence: true },
+    });
+    render(view(current));
+
+    expect(screen.getByRole("heading", { name: "Agregar evidencia" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Caso creado · evidencia pendiente");
+    await user.click(screen.getByRole("button", { name: "Continuar sin evidencia" }));
+    expect(current.clearEvidencePrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes report and evidence dialogs immediately when permissions are revoked", () => {
+    const allowed = workspace({
+      actionMode: "report",
+      evidencePromptForId: "rec-1",
+      selected,
+      detailState: "ready",
+      capabilities: {
+        ...workspace().capabilities,
+        canReport: true,
+        canUploadEvidence: true,
+        lookupCapabilities: { ...workspace().capabilities.lookupCapabilities, orders: true },
+      },
+    });
+    const rendered = render(view(allowed));
+    expect(screen.getByRole("dialog", { name: "Reportar reincidencia" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Agregar evidencia" })).toBeInTheDocument();
+
+    rendered.rerender(view(workspace({ actionMode: "report", evidencePromptForId: "rec-1", selected, detailState: "ready" })));
+    expect(screen.queryByRole("dialog", { name: "Reportar reincidencia" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Agregar evidencia" })).not.toBeInTheDocument();
+  });
+
+  it("keeps report actions and fields touch-safe inside an operational modal layer", async () => {
+    const user = userEvent.setup();
+    const current = workspace({
+      capabilities: { ...workspace().capabilities, canReport: true, lookupCapabilities: { ...workspace().capabilities.lookupCapabilities, orders: true } },
+    });
+    const rendered = render(view(current));
+    const trigger = screen.getByRole("button", { name: "Reportar reincidencia" });
+    expect(getComputedStyle(trigger).minHeight).toBe("44px");
+    await user.click(trigger);
+    rendered.rerender(view({ ...current, actionMode: "report" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Reportar reincidencia" });
+    expect(getComputedStyle(dialog.parentElement as HTMLElement).position).toBe("fixed");
+    expect(getComputedStyle(within(dialog).getByRole("combobox", { name: "Orden original" })).minHeight).toBe("44px");
+    expect(getComputedStyle(within(dialog).getByRole("button", { name: "Cancelar" })).minHeight).toBe("44px");
   });
 });
