@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "../auth/AuthContext";
@@ -151,13 +151,33 @@ describe("RecurrencesPage", () => {
 
     expect(screen.getByRole("status", { name: "Cargando casos" })).toBeInTheDocument();
     rendered.rerender(view(empty));
-    expect(screen.getByText("No hay reincidencias para estos filtros")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Sin casos" })).toHaveAttribute("aria-live", "polite");
     rendered.rerender(view(error));
     expect(screen.getByRole("alert")).toHaveTextContent("No fue posible cargar los casos");
     await user.click(screen.getByRole("button", { name: "Reintentar casos" }));
     expect(error.retryList).toHaveBeenCalledTimes(1);
     rendered.rerender(view(stale));
     expect(screen.getByRole("status")).toHaveTextContent("datos pueden estar desactualizados");
+  });
+
+  it("restaura un foco seguro cuando el detalle proviene de URL o popstate", async () => {
+    const direct = workspace({
+      selected,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: "rec-1" },
+    });
+    const rendered = render(view(direct));
+
+    await userEvent.click(screen.getByRole("button", { name: "Cerrar detalle" }));
+    expect(screen.getByLabelText("Casos registrados")).toHaveFocus();
+
+    rendered.rerender(view(workspace({
+      selected,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: "rec-1" },
+    })));
+    rendered.rerender(view(workspace()));
+    await waitFor(() => expect(screen.getByLabelText("Casos registrados")).toHaveFocus());
   });
 
   it("reintenta resumen, catálogo y detalle sólo en su región afectada", async () => {

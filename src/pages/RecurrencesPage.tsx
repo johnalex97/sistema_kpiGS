@@ -1,5 +1,5 @@
 import { AlertTriangle, RefreshCw, Search } from "lucide-react";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { createEvidenceApi, type EvidenceApi } from "../api/evidences";
 import { createRecurrenceLookupApi, type RecurrenceLookupApi } from "../api/recurrence-lookups";
 import { createRecurrenceApi, type RecurrenceApi } from "../api/recurrences";
@@ -50,6 +50,8 @@ export function RecurrencesPage({ workspace, ...props }: RecurrencesPageProps) {
 
 function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspace }) {
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const previousSelectedIdRef = useRef(workspace.query.selectedId);
   const pagination = workspace.page?.pagination;
   const select = workspace.select;
   const closeWorkspaceDetail = workspace.closeDetail;
@@ -59,10 +61,22 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     select(id);
   }, [select]);
 
+  const restoreFocus = useCallback(() => {
+    const trigger = lastTriggerRef.current;
+    if (trigger?.isConnected) trigger.focus();
+    else listRegionRef.current?.focus();
+  }, []);
+
   const closeDetail = useCallback(() => {
     closeWorkspaceDetail();
-    lastTriggerRef.current?.focus();
-  }, [closeWorkspaceDetail]);
+    restoreFocus();
+  }, [closeWorkspaceDetail, restoreFocus]);
+
+  useEffect(() => {
+    const previous = previousSelectedIdRef.current;
+    previousSelectedIdRef.current = workspace.query.selectedId;
+    if (previous && !workspace.query.selectedId) restoreFocus();
+  }, [restoreFocus, workspace.query.selectedId]);
 
   const hasDetailRegion = workspace.detailState === "loading"
     || workspace.detailState === "error"
@@ -90,11 +104,11 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     </div>}
 
     <div className={`recurrence-register${hasDetailRegion ? " recurrence-register--with-detail" : ""}`}>
-      <div className="recurrence-register__list" aria-label="Casos registrados">
+      <div className="recurrence-register__list" aria-label="Casos registrados" tabIndex={-1} ref={listRegionRef}>
         {workspace.listState === "loading" && !workspace.page && <div className="recurrence-list-state" role="status" aria-label="Cargando casos"><span aria-hidden="true" />Cargando casos de reincidencia…</div>}
         {workspace.listState === "loading" && workspace.page && <div className="recurrence-list-refreshing" role="status"><RefreshCw size={14} aria-hidden="true" />Actualizando casos…</div>}
         {workspace.listState === "error" && !workspace.page && <div className="recurrence-list-state recurrence-list-state--error" role="alert"><AlertTriangle size={23} aria-hidden="true" /><strong>No fue posible cargar los casos</strong><p>Reintenta para recuperar el registro de reincidencias.</p><button className="button button--ghost" type="button" onClick={workspace.retryList}>Reintentar casos</button></div>}
-        {workspace.listState === "empty" && <div className="recurrence-list-state"><Search size={24} aria-hidden="true" /><strong>No hay reincidencias para estos filtros</strong><p>Ajusta los filtros para ampliar la consulta.</p></div>}
+        {workspace.listState === "empty" && <div className="recurrence-list-state" role="status" aria-live="polite" aria-label="Sin casos"><Search size={24} aria-hidden="true" /><strong>No hay reincidencias para estos filtros</strong><p>Ajusta los filtros para ampliar la consulta.</p></div>}
         {workspace.page && workspace.page.items.length > 0 && <RecurrenceTable recurrences={workspace.page.items} onSelect={openDetail} />}
 
         {pagination && pagination.totalPages > 1 && <nav className="recurrence-pagination" aria-label="Paginación de reincidencias">

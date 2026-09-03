@@ -38,13 +38,14 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">Saltar al contenido principal</a>
       <Sidebar page={page} visiblePages={visiblePages} onChange={changePage} open={mobileOpen} onClose={() => setMobileOpen(false)} />
-      <main>
+      <main id="main-content" tabIndex={-1}>
         <header className="topbar">
           <button className="icon-button mobile-menu" type="button" aria-label="Abrir menú" onClick={() => setMobileOpen(true)}><Menu size={21} /></button>
           <div className="breadcrumb"><span>Geek Solution</span><b>/</b><strong>{page}</strong></div>
           <div className="topbar-actions">
-            <label className="search"><Search size={17} aria-hidden="true" /><span className="sr-only">Buscar orden, cliente o técnico</span><input name="query" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar orden, cliente…" aria-label="Buscar orden, cliente o técnico" /><kbd aria-hidden="true">⌘ K</kbd></label>
+            <label className="search"><Search size={17} aria-hidden="true" /><span className="sr-only">Buscar orden, cliente o técnico</span><input name="query" autoComplete="off" spellCheck={false} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar orden, cliente…" aria-label="Buscar orden, cliente o técnico" /><kbd aria-hidden="true">⌘ K</kbd></label>
             <button className="icon-button notification" type="button" aria-label="Notificaciones"><Bell size={19} /><i /></button>
             <ProfileMenu />
           </div>

@@ -1,6 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecurrenceCapabilities } from "../../hooks/useRecurrencesWorkspace";
 import type {
   RecurrenceCatalog,
@@ -15,13 +15,13 @@ import { RecurrenceSummaryCards } from "./RecurrenceSummaryCards";
 import { RecurrenceTable } from "./RecurrenceTable";
 
 const summary: RecurrenceSummaryMetrics = {
-  totalCases: 7,
+  totalCases: 7000,
   openCases: 3,
   highImpactCases: 2,
-  additionalVisits: 5,
+  additionalVisits: 5000,
   additionalMinutes: 375,
-  estimatedCost: "6240.50",
-  completedBaseOrders: 81,
+  estimatedCost: "9007199254740993.25",
+  completedBaseOrders: 81000,
   recurrenceRate: "8.60",
 };
 
@@ -37,7 +37,7 @@ const recurrence: RecurrenceSummary = {
   cause: { id: "cause-1", code: "CABLE", name: "Terminación deficiente" },
   additionalMinutes: 375,
   estimatedCost: "6240.50",
-  visitCount: 3,
+  visitCount: 1234,
   noteCount: 1,
   createdAt: "2026-08-28T15:00:00.000Z",
   updatedAt: "2026-08-30T19:15:00.000Z",
@@ -101,20 +101,24 @@ const capabilities: RecurrenceCapabilities = {
 };
 
 describe("lectura de reincidencias", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("presenta métricas reales con formatos operativos", () => {
     render(<RecurrenceSummaryCards metrics={summary} state="ready" onRetry={vi.fn()} />);
 
     expect(screen.getByText("8.60%")).toBeInTheDocument();
-    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("7,000")).toBeInTheDocument();
     expect(screen.getByText("3 abiertos · 2 de impacto alto")).toBeInTheDocument();
-    expect(screen.getByText("5 visitas · 6 h 15 min")).toBeInTheDocument();
-    expect(screen.getByText("L 6,240.50")).toBeInTheDocument();
+    expect(screen.getByText("5,000 visitas · 6 h 15 min")).toBeInTheDocument();
+    expect(screen.getByText("Costo estimado").parentElement?.textContent).toContain(
+      "L\u00a09,007,199,254,740,993.25",
+    );
   });
 
   it("mantiene los controles accesibles y emite parches que reinician la página", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn<(patch: Partial<RecurrenceListFilters>) => void>();
-    render(<RecurrenceFilters filters={{ page: 3, pageSize: 20 }} catalog={catalog} catalogState="ready" canViewAll onChange={onChange} onRetryCatalog={vi.fn()} />);
+    render(<RecurrenceFilters filters={{ page: 3, pageSize: 20 }} catalog={catalog} catalogState="ready" canViewAll onChange={onChange} onRetryCatalog={vi.fn()} now={() => new Date("2026-09-02T12:00:00-06:00")} />);
 
     await user.selectOptions(screen.getByLabelText("Estado"), "ANALYSIS");
     expect(onChange).toHaveBeenCalledWith({ status: ["ANALYSIS"], page: 1 });
@@ -128,6 +132,35 @@ describe("lectura de reincidencias", () => {
     expect(onChange).toHaveBeenCalledWith({ detectedTo: "2026-08-31T23:59:59.999-06:00", page: 1 });
     expect(screen.getByLabelText("Técnico")).toBeInTheDocument();
     expect(screen.getByLabelText("Cliente")).toBeInTheDocument();
+    expect(screen.getByLabelText("Estado")).toHaveAttribute("name", "recurrenceStatus");
+    expect(screen.getByLabelText("Orden original")).toHaveAttribute("autocomplete", "off");
+    expect(screen.getByLabelText("Orden original")).toHaveAttribute("spellcheck", "false");
+    expect(screen.getByLabelText("Orden original")).toHaveAttribute("placeholder", "Ej. ID de orden…");
+
+    onChange.mockClear();
+    await user.type(screen.getByLabelText("Orden original"), "order-1");
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Aplicar alcance" }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ originalOrderId: "order-1", page: 1 }));
+
+    await user.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      originalOrderId: undefined,
+      detectedFrom: "2026-09-01T00:00:00-06:00",
+      detectedTo: "2026-09-30T23:59:59.999-06:00",
+      page: 1,
+    }));
+  });
+
+  it("conserva el catálogo visible y permite reintentarlo cuando queda obsoleto", async () => {
+    const user = userEvent.setup();
+    const retry = vi.fn();
+    render(<RecurrenceFilters filters={{ page: 1, pageSize: 20 }} catalog={catalog} catalogState="error" canViewAll onChange={vi.fn()} onRetryCatalog={retry} />);
+
+    expect(screen.getByLabelText("Estado")).toBeEnabled();
+    expect(screen.getByRole("status", { name: "Catálogo desactualizado" })).toHaveTextContent("pueden estar desactualizados");
+    await user.click(screen.getByRole("button", { name: "Reintentar filtros" }));
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 
   it("oculta filtros de alcance para una consulta propia", () => {
@@ -148,9 +181,36 @@ describe("lectura de reincidencias", () => {
     expect(screen.getByRole("columnheader", { name: "Orden original" })).toBeInTheDocument();
     expect(screen.getByText("Impacto alto")).toBeInTheDocument();
     expect(screen.getByText("En análisis")).toBeInTheDocument();
+    expect(screen.getByText("1,234")).toBeInTheDocument();
     expect(screen.getByText("6 h 15 min")).toBeInTheDocument();
-    expect(screen.getByText("L 6,240.50")).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /RI-2026-0001/ }).textContent).toContain(
+      "L\u00a06,240.50",
+    );
     await user.click(screen.getByRole("button", { name: "Ver RI-2026-0001" }));
+    expect(onSelect).toHaveBeenCalledWith("rec-1", expect.any(HTMLButtonElement));
+  });
+
+  it("presenta tarjetas semánticas reales en el ancho móvil", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({
+      matches: true,
+      media: "(max-width: 640px)",
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<RecurrenceTable recurrences={[recurrence]} onSelect={onSelect} />);
+
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    const card = screen.getByRole("article", { name: "RI-2026-0001" });
+    expect(within(card).getByText("Orden original")).toBeInTheDocument();
+    expect(within(card).getByText("OT-1831")).toBeInTheDocument();
+    expect(within(card).getByText("Impacto alto")).toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: "Ver RI-2026-0001" }));
     expect(onSelect).toHaveBeenCalledWith("rec-1", expect.any(HTMLButtonElement));
   });
 
@@ -167,10 +227,36 @@ describe("lectura de reincidencias", () => {
     expect(within(dialog).getByText("OT-1844")).toBeInTheDocument();
     expect(within(dialog).getByText("Cliente confirma estabilidad durante 24 horas.")).toBeInTheDocument();
     expect(within(dialog).getByText("certificacion-enlace.pdf")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("certificacion-enlace.pdf").closest("li")?.textContent,
+    ).toContain("512\u00a0KB");
     expect(within(dialog).queryByRole("button", { name: /analizar|corregir|descargar|archivar/i })).not.toBeInTheDocument();
 
     await act(async () => { await user.keyboard("{Escape}"); });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("describe un descarte como flujo alternativo de cuatro pasos y muestra su auditoría", () => {
+    render(<RecurrenceDetail recurrence={{
+      ...detail,
+      status: "DISMISSED",
+      ageOverrideReason: "Incidencia confirmada fuera de la ventana estándar.",
+      dismissalReason: "La visita adicional corresponde a una ampliación solicitada.",
+      dismissedAt: "2026-08-31T13:00:00.000Z",
+    }} capabilities={capabilities} onClose={vi.fn()} />);
+
+    const progress = screen.getByRole("region", { name: "Progreso del caso" });
+    expect(within(progress).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(progress).getByText("Descartado").closest("li")).toHaveAttribute("aria-current", "step");
+    expect(screen.getByText("Incidencia confirmada fuera de la ventana estándar.")).toBeInTheDocument();
+    expect(screen.getByText("La visita adicional corresponde a una ampliación solicitada.")).toBeInTheDocument();
+    expect(screen.getByText("Fecha de descarte")).toBeInTheDocument();
+  });
+
+  it("muestra la fecha de cierre persistida", () => {
+    render(<RecurrenceDetail recurrence={{ ...detail, status: "CLOSED", closedAt: "2026-08-31T14:00:00.000Z" }} capabilities={capabilities} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Fecha de cierre")).toBeInTheDocument();
   });
 
   it("no revela evidencias sin capacidad de lectura", () => {

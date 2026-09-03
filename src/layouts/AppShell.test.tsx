@@ -60,6 +60,17 @@ describe("AppShell", () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/technicians?search=Carla"))).toBe(true));
   });
 
+  it("permite saltar al contenido principal con teclado", async () => {
+    const user = userEvent.setup();
+    renderWithAuth(<AppShell />);
+
+    await user.tab();
+    const skipLink = screen.getByRole("link", { name: "Saltar al contenido principal" });
+    expect(skipLink).toHaveFocus();
+    expect(skipLink).toHaveAttribute("href", "#main-content");
+    expect(screen.getByRole("main")).toHaveAttribute("id", "main-content");
+  });
+
   it("entrega la búsqueda global al registro persistente de reincidencias", async () => {
     window.history.replaceState({}, "", "/reincidencias");
     vi.mocked(fetch).mockImplementation(async (input) => {

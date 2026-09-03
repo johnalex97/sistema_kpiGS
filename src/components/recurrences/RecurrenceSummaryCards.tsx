@@ -1,17 +1,7 @@
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import type { LoadState } from "../../hooks/useRecurrencesWorkspace";
 import type { RecurrenceSummaryMetrics } from "../../models/recurrence";
-
-function formatMinutes(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return `${hours} h ${String(remainder).padStart(2, "0")} min`;
-}
-
-function formatCost(value: string): string {
-  const amount = Number(value);
-  return `L ${Number.isFinite(amount) ? new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount) : value}`;
-}
+import { formatCount, formatCurrency, formatMinutes } from "./recurrence-format";
 
 export interface RecurrenceSummaryCardsProps {
   metrics: RecurrenceSummaryMetrics | null;
@@ -31,10 +21,10 @@ export function RecurrenceSummaryCards({ metrics, state, onRetry }: RecurrenceSu
   if (!metrics) return null;
 
   return <section className="recurrence-summary" aria-label="Resumen de reincidencias">
-    <div className="recurrence-summary__primary"><span className="recurrence-summary__label">Tasa del periodo</span><strong>{metrics.recurrenceRate}%</strong><small>{metrics.totalCases} casos sobre {metrics.completedBaseOrders} órdenes terminadas</small></div>
-    <div><span className="recurrence-summary__label">Casos detectados</span><strong>{metrics.totalCases}</strong><small>{metrics.openCases} abiertos · {metrics.highImpactCases} de impacto alto</small></div>
-    <div><span className="recurrence-summary__label">Carga adicional</span><strong>{metrics.additionalVisits}</strong><small>{metrics.additionalVisits} visitas · {formatMinutes(metrics.additionalMinutes)}</small></div>
-    <div><span className="recurrence-summary__label">Costo estimado</span><strong>{formatCost(metrics.estimatedCost)}</strong><small>Acumulado del periodo filtrado</small></div>
+    <div className="recurrence-summary__primary"><span className="recurrence-summary__label">Tasa del periodo</span><strong>{metrics.recurrenceRate}%</strong><small>{formatCount(metrics.totalCases)} casos sobre {formatCount(metrics.completedBaseOrders)} órdenes terminadas</small></div>
+    <div><span className="recurrence-summary__label">Casos detectados</span><strong>{formatCount(metrics.totalCases)}</strong><small>{formatCount(metrics.openCases)} abiertos · {formatCount(metrics.highImpactCases)} de impacto alto</small></div>
+    <div><span className="recurrence-summary__label">Carga adicional</span><strong>{formatCount(metrics.additionalVisits)}</strong><small>{formatCount(metrics.additionalVisits)} visitas · {formatMinutes(metrics.additionalMinutes)}</small></div>
+    <div><span className="recurrence-summary__label">Costo estimado</span><strong>{formatCurrency(metrics.estimatedCost)}</strong><small>Acumulado del periodo filtrado</small></div>
     {state === "loading" && <p className="recurrence-summary__refreshing" role="status"><RefreshCw size={13} aria-hidden="true" />Actualizando resumen…</p>}
     {state === "error" && <p className="recurrence-summary__warning" role="status"><AlertTriangle size={13} aria-hidden="true" />El resumen visible puede estar desactualizado. <button type="button" onClick={onRetry}>Reintentar</button></p>}
   </section>;

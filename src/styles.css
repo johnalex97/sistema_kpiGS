@@ -22,6 +22,8 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: #eef3f5; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 200; min-height: 44px; padding: 10px 14px; display: inline-flex; align-items: center; border-radius: 7px; color: #fff; background: #0b2340; transform: translateY(calc(-100% - 16px)); transition: transform .16s ease; }
+.skip-link:focus { transform: translateY(0); }
 button, input, select, textarea { font: inherit; }
 button { color: inherit; }
 button, a { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
@@ -342,6 +344,8 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 
 /* Reincidencias: registro operativo. La regla vertical conserva el impacto entre listado y detalle. */
 .recurrence-workspace { min-width: 0; border: 1px solid var(--line); border-radius: 11px; background: #f7fafb; overflow: hidden; }
+.recurrence-workspace button { touch-action: manipulation; }
+.recurrence-summary, .recurrence-table, .recurrence-cards, .recurrence-detail { font-variant-numeric: tabular-nums; }
 .recurrence-workspace__heading { min-height: 91px; padding: 19px 22px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); background: #fff; }
 .recurrence-workspace__heading h2 { margin: 4px 0 0; color: #0b2340; font: 700 22px/1.12 "Bahnschrift", "Arial Narrow", sans-serif; letter-spacing: -.02em; }
 .recurrence-workspace__heading p:last-child { margin: 7px 0 0; color: #657d8c; font-size: 11px; line-height: 1.45; }
@@ -351,10 +355,10 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-summary > div { min-width: 0; min-height: 112px; padding: 18px; display: flex; flex-direction: column; justify-content: center; border-left: 1px solid #dbe5e9; }
 .recurrence-summary > div:first-child { border-left: 0; }
 .recurrence-summary__primary { background: #eefafb; }
-.recurrence-summary__label { color: #6c8390; font: 700 9px/1 "Consolas", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.recurrence-summary__label { color: #6c8390; font: 700 10px/1 "Consolas", monospace; letter-spacing: .08em; text-transform: uppercase; }
 .recurrence-summary strong { margin-top: 11px; color: #0b2340; font: 700 25px/1 "Bahnschrift", "Arial Narrow", sans-serif; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .recurrence-summary__primary strong { color: #087f88; font-size: 32px; }
-.recurrence-summary small { margin-top: 8px; color: #718591; font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; }
+.recurrence-summary small { margin-top: 8px; color: #718591; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
 .recurrence-summary__refreshing, .recurrence-summary__warning { grid-column: 1 / -1; min-height: 34px; margin: 0; padding: 8px 12px; display: flex; align-items: center; gap: 7px; border-top: 1px solid #dbe5e9; color: #476c78; background: #f4fafb; font-size: 10px; }
 .recurrence-summary__warning { color: #8b5b16; background: #fff8eb; }
 .recurrence-summary__warning button { padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
@@ -367,37 +371,42 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 
 .recurrence-filters-region { margin: 14px 22px 0; border: 1px solid #dbe5e9; border-radius: 9px; background: #fff; }
 .recurrence-filters { padding: 13px 14px; display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)) auto; align-items: end; gap: 10px; }
-.recurrence-filters label { min-width: 0; display: grid; gap: 6px; color: #526d7c; font-size: 9px; font-weight: 700; }
-.recurrence-filters input, .recurrence-filters select { width: 100%; min-width: 0; min-height: 40px; padding: 0 9px; border: 1px solid #cfdee3; border-radius: 6px; color: #29485d; background: #fff; font: 10px/1.3 "Segoe UI Variable", "Segoe UI", sans-serif; }
+.recurrence-filters label { min-width: 0; display: grid; gap: 6px; color: #526d7c; font-size: 10px; font-weight: 700; }
+.recurrence-filters input, .recurrence-filters select { width: 100%; min-width: 0; min-height: 40px; padding: 0 9px; border: 1px solid #cfdee3; border-radius: 6px; color: #29485d; background: #fff; font: 11px/1.3 "Segoe UI Variable", "Segoe UI", sans-serif; }
 .recurrence-filters input:focus-visible, .recurrence-filters select:focus-visible, .recurrence-filters button:focus-visible, .recurrence-table__open:focus-visible, .recurrence-detail button:focus-visible, .recurrence-pagination button:focus-visible { outline: 3px solid rgba(9, 174, 180, .24); outline-offset: 2px; border-color: #09aeb4; }
 .recurrence-filters input:disabled, .recurrence-filters select:disabled { color: #82949d; background: #f1f5f6; cursor: wait; }
-.recurrence-filters__scope { grid-column: 1 / -1; padding-top: 10px; display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; border-top: 1px solid #e5ecef; }
-.recurrence-filters__clear { min-height: 40px; padding: 0 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #dbe5e9; border-radius: 6px; color: #496a7c; background: #f7fafb; cursor: pointer; font-size: 9px; font-weight: 700; white-space: nowrap; }
-.recurrence-filters__state { margin: 0; padding: 10px 14px; border-top: 1px solid #e5ecef; color: #607987; font-size: 10px; }
+.recurrence-filters__scope { grid-column: 1 / -1; padding-top: 10px; display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)) auto; align-items: end; gap: 10px; border-top: 1px solid #e5ecef; }
+.recurrence-filters__clear, .recurrence-filters__apply { min-height: 40px; padding: 0 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #dbe5e9; border-radius: 6px; color: #496a7c; background: #f7fafb; cursor: pointer; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.recurrence-filters__apply { border-color: #a8d7da; color: #086f77; background: #eefafb; }
+.recurrence-filters__clear:hover, .recurrence-filters__apply:hover { border-color: #8dcfd2; background: #e8f7f8; }
+.recurrence-filters__state { margin: 0; padding: 10px 14px; border-top: 1px solid #e5ecef; color: #607987; font-size: 11px; }
 .recurrence-filters__state--error { display: flex; align-items: center; gap: 8px; color: #913f32; background: #fff7f5; }
 .recurrence-filters__state--error button { margin-left: auto; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; }
+.recurrence-filters__state--stale { display: flex; align-items: center; gap: 8px; color: #78531b; background: #fff7e8; }
+.recurrence-filters__state--stale button { margin-left: auto; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 
-.recurrence-stale { margin: 12px 22px 0; padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-left: 4px solid #d99426; border-radius: 5px; color: #78531b; background: #fff7e8; font-size: 10px; }
+.recurrence-stale { margin: 12px 22px 0; padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-left: 4px solid #d99426; border-radius: 5px; color: #78531b; background: #fff7e8; font-size: 11px; }
 .recurrence-stale button { margin-left: auto; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .recurrence-register { margin: 14px 22px 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .recurrence-register--with-detail { grid-template-columns: minmax(0, 1.55fr) minmax(330px, .75fr); align-items: start; }
 .recurrence-register__list, .recurrence-register__detail { min-width: 0; }
 .recurrence-register__list { border: 1px solid #dbe5e9; border-radius: 9px; background: #fff; overflow: hidden; }
+.recurrence-register__list:focus-visible { outline: 3px solid rgba(9, 174, 180, .24); outline-offset: 2px; }
 .recurrence-register__detail { position: sticky; top: 14px; }
 
 .recurrence-table-wrap { min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
 .recurrence-table { width: 100%; min-width: 1040px; border-collapse: collapse; }
-.recurrence-table th { height: 37px; padding: 0 10px; color: #687f8c; background: #f1f6f7; font: 700 8px/1 "Consolas", monospace; letter-spacing: .055em; text-align: left; text-transform: uppercase; white-space: nowrap; }
-.recurrence-table td { height: 68px; padding: 10px; border-top: 1px solid #e7eef1; color: #3d596b; font-size: 9px; line-height: 1.35; vertical-align: middle; }
+.recurrence-table th { height: 37px; padding: 0 10px; color: #687f8c; background: #f1f6f7; font: 700 10px/1 "Consolas", monospace; letter-spacing: .055em; text-align: left; text-transform: uppercase; white-space: nowrap; }
+.recurrence-table td { height: 68px; padding: 10px; border-top: 1px solid #e7eef1; color: #3d596b; font-size: 11px; line-height: 1.35; vertical-align: middle; }
 .recurrence-table tbody tr { box-shadow: inset 4px 0 transparent; }
 .recurrence-table tbody tr[data-impact="high"] { box-shadow: inset 4px 0 #e36d5a; }
 .recurrence-table tbody tr[data-impact="medium"] { box-shadow: inset 4px 0 #d99426; }
 .recurrence-table tbody tr[data-impact="low"] { box-shadow: inset 4px 0 #09aeb4; }
 .recurrence-table tbody tr:hover { background: #f9fcfc; }
 .recurrence-table__identity { display: grid; gap: 5px; }
-.recurrence-table__identity strong, .recurrence-table__data { color: #183b55; font: 700 9px/1.2 "Consolas", monospace; }
-.recurrence-table__identity small { max-width: 240px; color: #637b89; font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; }
-.recurrence-impact, .recurrence-state { display: inline-flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.recurrence-table__identity strong, .recurrence-table__data { color: #183b55; font: 700 11px/1.2 "Consolas", monospace; }
+.recurrence-table__identity small { max-width: 240px; color: #637b89; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+.recurrence-impact, .recurrence-state { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .recurrence-impact i, .recurrence-state i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
 .recurrence-impact--high { color: #bc4e3e; }
 .recurrence-impact--medium { color: #a66a12; }
@@ -410,29 +419,44 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-table time { white-space: nowrap; }
 .recurrence-table__open { width: 40px; min-height: 40px; display: grid; place-items: center; border: 1px solid #d5e2e6; border-radius: 7px; color: #315c72; background: #f5f9fa; cursor: pointer; }
 .recurrence-table__open:hover { color: #087f88; border-color: #8dcfd2; background: #edfafa; }
-.recurrence-list-refreshing { padding: 9px 13px; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid #e3ebee; color: #47717b; background: #f2fafb; font-size: 10px; }
-.recurrence-list-state, .recurrence-detail-state { min-height: 220px; padding: 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: #667d89; text-align: center; font-size: 10px; }
+.recurrence-list-refreshing { padding: 9px 13px; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid #e3ebee; color: #47717b; background: #f2fafb; font-size: 11px; }
+.recurrence-list-state, .recurrence-detail-state { min-height: 220px; padding: 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: #667d89; text-align: center; font-size: 11px; }
 .recurrence-list-state strong, .recurrence-detail-state strong { color: #29485d; font-size: 13px; }
 .recurrence-list-state p, .recurrence-detail-state p { max-width: 310px; margin: 0; line-height: 1.45; }
 .recurrence-list-state--error, .recurrence-detail-state--error { color: #8f4034; background: #fff9f7; }
 .recurrence-detail-state--error > button:last-child { min-height: 36px; padding: 0 10px; border: 0; color: #596f7c; background: transparent; cursor: pointer; font-weight: 700; }
-.recurrence-pagination { min-height: 58px; padding: 10px 13px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid #e5edef; color: #617886; font-size: 9px; }
+.recurrence-pagination { min-height: 58px; padding: 10px 13px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid #e5edef; color: #617886; font-size: 11px; }
 .recurrence-pagination b { color: #0b2340; font-family: "Consolas", monospace; }
+
+.recurrence-cards { display: grid; gap: 10px; }
+.recurrence-card { min-width: 0; padding: 14px 13px 14px 17px; border: 1px solid #dbe5e9; border-radius: 8px; background: #fff; box-shadow: inset 4px 0 transparent; }
+.recurrence-card[data-impact="high"] { box-shadow: inset 4px 0 #e36d5a; }
+.recurrence-card[data-impact="medium"] { box-shadow: inset 4px 0 #d99426; }
+.recurrence-card[data-impact="low"] { box-shadow: inset 4px 0 #09aeb4; }
+.recurrence-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.recurrence-card__head > div { min-width: 0; }
+.recurrence-card__head strong { color: #183b55; font: 700 12px/1.2 "Consolas", monospace; }
+.recurrence-card__head p { margin: 5px 0 0; color: #637b89; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.recurrence-card dl { margin: 14px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 15px; }
+.recurrence-card dl > div { min-width: 0; }
+.recurrence-card dt { color: #7c8f99; font: 700 10px/1 "Consolas", monospace; letter-spacing: .04em; text-transform: uppercase; }
+.recurrence-card dd { margin: 5px 0 0; color: #385568; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+@media (hover: hover) { .recurrence-card:hover { border-color: #b8d9dc; background: #fbfefe; } }
 
 .recurrence-detail { min-width: 0; max-height: calc(100vh - 120px); border: 1px solid #dbe5e9; border-left: 5px solid #09aeb4; border-radius: 9px; background: #fff; box-shadow: 0 16px 36px rgba(13, 48, 68, .11); overflow-y: auto; overscroll-behavior: contain; }
 .recurrence-detail--medium { border-left-color: #d99426; }
 .recurrence-detail--high { border-left-color: #e36d5a; }
 .recurrence-detail__head { position: sticky; top: 0; z-index: 2; padding: 17px 17px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid #dbe5e9; background: rgba(255, 255, 255, .97); }
 .recurrence-detail__head h2 { margin: 4px 0 0; color: #0b2340; font: 700 18px/1.15 "Bahnschrift", "Arial Narrow", sans-serif; }
-.recurrence-detail__head span { display: block; margin-top: 6px; color: #607887; font: 700 9px/1 "Consolas", monospace; }
+.recurrence-detail__head span { display: block; margin-top: 6px; color: #607887; font: 700 10px/1 "Consolas", monospace; }
 .recurrence-detail__signal { padding: 11px 17px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid #e4ecef; background: #f7fafb; }
-.recurrence-detail__signal > strong { color: #284b61; font: 700 9px/1 "Consolas", monospace; text-transform: uppercase; }
+.recurrence-detail__signal > strong { color: #284b61; font: 700 10px/1 "Consolas", monospace; text-transform: uppercase; }
 .recurrence-detail__body { padding: 0 17px 18px; }
 .recurrence-detail__body > section { padding: 17px 0; border-bottom: 1px solid #e5edef; }
 .recurrence-detail__body h3 { margin: 5px 0 0; display: flex; align-items: center; gap: 6px; color: #183b55; font: 700 13px/1.3 "Bahnschrift", sans-serif; }
-.recurrence-detail__label { color: #6d8491; font: 700 8px/1 "Consolas", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.recurrence-detail__label { color: #6d8491; font: 700 10px/1 "Consolas", monospace; letter-spacing: .08em; text-transform: uppercase; }
 .recurrence-detail__flow ol { margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); list-style: none; }
-.recurrence-detail__flow li { position: relative; display: grid; justify-items: center; gap: 7px; color: #91a0a8; font-size: 8px; text-align: center; }
+.recurrence-detail__flow li { position: relative; display: grid; justify-items: center; gap: 7px; color: #91a0a8; font-size: 10px; text-align: center; }
 .recurrence-detail__flow li::before { content: ""; position: absolute; top: 5px; left: 0; width: 100%; border-top: 2px solid #dce6e9; }
 .recurrence-detail__flow li:first-child::before { left: 50%; width: 50%; }
 .recurrence-detail__flow li:last-child::before { width: 50%; }
@@ -444,28 +468,28 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-detail__flow li[data-step="current"] > i { border-color: #0b2340; box-shadow: 0 0 0 3px rgba(11, 35, 64, .1); }
 .recurrence-detail__facts { margin: 13px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .recurrence-detail__facts div, .recurrence-detail__stacked div { min-width: 0; }
-.recurrence-detail__facts dt, .recurrence-detail__stacked dt { color: #7c8f99; font-size: 8px; }
-.recurrence-detail__facts dd, .recurrence-detail__stacked dd { margin: 4px 0 0; color: #385568; font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
-.recurrence-detail__narrative { margin-top: 13px; padding: 11px; border-left: 3px solid #09aeb4; color: #486574; background: #f1fafb; font-size: 9px; line-height: 1.45; }
+.recurrence-detail__facts dt, .recurrence-detail__stacked dt { color: #7c8f99; font-size: 10px; }
+.recurrence-detail__facts dd, .recurrence-detail__stacked dd { margin: 4px 0 0; color: #385568; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.recurrence-detail__narrative { margin-top: 13px; padding: 11px; border-left: 3px solid #09aeb4; color: #486574; background: #f1fafb; font-size: 11px; line-height: 1.45; }
 .recurrence-detail__narrative p { margin: 5px 0 0; }
 .recurrence-detail__technicians, .recurrence-detail__evidences { margin: 12px 0 0; padding: 0; display: grid; gap: 8px; list-style: none; }
 .recurrence-detail__technicians li { padding: 9px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid #e1e9ec; border-radius: 7px; }
-.recurrence-detail__avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: #0b6274; font: 700 8px/1 "Consolas", monospace; }
-.recurrence-detail__technicians strong, .recurrence-detail__evidences strong { display: block; color: #29495d; font-size: 9px; overflow-wrap: anywhere; }
-.recurrence-detail__technicians small, .recurrence-detail__evidences small { display: block; margin-top: 3px; color: #788d98; font-size: 8px; line-height: 1.35; overflow-wrap: anywhere; }
-.recurrence-detail__technicians em { display: block; margin-top: 5px; color: #5f7480; font-size: 8px; font-style: normal; }
-.recurrence-detail__technicians b { padding: 4px 5px; border-radius: 4px; color: #9e4b3f; background: #fff0ed; font: 700 7px/1 "Consolas", monospace; white-space: nowrap; }
+.recurrence-detail__avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: #0b6274; font: 700 10px/1 "Consolas", monospace; }
+.recurrence-detail__technicians strong, .recurrence-detail__evidences strong { display: block; color: #29495d; font-size: 11px; overflow-wrap: anywhere; }
+.recurrence-detail__technicians small, .recurrence-detail__evidences small { display: block; margin-top: 3px; color: #788d98; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+.recurrence-detail__technicians em { display: block; margin-top: 5px; color: #5f7480; font-size: 10px; font-style: normal; }
+.recurrence-detail__technicians b { padding: 4px 5px; border-radius: 4px; color: #9e4b3f; background: #fff0ed; font: 700 10px/1 "Consolas", monospace; white-space: nowrap; }
 .recurrence-detail__visits, .recurrence-detail__notes { margin: 12px 0 0; padding: 0 0 0 16px; display: grid; gap: 12px; list-style: none; border-left: 1px solid #b8dfe2; }
 .recurrence-detail__visits li, .recurrence-detail__notes li { position: relative; }
 .recurrence-detail__visits li::before, .recurrence-detail__notes li::before { content: ""; position: absolute; top: 4px; left: -20px; width: 7px; height: 7px; border: 2px solid #fff; border-radius: 50%; background: #09aeb4; box-shadow: 0 0 0 1px #8bcbd0; }
-.recurrence-detail__visits span { color: #728793; font-size: 8px; }
-.recurrence-detail__visits strong { display: block; margin-top: 3px; color: #24485f; font: 700 9px/1 "Consolas", monospace; }
-.recurrence-detail__visits small, .recurrence-detail__notes small { display: block; margin-top: 4px; color: #788d98; font-size: 8px; line-height: 1.4; }
+.recurrence-detail__visits span { color: #728793; font-size: 10px; }
+.recurrence-detail__visits strong { display: block; margin-top: 3px; color: #24485f; font: 700 10px/1 "Consolas", monospace; }
+.recurrence-detail__visits small, .recurrence-detail__notes small { display: block; margin-top: 4px; color: #788d98; font-size: 10px; line-height: 1.4; }
 .recurrence-detail__stacked { margin: 12px 0 0; display: grid; gap: 10px; }
-.recurrence-detail__notes p { margin: 0; color: #3d5b6d; font-size: 9px; line-height: 1.45; }
+.recurrence-detail__notes p { margin: 0; color: #3d5b6d; font-size: 11px; line-height: 1.45; }
 .recurrence-detail__evidences li { padding: 9px; display: flex; align-items: flex-start; gap: 8px; border: 1px solid #e1e9ec; border-radius: 7px; }
-.recurrence-detail__muted { margin: 10px 0 0; color: #758a95; font-size: 9px; line-height: 1.4; }
-.recurrence-detail__audit { margin: 15px 0 0; color: #83939c; font: 700 7px/1.4 "Consolas", monospace; }
+.recurrence-detail__muted { margin: 10px 0 0; color: #758a95; font-size: 11px; line-height: 1.4; }
+.recurrence-detail__audit { margin: 15px 0 0; color: #83939c; font: 700 10px/1.4 "Consolas", monospace; }
 
 @media (max-width: 1180px) {
   .recurrence-summary { grid-template-columns: 1fr 1fr; }
@@ -495,22 +519,12 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-summary-state--error .button { width: 100%; margin-left: 0; }
   .recurrence-filters { grid-template-columns: 1fr; }
   .recurrence-filters__scope { grid-template-columns: 1fr; }
-  .recurrence-filters input, .recurrence-filters select, .recurrence-filters__clear { min-height: 44px; }
+  .recurrence-workspace button, .recurrence-filters input, .recurrence-filters select { min-height: 44px; }
+  .recurrence-workspace .icon-button, .recurrence-table__open { width: 44px; min-width: 44px; }
   .recurrence-stale { align-items: flex-start; flex-wrap: wrap; }
   .recurrence-stale button { margin-left: 24px; }
   .recurrence-register__list { border: 0; background: transparent; overflow: visible; }
   .recurrence-table-wrap { overflow: visible; }
-  .recurrence-table { min-width: 0; display: block; }
-  .recurrence-table thead { display: none; }
-  .recurrence-table tbody { display: grid; gap: 10px; }
-  .recurrence-table tr { padding: 13px 12px 13px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 11px; border: 1px solid #dbe5e9; border-radius: 8px; background: #fff; }
-  .recurrence-table td { height: auto; min-width: 0; padding: 0; display: block; border: 0; white-space: normal; overflow-wrap: anywhere; }
-  .recurrence-table td:first-child { grid-column: 1 / -1; }
-  .recurrence-table td:last-child { display: flex; justify-content: flex-end; align-items: flex-end; }
-  .recurrence-table td::before { content: attr(data-label); margin-bottom: 5px; display: block; color: #82949e; font: 700 7px/1 "Consolas", monospace; letter-spacing: .08em; text-transform: uppercase; }
-  .recurrence-table td:first-child::before, .recurrence-table td:last-child::before { display: none; }
-  .recurrence-table__identity small { max-width: none; }
-  .recurrence-table__open { width: 44px; min-height: 44px; }
   .recurrence-pagination { justify-content: center; flex-wrap: wrap; border: 1px solid #dbe5e9; border-radius: 8px; background: #fff; }
   .recurrence-detail { border-radius: 8px; }
   .recurrence-detail__facts { grid-template-columns: 1fr; }
