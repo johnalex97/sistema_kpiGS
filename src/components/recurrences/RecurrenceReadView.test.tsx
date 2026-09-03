@@ -270,6 +270,18 @@ describe("lectura de reincidencias", () => {
     }
   });
 
+  it("contiene una observación de visita extensa sin espacios", () => {
+    const visitObservation = "CERTIFICACIONDECONTINUIDADDEENLACEEXTENSA1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    render(<RecurrenceDetail recurrence={{
+      ...detail,
+      visits: [{ ...detail.visits[0]!, observation: visitObservation }],
+    }} capabilities={capabilities} onClose={vi.fn()} />);
+
+    const visitMetadata = screen.getByText(new RegExp(visitObservation, "u"));
+    expect(visitMetadata.tagName).toBe("SMALL");
+    expect(getComputedStyle(visitMetadata).overflowWrap).toBe("anywhere");
+  });
+
   it("muestra la fecha de cierre persistida", () => {
     render(<RecurrenceDetail recurrence={{ ...detail, status: "CLOSED", closedAt: "2026-08-31T14:00:00.000Z" }} capabilities={capabilities} onClose={vi.fn()} />);
 

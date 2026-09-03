@@ -487,6 +487,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-detail__visits span { color: #728793; font-size: 10px; }
 .recurrence-detail__visits strong { display: block; margin-top: 3px; color: #24485f; font: 700 10px/1 "Consolas", monospace; }
 .recurrence-detail__visits small, .recurrence-detail__notes small { display: block; margin-top: 4px; color: #788d98; font-size: 10px; line-height: 1.4; }
+.recurrence-detail__visits small { overflow-wrap: anywhere; }
 .recurrence-detail__stacked { margin: 12px 0 0; display: grid; gap: 10px; }
 .recurrence-detail__notes p { margin: 0; color: #3d5b6d; font-size: 11px; line-height: 1.45; }
 .recurrence-detail__narrative p, .recurrence-detail__technicians em, .recurrence-detail__stacked dd, .recurrence-detail__notes p { overflow-wrap: anywhere; }
