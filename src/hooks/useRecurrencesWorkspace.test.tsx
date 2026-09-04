@@ -817,6 +817,25 @@ describe("useRecurrencesWorkspace", () => {
     expect(rawEvidence.archive).not.toHaveBeenCalled();
   });
 
+  it("clears the evidence prompt state and ref permanently when upload permission is revoked", async () => {
+    const stableOptions = options({ api: recurrenceApi({ report: vi.fn().mockResolvedValue(detail) }) });
+    const granted = ["RECURRENCES_VIEW_ALL", "RECURRENCES_REPORT_OWN", "ORDERS_VIEW_OWN", "EVIDENCES_UPLOAD"];
+    const { result, rerender } = renderHook(
+      ({ permissions }) => useRecurrencesWorkspace({ ...stableOptions, permissions }),
+      { initialProps: { permissions: granted } },
+    );
+    await act(async () => {
+      await result.current.reportRecurrence({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "Falla" });
+    });
+    expect(result.current.evidencePromptForId).toBe(recurrenceId);
+
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL"] });
+    expect(result.current.evidencePromptForId).toBeNull();
+    await flushPromises();
+    rerender({ permissions: granted });
+    expect(result.current.evidencePromptForId).toBeNull();
+  });
+
   it("keeps the evidence prompt after upload failure, retries the same case and rejects INTERNAL without manage", async () => {
     const rawEvidence = evidenceApi({
       uploadRecurrence: vi.fn()
@@ -865,6 +884,31 @@ describe("useRecurrencesWorkspace", () => {
     click.mockRestore();
     createObjectURL.mockRestore();
     revokeObjectURL.mockRestore();
+  });
+
+  it("does not publish a download that finishes after view permission is revoked", async () => {
+    const pending = deferred<Awaited<ReturnType<EvidenceApi["download"]>>>();
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:late-evidence");
+    const rawEvidence = evidenceApi({ download: vi.fn(() => pending.promise) });
+    const stableOptions = options({ evidenceApi: rawEvidence });
+    const { result, rerender } = renderHook(
+      ({ permissions }) => useRecurrencesWorkspace({ ...stableOptions, permissions }),
+      { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "EVIDENCES_VIEW"] } },
+    );
+
+    let download!: Promise<boolean>;
+    act(() => { download = result.current.downloadEvidence(uploadedEvidence); });
+    await waitFor(() => expect(rawEvidence.download).toHaveBeenCalledTimes(1));
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL"] });
+    let downloaded = true;
+    await act(async () => {
+      pending.resolve({ blob: new Blob(["x"]), filename: "late.pdf" });
+      downloaded = await download;
+    });
+
+    expect(downloaded).toBe(false);
+    expect(createObjectURL).not.toHaveBeenCalled();
+    createObjectURL.mockRestore();
   });
 
   it("archives evidence with its version and a normalized reason", async () => {

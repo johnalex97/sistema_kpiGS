@@ -1,10 +1,11 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecurrenceLookupApi } from "../../api/recurrence-lookups";
 import type { OrderLookup, OrderLookupPage, OrderStatus } from "../../models/order-lookup";
 import { OrderLookupCombobox } from "./OrderLookupCombobox";
 import { RecurrenceReportForm } from "./RecurrenceReportForm";
+import "../../styles.css";
 
 const original: OrderLookup = {
   id: "order-original",
@@ -49,12 +50,13 @@ describe("OrderLookupCombobox", () => {
     }> = [];
     const orders = vi.fn((search: string, statuses: OrderStatus[], _page: number, signal?: AbortSignal) =>
       new Promise<OrderLookupPage>((resolve) => requests.push({ search, statuses, signal, resolve })));
-    render(<OrderLookupCombobox label="Orden original" api={lookupApi(orders)} statuses={["COMPLETED"]} value={null} onChange={vi.fn()} />);
+    render(<OrderLookupCombobox label="Orden original" name="originalOrderId" api={lookupApi(orders)} statuses={["COMPLETED"]} value={null} onChange={vi.fn()} />);
 
     const input = screen.getByRole("combobox", { name: "Orden original" });
     fireEvent.focus(input);
     await act(async () => undefined);
     expect(orders).toHaveBeenCalledWith("", ["COMPLETED"], 1, expect.any(AbortSignal));
+    expect(screen.getByRole("status", { name: "Buscando órdenes" })).toHaveAttribute("aria-live", "polite");
     fireEvent.change(input, { target: { value: "OT-2" } });
     expect(requests[0]?.signal?.aborted).toBe(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(299); });
@@ -69,6 +71,32 @@ describe("OrderLookupCombobox", () => {
     expect(screen.getByRole("option", { name: /OT-205/ })).toBeInTheDocument();
   });
 
+  it("never requests or publishes the previous search when returning from page 2 to page 1", async () => {
+    vi.useFakeTimers();
+    const requests: Array<{ search: string; page: number; resolve(value: OrderLookupPage): void }> = [];
+    const orders = vi.fn((search: string, _statuses: OrderStatus[], requestedPage: number) =>
+      new Promise<OrderLookupPage>((resolve) => requests.push({ search, page: requestedPage, resolve })));
+    render(<OrderLookupCombobox label="Orden correctiva" name="correctionOrderId" api={lookupApi(orders)} statuses={["IN_PROGRESS"]} value={null} onChange={vi.fn()} />);
+
+    const input = screen.getByRole("combobox", { name: "Orden correctiva" });
+    fireEvent.focus(input);
+    await act(async () => undefined);
+    await act(async () => { requests[0]?.resolve(page([correction], 1, 2)); await Promise.resolve(); });
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más órdenes" }));
+    expect(requests[1]).toMatchObject({ search: "", page: 2 });
+
+    fireEvent.change(input, { target: { value: "OT-9" } });
+    await act(async () => undefined);
+    expect(requests).toHaveLength(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(requests[2]).toMatchObject({ search: "OT-9", page: 1 });
+
+    await act(async () => { requests[1]?.resolve(page([{ ...correction, id: "stale", orderNumber: "OT-OLD" }], 2, 2)); await Promise.resolve(); });
+    expect(screen.queryByRole("option", { name: /OT-OLD/ })).not.toBeInTheDocument();
+    await act(async () => { requests[2]?.resolve(page([{ ...correction, id: "fresh", orderNumber: "OT-900" }])); await Promise.resolve(); });
+    expect(screen.getByRole("option", { name: /OT-900/ })).toBeInTheDocument();
+  });
+
   it("supports paginated options and keyboard selection without submitting its parent", async () => {
     const user = userEvent.setup();
     const orders = vi.fn()
@@ -76,11 +104,15 @@ describe("OrderLookupCombobox", () => {
       .mockResolvedValueOnce(page([{ ...correction, id: "order-third", orderNumber: "OT-300" }], 2, 2));
     const onChange = vi.fn();
     const onSubmit = vi.fn((event: React.FormEvent) => event.preventDefault());
-    render(<form onSubmit={onSubmit}><OrderLookupCombobox label="Orden correctiva" api={lookupApi(orders)} statuses={["IN_PROGRESS"]} value={null} onChange={onChange} /></form>);
+    render(<form onSubmit={onSubmit}><OrderLookupCombobox label="Orden correctiva" name="correctionOrderId" api={lookupApi(orders)} statuses={["IN_PROGRESS"]} value={null} onChange={onChange} /></form>);
 
     const input = screen.getByRole("combobox", { name: "Orden correctiva" });
     await user.click(input);
     const first = await screen.findByRole("option", { name: /OT-205/ });
+    const listbox = screen.getByRole("listbox", { name: "Opciones de Orden correctiva" });
+    expect(first.tagName).toBe("DIV");
+    expect(first).toHaveAttribute("tabindex", "-1");
+    expect(within(listbox).queryByRole("button", { name: "Cargar más órdenes" })).not.toBeInTheDocument();
     await user.keyboard("{ArrowDown}");
     expect(input).toHaveAttribute("aria-activedescendant", first.id);
     await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
@@ -97,7 +129,7 @@ describe("OrderLookupCombobox", () => {
     const user = userEvent.setup();
     const parentEscape = vi.fn();
     render(<div onKeyDown={(event) => { if (event.key === "Escape") parentEscape(); }}>
-      <OrderLookupCombobox label="Orden correctiva" api={lookupApi()} statuses={["IN_PROGRESS"]} value={null} excludeId={original.id} onChange={vi.fn()} />
+      <OrderLookupCombobox label="Orden correctiva" name="correctionOrderId" api={lookupApi()} statuses={["IN_PROGRESS"]} value={null} excludeId={original.id} onChange={vi.fn()} />
     </div>);
 
     const input = screen.getByRole("combobox", { name: "Orden correctiva" });
@@ -120,9 +152,12 @@ describe("RecurrenceReportForm", () => {
     render(<RecurrenceReportForm lookupApi={lookupApi(orders)} onSubmit={onSubmit} onCancel={vi.fn()} />);
 
     const originalInput = screen.getByRole("combobox", { name: "Orden original" });
+    expect(originalInput).toHaveAttribute("name", "originalOrderId");
+    expect(originalInput).toHaveAttribute("placeholder", expect.stringMatching(/^Ej\.: OT-/u));
     await user.click(originalInput);
     await user.click(await screen.findByRole("option", { name: /OT-100/ }));
     const correctionInput = screen.getByRole("combobox", { name: "Orden correctiva" });
+    expect(correctionInput).toHaveAttribute("name", "correctionOrderId");
     await user.click(correctionInput);
     await user.click(await screen.findByRole("option", { name: /OT-205/ }));
     await user.type(screen.getByLabelText("Problema detectado"), "  La conexión volvió a fallar  ");
@@ -139,6 +174,52 @@ describe("RecurrenceReportForm", () => {
     await user.click(originalInput);
     await user.clear(originalInput);
     expect(correctionInput).toHaveValue("");
+  });
+
+  it("keeps Escape inside an open order popup and focuses the first invalid field", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<RecurrenceReportForm lookupApi={lookupApi()} onSubmit={vi.fn(async () => true)} onCancel={onCancel} />);
+
+    const originalInput = screen.getByRole("combobox", { name: "Orden original" });
+    await screen.findByRole("option", { name: /OT-100/ });
+    await user.keyboard("{Escape}");
+    expect(onCancel).not.toHaveBeenCalled();
+
+    await user.click(originalInput);
+    await user.click(screen.getByRole("option", { name: /OT-100/ }));
+    await user.click(screen.getByRole("button", { name: "Reportar reincidencia" }));
+    expect(screen.getByRole("combobox", { name: "Orden correctiva" })).toHaveFocus();
+
+    await user.click(screen.getByRole("combobox", { name: "Orden correctiva" }));
+    await user.click(await screen.findByRole("option", { name: /OT-205/ }));
+    await user.click(screen.getByRole("button", { name: "Reportar reincidencia" }));
+    expect(screen.getByLabelText("Problema detectado")).toHaveFocus();
+  });
+
+  it("clears a pending corrective search when the original order changes", async () => {
+    const user = userEvent.setup();
+    const anotherOriginal = { ...original, id: "order-original-2", orderNumber: "OT-101" };
+    const orders = vi.fn(async (_search: string, statuses: OrderStatus[]) => page(
+      statuses.length === 1 && statuses[0] === "COMPLETED" ? [original, anotherOriginal] : [correction],
+    ));
+    render(<RecurrenceReportForm lookupApi={lookupApi(orders)} onSubmit={vi.fn(async () => true)} onCancel={vi.fn()} />);
+
+    await user.click(screen.getByRole("combobox", { name: "Orden original" }));
+    await user.click(await screen.findByRole("option", { name: /OT-100/ }));
+    const correctionInput = screen.getByRole("combobox", { name: "Orden correctiva" });
+    await user.type(correctionInput, "OT-9");
+    expect(correctionInput).toHaveValue("OT-9");
+    await user.click(screen.getByRole("button", { name: "Quitar orden original" }));
+
+    expect(screen.getByRole("combobox", { name: "Orden correctiva" })).toHaveValue("");
+  });
+
+  it("keeps the selected-order removal control at least 44 by 44 CSS pixels", () => {
+    render(<OrderLookupCombobox label="Orden original" name="originalOrderId" api={lookupApi()} statuses={["COMPLETED"]} value={original} onChange={vi.fn()} />);
+    const remove = screen.getByRole("button", { name: "Quitar orden original" });
+    expect(getComputedStyle(remove).width).toBe("44px");
+    expect(getComputedStyle(remove).minHeight).toBe("44px");
   });
 
   it("rejects out-of-scope results and preserves values after an API conflict", async () => {

@@ -1,10 +1,26 @@
 import { ChevronDown, LoaderCircle, Search, X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref } from "react";
 import type { RecurrenceLookupApi } from "../../api/recurrence-lookups";
 import type { OrderLookup, OrderStatus } from "../../models/order-lookup";
 
+interface OrderRequest {
+  search: string;
+  page: number;
+  statuses: OrderStatus[];
+  excludeId?: string;
+  scopeKey: string;
+  revision: number;
+}
+
+interface PendingSearch {
+  search: string;
+  scopeKey: string;
+  revision: number;
+}
+
 export interface OrderLookupComboboxProps {
   label: string;
+  name: string;
   api: RecurrenceLookupApi;
   statuses: readonly OrderStatus[];
   value: OrderLookup | null;
@@ -12,6 +28,7 @@ export interface OrderLookupComboboxProps {
   disabled?: boolean;
   invalid?: boolean;
   describedBy?: string;
+  inputRef?: Ref<HTMLInputElement>;
   onChange(order: OrderLookup | null): void;
 }
 
@@ -24,6 +41,7 @@ function isAbortError(error: unknown): boolean {
 
 export function OrderLookupCombobox({
   label,
+  name,
   api,
   statuses,
   value,
@@ -31,125 +49,208 @@ export function OrderLookupCombobox({
   disabled = false,
   invalid = false,
   describedBy,
+  inputRef,
   onChange,
 }: OrderLookupComboboxProps) {
   const inputId = useId();
   const listId = `${inputId}-orders`;
+  const scopeKey = `${statuses.join(",")}|${excludeId ?? ""}`;
   const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [page, setPage] = useState(1);
+  const [request, setRequest] = useState<OrderRequest | null>(null);
+  const [pendingSearch, setPendingSearch] = useState<PendingSearch | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [items, setItems] = useState<OrderLookup[]>([]);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  const [requestRevision, setRequestRevision] = useState(0);
   const apiRef = useRef(api);
   const statusesRef = useRef(statuses);
-  const requestRef = useRef<AbortController | null>(null);
+  const excludeIdRef = useRef(excludeId);
+  const scopeKeyRef = useRef(scopeKey);
+  const desiredSearchRef = useRef("");
+  const controllerRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
+  const revisionRef = useRef(0);
   const selectedRef = useRef(value);
   const itemsRef = useRef<OrderLookup[]>([]);
+  const loadedKeyRef = useRef<string | null>(null);
+  const previousScopeKeyRef = useRef(scopeKey);
 
   useEffect(() => { apiRef.current = api; }, [api]);
   useEffect(() => { statusesRef.current = statuses; }, [statuses]);
   useEffect(() => { selectedRef.current = value; }, [value]);
+  useEffect(() => { excludeIdRef.current = excludeId; }, [excludeId]);
+  useEffect(() => { scopeKeyRef.current = scopeKey; }, [scopeKey]);
+
+  const createRequest = (search: string, page: number): OrderRequest => ({
+    search,
+    page,
+    statuses: [...statusesRef.current],
+    excludeId: excludeIdRef.current,
+    scopeKey: scopeKeyRef.current,
+    revision: ++revisionRef.current,
+  });
+
+  const cancelRequest = () => {
+    controllerRef.current?.abort();
+    generationRef.current += 1;
+  };
 
   useEffect(() => {
+    if (previousScopeKeyRef.current === scopeKey) return;
+    previousScopeKeyRef.current = scopeKey;
+    cancelRequest();
+    desiredSearchRef.current = "";
+    itemsRef.current = [];
+    loadedKeyRef.current = null;
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active || scopeKeyRef.current !== scopeKey) return;
+      setQuery("");
+      setRequest(null);
+      setPendingSearch(null);
+      setCurrentPage(1);
+      setTotalPages(1);
+      setItems([]);
+      setOpen(false);
+      setActiveIndex(-1);
+      setLoading(false);
+      setLoadError(false);
+    });
+    return () => { active = false; };
+  }, [scopeKey]);
+
+  const startRequest = (search: string, page: number) => {
+    cancelRequest();
+    setLoading(true);
+    setLoadError(false);
+    setRequest(createRequest(search, page));
+  };
+
+  useEffect(() => {
+    if (!pendingSearch) return;
     const timer = window.setTimeout(() => {
-      setPage(1);
-      setDebouncedSearch(search);
-      setRequestRevision((current) => current + 1);
+      if (desiredSearchRef.current !== pendingSearch.search || scopeKeyRef.current !== pendingSearch.scopeKey) return;
+      setRequest({
+        search: pendingSearch.search,
+        page: 1,
+        statuses: [...statusesRef.current],
+        excludeId: excludeIdRef.current,
+        scopeKey: scopeKeyRef.current,
+        revision: pendingSearch.revision,
+      });
+      setPendingSearch(null);
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [pendingSearch]);
 
   useEffect(() => {
-    if (!open || disabled) return;
-    if (selectedRef.current && page === 1 && itemsRef.current.length > 0) return;
+    if (!open || disabled || !request) return;
     const controller = new AbortController();
-    requestRef.current?.abort();
-    requestRef.current = controller;
+    controllerRef.current?.abort();
+    controllerRef.current = controller;
     const generation = ++generationRef.current;
-    setLoading(true);
-    apiRef.current.orders(debouncedSearch, [...statusesRef.current], page, controller.signal).then((result) => {
-      if (controller.signal.aborted || generation !== generationRef.current) return;
-      const allowedStatuses = new Set(statusesRef.current);
-      const visible = result.items.filter((order) => order.id !== excludeId && allowedStatuses.has(order.status));
+    apiRef.current.orders(request.search, request.statuses, request.page, controller.signal).then((result) => {
+      if (
+        controller.signal.aborted
+        || generation !== generationRef.current
+        || desiredSearchRef.current !== request.search
+        || scopeKeyRef.current !== request.scopeKey
+      ) return;
+      const allowedStatuses = new Set(request.statuses);
+      const visible = result.items.filter((order) => order.id !== request.excludeId && allowedStatuses.has(order.status));
       setItems((current) => {
-        const incoming = page === 1 ? visible : [...current, ...visible];
+        const incoming = request.page === 1 ? visible : [...current, ...visible];
         const unique = [...new Map(incoming.map((order) => [order.id, order])).values()];
         itemsRef.current = unique;
         return unique;
       });
+      loadedKeyRef.current = `${request.scopeKey}|${request.search}`;
+      setCurrentPage(request.page);
       setTotalPages(result.pagination.totalPages);
       setLoadError(false);
     }).catch((error: unknown) => {
       if (controller.signal.aborted || generation !== generationRef.current || isAbortError(error)) return;
-      if (page === 1) {
+      if (request.page === 1) {
         itemsRef.current = [];
         setItems([]);
       }
       setLoadError(true);
     }).finally(() => {
-      if (!controller.signal.aborted && generation === generationRef.current) setLoading(false);
+      if (!controller.signal.aborted && generation === generationRef.current) {
+        setLoading(false);
+        setRequest((current) => current?.revision === request.revision ? null : current);
+      }
     });
     return () => controller.abort();
-  }, [debouncedSearch, disabled, excludeId, open, page, requestRevision]);
+  }, [disabled, open, request]);
 
   const openList = () => {
     if (disabled) return;
     setOpen(true);
-    if (items.length === 0 && !loading) setRequestRevision((current) => current + 1);
+    const desiredKey = `${scopeKeyRef.current}|${desiredSearchRef.current}`;
+    if (loadedKeyRef.current !== desiredKey && !loading) {
+      itemsRef.current = [];
+      setItems([]);
+      setActiveIndex(-1);
+      startRequest(desiredSearchRef.current, 1);
+    }
   };
 
   const changeQuery = (next: string) => {
-    requestRef.current?.abort();
-    generationRef.current += 1;
+    cancelRequest();
+    desiredSearchRef.current = next;
     if (selectedRef.current) {
       selectedRef.current = null;
       onChange(null);
     }
+    itemsRef.current = [];
+    setItems([]);
     setQuery(next);
-    setSearch(next);
-    setPage(1);
+    setRequest(null);
+    setCurrentPage(1);
+    setTotalPages(1);
     setActiveIndex(-1);
     setOpen(true);
     setLoading(true);
     setLoadError(false);
+    setPendingSearch({ search: next, scopeKey: scopeKeyRef.current, revision: ++revisionRef.current });
   };
 
   const clear = () => {
-    requestRef.current?.abort();
-    generationRef.current += 1;
+    cancelRequest();
     selectedRef.current = null;
+    desiredSearchRef.current = "";
+    itemsRef.current = [];
+    loadedKeyRef.current = null;
+    setItems([]);
     setQuery("");
-    setSearch("");
-    setPage(1);
+    setRequest(null);
+    setPendingSearch(null);
+    setCurrentPage(1);
+    setTotalPages(1);
     setActiveIndex(-1);
     setOpen(true);
-    setLoading(true);
-    setLoadError(false);
-    setRequestRevision((current) => current + 1);
+    startRequest("", 1);
     onChange(null);
   };
 
   const selectOrder = (order: OrderLookup) => {
+    cancelRequest();
     selectedRef.current = order;
+    desiredSearchRef.current = "";
     setQuery("");
-    setSearch("");
+    setRequest(null);
+    setPendingSearch(null);
+    setLoading(false);
     setActiveIndex(-1);
     setOpen(false);
     onChange(order);
   };
 
-  const retry = () => {
-    setLoadError(false);
-    setLoading(true);
-    setRequestRevision((current) => current + 1);
-  };
+  const retry = () => startRequest(desiredSearchRef.current, 1);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -178,6 +279,10 @@ export function OrderLookupCombobox({
   };
 
   const activeOrder = activeIndex >= 0 ? items[activeIndex] : undefined;
+  const statusText = loading
+    ? "Buscando órdenes"
+    : loadError ? "No fue posible cargar las órdenes"
+      : `${items.length} ${items.length === 1 ? "orden disponible" : "órdenes disponibles"}`;
 
   return <div className="recurrence-order-combobox">
     <label htmlFor={inputId}>{label}</label>
@@ -185,7 +290,8 @@ export function OrderLookupCombobox({
       <Search size={15} aria-hidden="true" />
       <input
         id={inputId}
-        name={`${inputId}-search`}
+        name={name}
+        ref={inputRef}
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={open}
@@ -195,7 +301,7 @@ export function OrderLookupCombobox({
         aria-describedby={describedBy}
         autoComplete="off"
         spellCheck={false}
-        placeholder="Buscar número, cliente o sucursal…"
+        placeholder="Ej.: OT-2026-0042, Hospital Norte…"
         value={value ? optionLabel(value) : query}
         disabled={disabled}
         onFocus={openList}
@@ -207,19 +313,24 @@ export function OrderLookupCombobox({
         ? <button type="button" aria-label={`Quitar ${label.toLowerCase()}`} onClick={clear}><X size={15} aria-hidden="true" /></button>
         : loading ? <LoaderCircle className="recurrence-order-combobox__loader" size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
     </div>
-    {open && !disabled && <div className="recurrence-order-combobox__list" id={listId} role="listbox" aria-label={`Opciones de ${label}`}>
-      {!loading && loadError && <div role="alert"><p>No fue posible cargar las órdenes.</p><button type="button" aria-label="Reintentar órdenes" onClick={retry}>Reintentar</button></div>}
-      {!loading && !loadError && items.length === 0 && <p>No hay órdenes disponibles para esta búsqueda.</p>}
-      {items.map((order, index) => <button
-        id={`${listId}-option-${order.id}`}
-        type="button"
-        role="option"
-        aria-selected={value?.id === order.id}
-        data-active={activeIndex === index || undefined}
-        key={order.id}
-        onClick={() => selectOrder(order)}
-      ><strong>{order.orderNumber}</strong><span>{order.clientName} · {order.branchName}</span></button>)}
-      {!loading && !loadError && page < totalPages && <button className="recurrence-order-combobox__more" type="button" aria-label="Cargar más órdenes" onClick={() => { setLoading(true); setPage((current) => current + 1); }}>Cargar más</button>}
+    <p className="sr-only" role="status" aria-live="polite" aria-label={statusText}>{statusText}.</p>
+    {open && !disabled && <div className="recurrence-order-combobox__popup">
+      <div className="recurrence-order-combobox__list" id={listId} role="listbox" aria-label={`Opciones de ${label}`}>
+        {items.map((order, index) => <div
+          id={`${listId}-option-${order.id}`}
+          role="option"
+          tabIndex={-1}
+          aria-selected={value?.id === order.id}
+          data-active={activeIndex === index || undefined}
+          key={order.id}
+          onMouseDown={(event) => event.preventDefault()}
+          onMouseMove={() => setActiveIndex(index)}
+          onClick={() => selectOrder(order)}
+        ><strong>{order.orderNumber}</strong><span>{order.clientName} · {order.branchName}</span></div>)}
+      </div>
+      {!loading && loadError && <div className="recurrence-order-combobox__message" role="alert"><p>No fue posible cargar las órdenes.</p><button type="button" aria-label="Reintentar órdenes" onClick={retry}>Reintentar</button></div>}
+      {!loading && !loadError && items.length === 0 && <p className="recurrence-order-combobox__message">No hay órdenes disponibles para esta búsqueda.</p>}
+      {!loading && !loadError && currentPage < totalPages && <button className="recurrence-order-combobox__more" type="button" aria-label="Cargar más órdenes" onClick={() => startRequest(desiredSearchRef.current, currentPage + 1)}>Cargar más</button>}
     </div>}
   </div>;
 }

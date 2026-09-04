@@ -279,6 +279,13 @@ export function useRecurrencesWorkspace({
   const previousPermissionsKeyRef = useRef(permissionsKey);
   const mutationPendingRef = useRef(false);
   const evidencePromptRef = useRef<string | null>(null);
+  const scheduleEvidencePromptClear = useCallback(() => {
+    void Promise.resolve().then(() => setEvidencePrompt(null));
+  }, []);
+  const revokeEvidencePrompt = useCallback(() => {
+    evidencePromptRef.current = null;
+    scheduleEvidencePromptClear();
+  }, [scheduleEvidencePromptClear]);
 
   const invalidateList = useCallback(() => {
     listGenerationRef.current += 1;
@@ -505,10 +512,8 @@ export function useRecurrencesWorkspace({
     });
     auxiliaryRequestsRef.current.clear();
     setActionModeState((current) => current && !actionAllowed(current, capabilities) ? null : current);
-    if (!capabilities.canUploadEvidence) {
-      evidencePromptRef.current = null;
-    }
-  }, [capabilities, permissionsKey]);
+    if (!capabilities.canUploadEvidence) revokeEvidencePrompt();
+  }, [capabilities, permissionsKey, revokeEvidencePrompt]);
 
   useEffect(() => {
     let active = true;
@@ -779,7 +784,7 @@ export function useRecurrencesWorkspace({
     let objectUrl: string | null = null;
     let anchor: HTMLAnchorElement | null = null;
     try {
-      const downloaded = await rawEvidenceApi.download(item.id);
+      const downloaded = await evidenceApi.download(item.id);
       objectUrl = URL.createObjectURL(downloaded.blob);
       anchor = document.createElement("a");
       anchor.href = objectUrl;
@@ -798,7 +803,7 @@ export function useRecurrencesWorkspace({
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       mutationPendingRef.current = false;
     }
-  }, [rawEvidenceApi]);
+  }, [evidenceApi]);
 
   const archiveEvidence = useCallback(async (item: Evidence, rawReason: string): Promise<boolean> => {
     if (mutationPendingRef.current) return false;
@@ -851,7 +856,8 @@ export function useRecurrencesWorkspace({
     detailState,
     listStale,
     mutation,
-    evidencePromptForId: capabilities.canUploadEvidence && evidencePrompt?.permissionsKey === permissionsKey
+    evidencePromptForId: capabilities.canUploadEvidence
+      && evidencePrompt?.permissionsKey === permissionsKey
       ? evidencePrompt.id
       : null,
     capabilities,

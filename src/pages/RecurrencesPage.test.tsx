@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "../auth/AuthContext";
 import type { RecurrencesWorkspace } from "../hooks/useRecurrencesWorkspace";
+import type { Evidence } from "../models/evidence";
 import type { OrderLookup } from "../models/order-lookup";
 import type { RecurrenceDetail, RecurrenceSummary } from "../models/recurrence";
 import { RecurrencesPage } from "./RecurrencesPage";
@@ -41,6 +42,23 @@ const selected: RecurrenceDetail = {
   technicians: [],
   notes: [],
   evidences: [],
+};
+
+const evidence: Evidence = {
+  id: "evidence-1",
+  originalName: "router-frontal.png",
+  mimeType: "image/png",
+  fileExtension: "png",
+  sizeBytes: 1450,
+  description: "Indicador apagado",
+  accessLevel: "TECHNICIAN",
+  uploadedBy: { id: "user-1", displayName: "Ana López" },
+  resourceType: "RECURRENCE",
+  resourceId: "rec-created",
+  checksumSha256: "abc123",
+  version: 1,
+  createdAt: "2026-09-01T10:00:00.000Z",
+  updatedAt: "2026-09-01T10:00:00.000Z",
 };
 
 function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWorkspace {
@@ -88,7 +106,9 @@ function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWo
       clients: vi.fn(),
       branches: vi.fn(),
     } as RecurrencesWorkspace["lookupApi"],
-    evidenceApi: {} as RecurrencesWorkspace["evidenceApi"],
+    evidenceApi: {
+      listRecurrence: vi.fn().mockResolvedValue({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } }),
+    } as unknown as RecurrencesWorkspace["evidenceApi"],
     setFilters: vi.fn(),
     select: vi.fn(),
     closeDetail: vi.fn(),
@@ -272,6 +292,28 @@ describe("RecurrencesPage", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Caso creado · evidencia pendiente");
     await user.click(screen.getByRole("button", { name: "Continuar sin evidencia" }));
     expect(current.clearEvidencePrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the real evidence list and exposes download and archive operations", async () => {
+    const listRecurrence = vi.fn().mockResolvedValue({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } });
+    const current = workspace({
+      selected: { ...selected, id: "rec-created", recurrenceNumber: "RI-2026-0042" },
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: "rec-created" },
+      detailState: "ready",
+      evidencePromptForId: "rec-created",
+      evidenceApi: { listRecurrence } as unknown as RecurrencesWorkspace["evidenceApi"],
+      capabilities: { ...workspace().capabilities, canUploadEvidence: true, canViewEvidence: true, canManageEvidence: true },
+    });
+    const user = userEvent.setup();
+    render(view(current));
+
+    const evidenceDialog = screen.getByRole("dialog", { name: "Agregar evidencia" });
+    expect(await within(evidenceDialog).findByText("router-frontal.png")).toBeInTheDocument();
+    expect(listRecurrence).toHaveBeenCalledWith("rec-created", 1, expect.any(AbortSignal));
+    await user.click(screen.getByRole("button", { name: "Descargar router-frontal.png" }));
+    expect(current.downloadEvidence).toHaveBeenCalledWith(evidence);
+    await user.click(screen.getByRole("button", { name: "Archivar router-frontal.png" }));
+    expect(screen.getByLabelText("Motivo para archivar router-frontal.png")).toBeInTheDocument();
   });
 
   it("removes report and evidence dialogs immediately when permissions are revoked", () => {

@@ -21,6 +21,9 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
   const [validationError, setValidationError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+  const originalRef = useRef<HTMLInputElement>(null);
+  const correctionRef = useRef<HTMLInputElement>(null);
+  const problemRef = useRef<HTMLTextAreaElement>(null);
   const pendingRef = useRef(false);
   const cancelRef = useRef(onCancel);
 
@@ -57,20 +60,29 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
     event.preventDefault();
     if (pendingRef.current) return;
     const problem = detectedProblem.trim();
-    if (!original || !correction) {
+    if (!original) {
       setValidationError("Selecciona la orden original y la orden correctiva.");
+      originalRef.current?.focus();
+      return;
+    }
+    if (!correction) {
+      setValidationError("Selecciona la orden original y la orden correctiva.");
+      correctionRef.current?.focus();
       return;
     }
     if (original.id === correction.id) {
       setValidationError("Selecciona dos órdenes distintas.");
+      correctionRef.current?.focus();
       return;
     }
     if (original.status !== "COMPLETED" || !correctionStatuses.includes(correction.status)) {
       setValidationError("Selecciona órdenes disponibles dentro de tu alcance.");
+      (original.status !== "COMPLETED" ? originalRef : correctionRef).current?.focus();
       return;
     }
     if (problem.length < 3) {
       setValidationError("Describe el problema detectado con al menos 3 caracteres.");
+      problemRef.current?.focus();
       return;
     }
     setValidationError(null);
@@ -94,10 +106,10 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
     <fieldset className="recurrence-report-form__body" disabled={pending}>
       <legend className="sr-only">Datos de la reincidencia</legend>
       <div className="recurrence-report-form__orders">
-        <OrderLookupCombobox label="Orden original" api={lookupApi} statuses={["COMPLETED"]} value={original} invalid={Boolean(errorId && !original)} describedBy={errorId} onChange={selectOriginal} />
-        <OrderLookupCombobox label="Orden correctiva" api={lookupApi} statuses={correctionStatuses} value={correction} excludeId={original?.id} invalid={Boolean(errorId && !correction)} describedBy={errorId} onChange={(order) => { setCorrection(order); setValidationError(null); }} />
+        <OrderLookupCombobox label="Orden original" name="originalOrderId" api={lookupApi} statuses={["COMPLETED"]} value={original} invalid={Boolean(errorId && !original)} describedBy={errorId} inputRef={originalRef} onChange={selectOriginal} />
+        <OrderLookupCombobox label="Orden correctiva" name="correctionOrderId" api={lookupApi} statuses={correctionStatuses} value={correction} excludeId={original?.id} invalid={Boolean(errorId && !correction)} describedBy={errorId} inputRef={correctionRef} onChange={(order) => { setCorrection(order); setValidationError(null); }} />
       </div>
-      <label className="recurrence-report-form__problem"><span>Problema detectado</span><textarea rows={5} maxLength={10_000} aria-describedby={errorId} aria-invalid={Boolean(errorId) || undefined} value={detectedProblem} onChange={(event) => { setDetectedProblem(event.target.value); setValidationError(null); }} placeholder="Describe qué volvió a fallar y cómo se manifestó…" /></label>
+      <label className="recurrence-report-form__problem"><span>Problema detectado</span><textarea ref={problemRef} name="detectedProblem" rows={5} maxLength={10_000} aria-describedby={errorId} aria-invalid={Boolean(errorId) || undefined} value={detectedProblem} onChange={(event) => { setDetectedProblem(event.target.value); setValidationError(null); }} placeholder="Ej.: la conexión volvió a fallar durante la visita…" /></label>
       {(validationError || apiError) && <p className="recurrence-report-form__error" id={errorId} role="alert"><AlertTriangle size={16} aria-hidden="true" />{validationError ?? apiError}</p>}
     </fieldset>
     <footer className="recurrence-report-form__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onCancel}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending}>{pending ? "Reportando…" : "Reportar reincidencia"}</button></footer>

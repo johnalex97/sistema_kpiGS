@@ -513,18 +513,19 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-order-combobox__control > svg:first-child { position: absolute; z-index: 1; left: 12px; color: #6d8591; pointer-events: none; }
 .recurrence-order-combobox__control > input { width: 100%; min-width: 0; min-height: 44px; padding: 0 42px 0 36px; border: 1px solid #cbdce2; border-radius: 7px; color: #173c54; background: #fff; font-family: "Segoe UI Variable", "Segoe UI", sans-serif; font-size: 11px; line-height: 1.35; }
 .recurrence-order-combobox__control > input[aria-invalid="true"] { border-color: #d97565; background: #fffafa; }
-.recurrence-order-combobox__control > button, .recurrence-order-combobox__control > svg:last-child { position: absolute; right: 2px; width: 40px; min-height: 40px; display: grid; place-items: center; border: 0; color: #597583; background: transparent; }
+.recurrence-order-combobox__control > button, .recurrence-order-combobox__control > svg:last-child { position: absolute; right: 0; width: 44px; min-height: 44px; display: grid; place-items: center; border: 0; color: #597583; background: transparent; }
 .recurrence-order-combobox__control > button { cursor: pointer; }
 .recurrence-order-combobox__loader { animation: spin .8s linear infinite; }
-.recurrence-order-combobox__list { position: absolute; z-index: 8; top: 100%; right: 0; left: 0; max-height: 258px; margin-top: 5px; padding: 5px; border: 1px solid #c8dce2; border-radius: 8px; background: #fff; box-shadow: 0 14px 32px rgba(15, 53, 73, .17); overflow-y: auto; }
-.recurrence-order-combobox__list > p, .recurrence-order-combobox__list > div { margin: 0; padding: 12px; color: #677f8c; font-size: 11px; line-height: 1.4; }
-.recurrence-order-combobox__list > div[role="alert"] { color: #914437; background: #fff7f5; }
-.recurrence-order-combobox__list > div[role="alert"] button { min-height: 44px; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; }
-.recurrence-order-combobox__list > button { width: 100%; min-height: 48px; padding: 8px 10px; display: grid; gap: 4px; border: 0; border-radius: 5px; color: #3b596a; background: transparent; cursor: pointer; text-align: left; }
-.recurrence-order-combobox__list > button strong { color: #143b54; font-family: "Consolas", monospace; font-size: 11px; font-weight: 700; line-height: 1.2; }
-.recurrence-order-combobox__list > button span { color: #6c8290; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
-.recurrence-order-combobox__list > button:hover, .recurrence-order-combobox__list > button[data-active="true"] { color: #086f77; background: #eaf8f9; }
-.recurrence-order-combobox__list > .recurrence-order-combobox__more { display: block; min-height: 44px; color: #087f88; border-top: 1px solid #e3ecef; border-radius: 0; font-weight: 700; text-align: center; }
+.recurrence-order-combobox__popup { position: absolute; z-index: 8; top: 100%; right: 0; left: 0; max-height: 258px; margin-top: 5px; padding: 5px; border: 1px solid #c8dce2; border-radius: 8px; background: #fff; box-shadow: 0 14px 32px rgba(15, 53, 73, .17); overflow-y: auto; }
+.recurrence-order-combobox__list { display: grid; gap: 1px; }
+.recurrence-order-combobox__list > [role="option"] { width: 100%; min-height: 48px; padding: 8px 10px; display: grid; gap: 4px; border-radius: 5px; color: #3b596a; background: transparent; cursor: pointer; text-align: left; }
+.recurrence-order-combobox__list > [role="option"] strong { color: #143b54; font-family: "Consolas", monospace; font-size: 11px; font-weight: 700; line-height: 1.2; }
+.recurrence-order-combobox__list > [role="option"] span { color: #6c8290; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+.recurrence-order-combobox__list > [role="option"]:hover, .recurrence-order-combobox__list > [role="option"][data-active="true"] { color: #086f77; background: #eaf8f9; }
+.recurrence-order-combobox__message { margin: 0; padding: 12px; color: #677f8c; font-size: 11px; line-height: 1.4; }
+.recurrence-order-combobox__message[role="alert"] { color: #914437; background: #fff7f5; }
+.recurrence-order-combobox__message button { min-height: 44px; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; }
+.recurrence-order-combobox__more { display: block; width: 100%; min-height: 44px; border: 0; color: #087f88; background: #fff; border-top: 1px solid #e3ecef; border-radius: 0; cursor: pointer; font-weight: 700; text-align: center; }
 .recurrence-report-form__problem { margin-top: 18px; display: grid; gap: 7px; }
 .recurrence-report-form__problem textarea { min-height: 120px; padding: 11px 12px; resize: vertical; border: 1px solid #cbdce2; border-radius: 7px; color: #28495c; background: #fff; font-family: "Segoe UI Variable", "Segoe UI", sans-serif; font-size: 12px; line-height: 1.5; }
 .recurrence-report-form__error, .recurrence-evidence-panel__error { margin: 14px 0 0; padding: 10px 11px; display: flex; align-items: flex-start; gap: 8px; border-left: 4px solid #e36d5a; border-radius: 5px; color: #8f4034; background: #fff5f2; font-size: 11px; line-height: 1.4; }
@@ -553,6 +554,11 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-evidence-panel__list strong { color: #29495d; font-size: 11px; }
 .recurrence-evidence-panel__list small { margin-top: 3px; color: #748a95; font-size: 10px; }
 .recurrence-evidence-panel__list li > button { width: 44px; min-height: 44px; display: grid; place-items: center; border: 1px solid #d3e2e6; border-radius: 6px; color: #315c72; background: #f6fafb; cursor: pointer; }
+.recurrence-evidence-panel__list-state { margin: 0; padding: 16px 20px; color: #617d8b; border-top: 1px solid #e1eaed; font-size: 11px; line-height: 1.4; }
+.recurrence-evidence-panel__list-state--error { color: #8f4034; background: #fff5f2; }
+.recurrence-evidence-panel__list-state--error p { margin: 0 0 9px; }
+.recurrence-evidence-panel__list-state .button, .recurrence-evidence-panel__more { min-height: 44px; }
+.recurrence-evidence-panel__more { width: 100%; margin-top: 9px; border: 0; border-top: 1px solid #e1eaed; color: #087f88; background: #fff; cursor: pointer; font-weight: 700; }
 .recurrence-evidence-panel__unavailable { margin: 0; padding: 14px 20px; color: #718793; border-top: 1px solid #e1eaed; font-size: 11px; }
 .recurrence-evidence-panel__archive { margin: 0 20px 18px; padding: 14px; border-left: 4px solid #d99426; border-radius: 6px; background: #fff8eb; }
 .recurrence-evidence-panel__archive textarea { min-height: 84px; padding: 9px 10px; resize: vertical; }
