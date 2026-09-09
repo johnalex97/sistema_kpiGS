@@ -117,6 +117,7 @@ function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWo
     retrySummary: vi.fn(),
     retryDetail: vi.fn(),
     reportRecurrence: vi.fn(async () => true),
+    analyzeRecurrence: vi.fn(async () => true),
     uploadEvidence: vi.fn(async () => true),
     downloadEvidence: vi.fn(async () => true),
     archiveEvidence: vi.fn(async () => true),
@@ -353,5 +354,64 @@ describe("RecurrencesPage", () => {
     expect(getComputedStyle(dialog.parentElement as HTMLElement).position).toBe("fixed");
     expect(getComputedStyle(within(dialog).getByRole("combobox", { name: "Orden original" })).minHeight).toBe("44px");
     expect(getComputedStyle(within(dialog).getByRole("button", { name: "Cancelar" })).minHeight).toBe("44px");
+  });
+
+  it("opens analysis only for an OPEN case with review permission and submits original technicians", async () => {
+    const user = userEvent.setup();
+    const originalTechnician = {
+      technician: { id: "22222222-2222-4222-8222-222222222222", code: "TEC-001", fullName: "Ana López" },
+      participation: "ORIGINAL_RESPONSIBLE" as const,
+      affectsQuality: false,
+      justification: null,
+    };
+    const open = { ...selected, status: "OPEN" as const, technicians: [originalTechnician] };
+    const current = workspace({
+      selected: open,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: open.id },
+      catalog: { ...workspace().catalog!, causes: [{ id: "11111111-1111-4111-8111-111111111111", code: "REWORK", name: "Retrabajo" }] },
+      capabilities: { ...workspace().capabilities, canReview: true },
+    });
+    const rendered = render(view(current));
+
+    const trigger = screen.getByRole("button", { name: "Analizar caso" });
+    await user.click(trigger);
+    expect(current.setActionMode).toHaveBeenCalledWith("analyze");
+    rendered.rerender(view({ ...current, actionMode: "analyze" }));
+    const dialog = screen.getByRole("dialog", { name: "Analizar caso" });
+    await user.selectOptions(within(dialog).getByLabelText("Causa"), "11111111-1111-4111-8111-111111111111");
+    await user.selectOptions(within(dialog).getByLabelText("Impacto"), "HIGH");
+    await user.selectOptions(within(dialog).getByLabelText("Responsabilidad"), "TECHNICAL_WORK");
+    await user.type(within(dialog).getByLabelText("Análisis técnico"), "Intervención incompleta");
+    await user.click(within(dialog).getByLabelText("Afecta calidad de Ana López"));
+    await user.type(within(dialog).getByLabelText("Justificación para Ana López"), "No certificó la conexión");
+    await user.click(within(dialog).getByRole("button", { name: "Guardar análisis" }));
+
+    expect(current.analyzeRecurrence).toHaveBeenCalledWith(expect.objectContaining({
+      causeId: "11111111-1111-4111-8111-111111111111",
+      qualityDecisions: [{ technicianId: originalTechnician.technician.id, affectsQuality: true, justification: "No certificó la conexión" }],
+    }));
+
+    rendered.rerender(view(workspace({ selected, detailState: "ready", capabilities: { ...workspace().capabilities, canReview: true } })));
+    expect(screen.queryByRole("button", { name: "Analizar caso" })).not.toBeInTheDocument();
+  });
+
+  it("removes analysis on permission revocation and restores focus to the case register", async () => {
+    const open = { ...selected, status: "OPEN" as const };
+    const allowed = workspace({
+      selected: open,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: open.id },
+      actionMode: "analyze",
+      capabilities: { ...workspace().capabilities, canReview: true },
+    });
+    const rendered = render(view(allowed));
+    expect(screen.getByRole("dialog", { name: "Analizar caso" })).toBeInTheDocument();
+
+    rendered.rerender(view({ ...allowed, actionMode: "analyze", capabilities: { ...allowed.capabilities, canReview: false } }));
+
+    expect(screen.queryByRole("dialog", { name: "Analizar caso" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Analizar caso" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Casos registrados")).toHaveFocus());
   });
 });

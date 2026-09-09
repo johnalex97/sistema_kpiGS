@@ -453,6 +453,8 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-detail__head span { display: block; margin-top: 6px; color: #607887; font: 700 10px/1 "Consolas", monospace; }
 .recurrence-detail__signal { padding: 11px 17px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid #e4ecef; background: #f7fafb; }
 .recurrence-detail__signal > strong { color: #284b61; font: 700 10px/1 "Consolas", monospace; text-transform: uppercase; }
+.recurrence-detail__actions { padding: 11px 17px; display: flex; justify-content: flex-end; border-bottom: 1px solid #dbe5e9; background: #f7fafb; }
+.recurrence-detail__analyze { min-height: 44px; }
 .recurrence-detail__body { padding: 0 17px 18px; }
 .recurrence-detail__body > section { padding: 17px 0; border-bottom: 1px solid #e5edef; }
 .recurrence-detail__body h3 { margin: 5px 0 0; display: flex; align-items: center; gap: 6px; color: #183b55; font: 700 13px/1.3 "Bahnschrift", sans-serif; }
@@ -499,6 +501,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-workspace__actions > .button { min-height: 44px; }
 .recurrence-action-backdrop { position: fixed; z-index: 60; inset: 0; padding: 20px; display: grid; place-items: center; background: rgba(11, 35, 64, .58); overflow-y: auto; overscroll-behavior: contain; }
 .recurrence-action-backdrop--evidence { z-index: 61; background: rgba(11, 35, 64, .66); }
+.recurrence-action-backdrop--analysis { z-index: 62; background: rgba(11, 35, 64, .66); }
 .recurrence-report-form, .recurrence-evidence-panel { width: 760px; max-width: 100%; max-height: 94vh; border: 1px solid #cbdde2; border-left: 5px solid #e36d5a; border-radius: 10px; color: #29485d; background: #fff; box-shadow: 0 24px 64px rgba(6, 32, 52, .28); overflow-y: auto; }
 .recurrence-evidence-panel { width: 660px; border-left-color: #09aeb4; }
 .recurrence-report-form__head, .recurrence-evidence-panel__head { position: sticky; z-index: 4; top: 0; padding: 18px 20px 15px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid #dbe5e9; background: rgba(255, 255, 255, .98); }
@@ -566,6 +569,46 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-evidence-panel__archive > div { margin-top: 11px; display: flex; justify-content: flex-end; gap: 8px; }
 .recurrence-evidence-panel__archive .button { min-height: 44px; }
 
+.recurrence-analysis-form { width: 820px; max-width: 100%; max-height: 94vh; border: 1px solid #cbdde2; border-left: 5px solid #09aeb4; border-radius: 10px; color: #29485d; background: #fff; box-shadow: 0 24px 64px rgba(6, 32, 52, .28); overflow-y: auto; }
+.recurrence-analysis-form__head { position: sticky; z-index: 4; top: 0; padding: 18px 20px 15px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid #dbe5e9; background: rgba(255, 255, 255, .98); }
+.recurrence-analysis-form__head h2 { margin: 4px 0 0; color: #0b2340; font: 700 20px/1.15 "Bahnschrift", "Arial Narrow", sans-serif; letter-spacing: -.015em; }
+.recurrence-analysis-form__head span { display: block; margin-top: 6px; color: #647c89; font-size: 11px; line-height: 1.4; }
+.recurrence-analysis-form__head .icon-button { width: 44px; min-width: 44px; min-height: 44px; }
+.recurrence-analysis-form__body { margin: 0; padding: 20px; border: 0; }
+.recurrence-analysis-form__classification { display: grid; grid-template-columns: 1.25fr .75fr 1fr; gap: 12px; }
+.recurrence-analysis-form__classification label, .recurrence-analysis-form__analysis, .recurrence-analysis-form__documentation label, .recurrence-analysis-form__quality li > label:last-child { min-width: 0; display: grid; gap: 7px; }
+.recurrence-analysis-form__classification label > span, .recurrence-analysis-form__analysis > span, .recurrence-analysis-form__documentation label > span, .recurrence-analysis-form__quality li > label:last-child > span { color: #526d7c; font-size: 11px; font-weight: 700; }
+.recurrence-analysis-form__classification select, .recurrence-analysis-form__documentation input, .recurrence-analysis-form__documentation textarea, .recurrence-analysis-form__analysis textarea, .recurrence-analysis-form__quality textarea { width: 100%; min-height: 44px; padding: 9px 10px; border: 1px solid #cbdce2; border-radius: 7px; color: #29485d; background: #fff; font: 11px/1.45 "Segoe UI Variable", "Segoe UI", sans-serif; }
+.recurrence-analysis-form__classification select { padding-top: 0; padding-bottom: 0; }
+.recurrence-analysis-form__analysis { margin-top: 16px; }
+.recurrence-analysis-form__analysis textarea { min-height: 118px; resize: vertical; font-size: 12px; }
+.recurrence-analysis-form__quality, .recurrence-analysis-form__documentation { margin-top: 18px; padding-top: 17px; border-top: 1px solid #dbe5e9; }
+.recurrence-analysis-form__quality h3, .recurrence-analysis-form__documentation h3 { margin: 5px 0 0; display: flex; align-items: center; gap: 6px; color: #183b55; font: 700 13px/1.3 "Bahnschrift", sans-serif; }
+.recurrence-analysis-form__quality > div > p { margin: 6px 0 0; color: #6b818d; font-size: 10px; line-height: 1.4; }
+.recurrence-analysis-form__label { color: #6d8491; font: 700 10px/1 "Consolas", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.recurrence-analysis-form__quality ul { margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; list-style: none; }
+.recurrence-analysis-form__quality li { min-width: 0; padding: 11px; display: grid; gap: 9px; border: 1px solid #dce7ea; border-radius: 7px; background: #fbfdfe; }
+.recurrence-analysis-form__decision { min-height: 44px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.recurrence-analysis-form__decision input { width: 20px; height: 20px; flex: 0 0 auto; accent-color: #09aeb4; }
+.recurrence-analysis-form__decision span { min-width: 0; }
+.recurrence-analysis-form__decision strong, .recurrence-analysis-form__decision small { display: block; overflow-wrap: anywhere; }
+.recurrence-analysis-form__decision strong { color: #29495d; font-size: 11px; }
+.recurrence-analysis-form__decision small { margin-top: 3px; color: #748a95; font: 700 10px/1.2 "Consolas", monospace; }
+.recurrence-analysis-form__decision:has(input:disabled) { cursor: default; opacity: .65; }
+.recurrence-analysis-form__quality textarea { min-height: 76px; resize: vertical; }
+.recurrence-analysis-form__quality textarea:disabled { color: #7d8e97; background: #f0f4f5; }
+.recurrence-analysis-form__empty { margin: 12px 0 0; padding: 12px; color: #6f8490; border: 1px dashed #cbdce2; border-radius: 7px; background: #f7fafb; font-size: 11px; }
+.recurrence-analysis-form__cost { margin-top: 12px; display: grid; grid-template-columns: .55fr 1fr; gap: 12px; }
+.recurrence-analysis-form__documentation textarea { min-height: 70px; resize: vertical; }
+.recurrence-analysis-form__age { margin-top: 12px; }
+.recurrence-analysis-form__age small { color: #718793; font-size: 10px; line-height: 1.4; }
+.recurrence-analysis-form [aria-invalid="true"] { border-color: #d97565; background: #fffafa; }
+.recurrence-analysis-form__error { margin: 14px 0 0; padding: 10px 11px; display: flex; align-items: flex-start; gap: 8px; border-left: 4px solid #e36d5a; border-radius: 5px; color: #8f4034; background: #fff5f2; font-size: 11px; line-height: 1.4; }
+.recurrence-analysis-form__error svg { flex: 0 0 auto; margin-top: 1px; }
+.recurrence-analysis-form__actions { position: sticky; z-index: 3; bottom: 0; padding: 13px 20px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; border-top: 1px solid #dbe5e9; background: rgba(247, 250, 251, .98); }
+.recurrence-analysis-form__actions .button { min-height: 44px; }
+.recurrence-analysis-form button:focus-visible, .recurrence-analysis-form input:focus-visible, .recurrence-analysis-form select:focus-visible, .recurrence-analysis-form textarea:focus-visible { outline: 3px solid rgba(9, 174, 180, .25); outline-offset: 2px; border-color: #09aeb4; }
+
 @media (max-width: 1180px) {
   .recurrence-summary { grid-template-columns: 1fr 1fr; }
   .recurrence-summary > div:nth-child(3) { border-left: 0; }
@@ -608,7 +651,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-workspace__actions { align-items: stretch; flex-direction: column; }
   .recurrence-workspace__actions > .button { width: 100%; }
   .recurrence-action-backdrop { padding: 10px; align-items: end; }
-  .recurrence-report-form, .recurrence-evidence-panel { max-height: 96vh; border-radius: 9px 9px 0 0; }
+  .recurrence-report-form, .recurrence-evidence-panel, .recurrence-analysis-form { max-height: 96vh; border-radius: 9px 9px 0 0; }
   .recurrence-report-form__orders, .recurrence-evidence-panel__fields { grid-template-columns: 1fr; }
   .recurrence-report-form__head, .recurrence-evidence-panel__head { padding: 16px; }
   .recurrence-report-form__body, .recurrence-evidence-panel__upload fieldset { padding-right: 16px; padding-left: 16px; }
@@ -616,6 +659,10 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-report-form__actions .button, .recurrence-evidence-panel__actions .button { width: 100%; }
   .recurrence-evidence-panel__list li { grid-template-columns: 18px minmax(0, 1fr) 44px; }
   .recurrence-evidence-panel__list li > button:last-child { grid-column: 3; }
+  .recurrence-analysis-form__head, .recurrence-analysis-form__body, .recurrence-analysis-form__actions { padding-right: 16px; padding-left: 16px; }
+  .recurrence-analysis-form__classification, .recurrence-analysis-form__quality ul, .recurrence-analysis-form__cost { grid-template-columns: 1fr; }
+  .recurrence-analysis-form__actions { align-items: stretch; flex-direction: column-reverse; }
+  .recurrence-analysis-form__actions .button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

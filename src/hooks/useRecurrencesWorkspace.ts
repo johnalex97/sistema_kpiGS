@@ -9,6 +9,7 @@ import {
 import type { RecurrenceApi } from "../api/recurrences";
 import type { Evidence, EvidenceUploadInput } from "../models/evidence";
 import type {
+  AnalyzeRecurrenceInput,
   RecurrenceCatalog,
   RecurrenceDetail,
   RecurrenceListFilters,
@@ -70,6 +71,7 @@ export interface RecurrencesWorkspace {
   retrySummary(): void;
   retryDetail(): void;
   reportRecurrence(input: ReportRecurrenceInput): Promise<boolean>;
+  analyzeRecurrence(input: Omit<AnalyzeRecurrenceInput, "version">): Promise<boolean>;
   uploadEvidence(input: EvidenceUploadInput): Promise<boolean>;
   downloadEvidence(evidence: Evidence): Promise<boolean>;
   archiveEvidence(evidence: Evidence, reason: string): Promise<boolean>;
@@ -192,6 +194,23 @@ function reportMutationError(error: unknown): { message: string; conflict: boole
   };
   if (error.status === 403) return { message: "No tienes permiso para reportar reincidencias.", conflict: false };
   return { message: messages[error.code] ?? "No fue posible reportar la reincidencia.", conflict: error.status === 409 };
+}
+
+function analysisMutationError(error: unknown): { message: string; conflict: boolean } {
+  if (!(error instanceof ApiClientError)) return { message: "No fue posible guardar el análisis.", conflict: false };
+  if (error.status === 403) return { message: "No tienes permiso para analizar reincidencias.", conflict: false };
+  const messages: Record<string, string> = {
+    VERSION_CONFLICT: "El caso cambió en el servidor. Revisa la versión actual antes de guardar de nuevo.",
+    RECURRENCE_CAUSE_NOT_FOUND: "La causa seleccionada ya no está disponible. Actualiza el catálogo y elige otra.",
+    RECURRENCE_QUALITY_INVALID: "Revisa las decisiones de calidad de todos los técnicos originales.",
+    RECURRENCE_DOCUMENTATION_INCOMPLETE: "Completa la documentación requerida del análisis, costo o antigüedad.",
+    INVALID_RECURRENCE_TRANSITION: "El caso ya no está abierto para análisis.",
+    RECURRENCE_NOT_FOUND: "El caso ya no está disponible.",
+  };
+  return {
+    message: messages[error.code] ?? "No fue posible guardar el análisis.",
+    conflict: error.status === 409 && error.code === "VERSION_CONFLICT",
+  };
 }
 
 function evidenceMutationError(error: unknown, action: "upload" | "download" | "archive"): { message: string; conflict: boolean } {
@@ -742,6 +761,59 @@ export function useRecurrencesWorkspace({
     }
   }, [api, invalidateDetail, loadList, loadSummary]);
 
+  const analyzeRecurrence = useCallback(async (
+    input: Omit<AnalyzeRecurrenceInput, "version">,
+  ): Promise<boolean> => {
+    if (mutationPendingRef.current) return false;
+    const target = selectedRef.current;
+    if (!capabilitiesRef.current.canReview) {
+      setMutation({ name: "analyze", pending: false, error: "No tienes permiso para analizar reincidencias.", conflict: false });
+      return false;
+    }
+    if (!target) {
+      setMutation({ name: "analyze", pending: false, error: "Selecciona un caso antes de registrar el análisis.", conflict: false });
+      return false;
+    }
+    if (target.status !== "OPEN") {
+      setMutation({ name: "analyze", pending: false, error: "El caso ya no está abierto para análisis.", conflict: false });
+      return false;
+    }
+
+    mutationPendingRef.current = true;
+    setMutation({ name: "analyze", pending: true, error: null, conflict: false });
+    try {
+      const incoming = await api.analyze(target.id, { ...input, version: target.version });
+      const targetRemainsSelected = selectedIdRef.current === target.id;
+      if (targetRemainsSelected) {
+        invalidateDetail();
+        const next = reconcileRecurrence(selectedRef.current, incoming);
+        selectedRef.current = next;
+        setSelected(next);
+        setDetailState("ready");
+        setActionModeState(null);
+      }
+      setMutation({ name: "analyze", pending: false, error: null, conflict: false });
+
+      const requestedQuery = queryRef.current;
+      const requestedSummary = createSummarySnapshot(summaryFilters(requestedQuery.filters));
+      const requestedList = createListSnapshot(requestedQuery.filters, requestedSummary);
+      setListState("loading");
+      setListStale(false);
+      setSummaryState("loading");
+      void loadList(listKey(requestedQuery.filters), requestedList);
+      void loadSummary(requestedSummary);
+      if (targetRemainsSelected) void loadDetail(target.id, true);
+      return true;
+    } catch (error: unknown) {
+      const failure = analysisMutationError(error);
+      if (failure.conflict && selectedIdRef.current === target.id) await loadDetail(target.id, true);
+      setMutation({ name: "analyze", pending: false, error: failure.message, conflict: failure.conflict });
+      return false;
+    } finally {
+      mutationPendingRef.current = false;
+    }
+  }, [api, invalidateDetail, loadDetail, loadList, loadSummary]);
+
   const uploadEvidence = useCallback(async (input: EvidenceUploadInput): Promise<boolean> => {
     if (mutationPendingRef.current) return false;
     const targetId = evidencePromptRef.current ?? selectedIdRef.current;
@@ -872,6 +944,7 @@ export function useRecurrencesWorkspace({
     retrySummary,
     retryDetail,
     reportRecurrence,
+    analyzeRecurrence,
     uploadEvidence,
     downloadEvidence,
     archiveEvidence,
