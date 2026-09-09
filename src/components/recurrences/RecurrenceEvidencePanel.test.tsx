@@ -26,8 +26,9 @@ const emptyEvidencePage = { items: [] as Evidence[], pagination: { page: 1, page
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
-  return { promise, resolve };
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 function evidenceReader(listRecurrence = vi.fn().mockResolvedValue(emptyEvidencePage)): Pick<EvidenceApi, "listRecurrence"> {
@@ -243,13 +244,17 @@ describe("RecurrenceEvidencePanel", () => {
     expect(listRecurrence).toHaveBeenNthCalledWith(2, "rec-1", 1, expect.any(AbortSignal));
   });
 
-  it("retires archived evidence locally when refreshing page 1 fails", async () => {
+  it("preserves the retired evidence snapshot through failed retries until page 1 succeeds", async () => {
     const user = userEvent.setup();
     const evidenceTwo: Evidence = { ...evidence, id: "evidence-2", originalName: "diagnostico.pdf", mimeType: "application/pdf", fileExtension: "pdf" };
+    const evidenceThree: Evidence = { ...evidence, id: "evidence-3", originalName: "router-nuevo.png" };
+    const failedRetry = deferred<Awaited<ReturnType<EvidenceApi["listRecurrence"]>>>();
+    const successfulRetry = deferred<Awaited<ReturnType<EvidenceApi["listRecurrence"]>>>();
     const listRecurrence = vi.fn()
-      .mockResolvedValueOnce({ items: [evidence, evidenceTwo], pagination: { page: 1, pageSize: 20, totalItems: 2, totalPages: 1 } })
+      .mockResolvedValueOnce({ items: [evidence, evidenceTwo], pagination: { page: 1, pageSize: 20, totalItems: 3, totalPages: 2 } })
       .mockRejectedValueOnce(new Error("red privada"))
-      .mockResolvedValueOnce({ items: [evidenceTwo], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } });
+      .mockImplementationOnce(() => failedRetry.promise)
+      .mockImplementationOnce(() => successfulRetry.promise);
     render(<RecurrenceEvidencePanel {...props({ evidenceApi: evidenceReader(listRecurrence), canManage: true })} />);
 
     await user.click(await screen.findByRole("button", { name: "Archivar router-frontal.png" }));
@@ -264,8 +269,27 @@ describe("RecurrenceEvidencePanel", () => {
     expect(screen.getByLabelText("Archivo de evidencia")).toHaveFocus();
 
     await user.click(screen.getByRole("button", { name: "Reintentar evidencias" }));
-    expect(await screen.findByText("diagnostico.pdf")).toBeInTheDocument();
+    await act(async () => failedRetry.reject(new Error("red privada otra vez")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No fue posible cargar las evidencias");
+    expect(screen.getByText("diagnostico.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Descargar diagnostico.pdf" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cargar más evidencias" })).toBeEnabled();
     expect(screen.queryByText("router-frontal.png")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Descargar router-frontal.png" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Archivar router-frontal.png" })).not.toBeInTheDocument();
+    expect(listRecurrence).toHaveBeenNthCalledWith(3, "rec-1", 1, expect.any(AbortSignal));
+
+    await user.click(screen.getByRole("button", { name: "Reintentar evidencias" }));
+    expect(screen.getByText("diagnostico.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Descargar diagnostico.pdf" })).toBeDisabled();
+    expect(screen.queryByText("router-frontal.png")).not.toBeInTheDocument();
+    await act(async () => successfulRetry.resolve({ items: [evidenceThree], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }));
+    expect(await screen.findByText("router-nuevo.png")).toBeInTheDocument();
+    expect(screen.queryByText("diagnostico.pdf")).not.toBeInTheDocument();
+    expect(screen.queryByText("router-frontal.png")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cargar más evidencias" })).not.toBeInTheDocument();
+    expect(listRecurrence).toHaveBeenNthCalledWith(4, "rec-1", 1, expect.any(AbortSignal));
   });
 
   it("returns focus to the archive trigger after cancel or Escape", async () => {

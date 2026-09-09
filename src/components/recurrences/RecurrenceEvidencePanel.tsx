@@ -130,13 +130,13 @@ export function RecurrenceEvidencePanel({
     return () => { active = false; };
   }, [canManage]);
 
-  const loadEvidences = useCallback(async (requestedPage: number, afterMutation = false) => {
-    if (!canView || evidenceControllerRef.current || !afterMutation && (pendingRef.current || archiveTargetRef.current)) return;
+  const loadEvidences = useCallback(async (requestedPage: number, reason?: "afterMutation" | "retry") => {
+    if (!canView || evidenceControllerRef.current || reason !== "afterMutation" && (pendingRef.current || archiveTargetRef.current)) return;
     const controller = new AbortController();
     evidenceControllerRef.current = controller;
     const generation = ++evidenceGenerationRef.current;
     const loadingSnapshot: EvidenceListSnapshot = requestedPage === 1
-      ? afterMutation
+      ? reason
         ? { ...evidenceListRef.current, status: "loading" }
         : { items: [], status: "loading", page: 1, totalPages: 1 }
       : { ...evidenceListRef.current, status: "loading" };
@@ -247,7 +247,7 @@ export function RecurrenceEvidencePanel({
           items: remainingItems,
           status: remainingItems.length === 0 && currentList.page >= currentList.totalPages ? "empty" : "ready",
         });
-        await loadEvidences(1, true);
+        await loadEvidences(1, "afterMutation");
         archived = true;
       }
     } finally {
@@ -274,7 +274,7 @@ export function RecurrenceEvidencePanel({
     </form>
 
     {canView && evidenceListState === "loading" && listedEvidences.length === 0 && <div className="recurrence-evidence-panel__list-state" role="status" aria-label="Cargando evidencias">Cargando evidencias…</div>}
-    {canView && evidenceListState === "error" && <div className="recurrence-evidence-panel__list-state recurrence-evidence-panel__list-state--error" role="alert"><p>No fue posible cargar las evidencias.</p><button className="button button--ghost" type="button" onClick={() => void loadEvidences(1)}>Reintentar evidencias</button></div>}
+    {canView && evidenceListState === "error" && <div className="recurrence-evidence-panel__list-state recurrence-evidence-panel__list-state--error" role="alert"><p>No fue posible cargar las evidencias.</p><button className="button button--ghost" type="button" onClick={() => void loadEvidences(1, "retry")}>Reintentar evidencias</button></div>}
     {canView && evidenceListState === "empty" && <p className="recurrence-evidence-panel__unavailable" role="status" aria-label="Sin evidencias activas">No hay evidencias activas para este caso.</p>}
     {canView && (listedEvidences.length > 0 || evidencePage < evidenceTotalPages) && <section className="recurrence-evidence-panel__list" aria-labelledby="recurrence-evidence-list-title"><span className="recurrence-evidence-panel__label">Respaldo del caso</span><h3 id="recurrence-evidence-list-title">Archivos disponibles</h3>{listedEvidences.length > 0 && <ul>{listedEvidences.map((item) => <li key={item.id}><FileText size={17} aria-hidden="true" /><span><strong>{item.originalName}</strong><small>{item.mimeType} · {formatBytes(String(item.sizeBytes))} · v{item.version}</small></span><button type="button" aria-label={`Descargar ${item.originalName}`} disabled={pendingAction !== null || evidenceListState === "loading"} onClick={() => void download(item)}><Download size={16} aria-hidden="true" /></button>{canManage && <button type="button" aria-label={`Archivar ${item.originalName}`} disabled={pendingAction !== null || evidenceListState === "loading"} onClick={(event) => { if (evidenceControllerRef.current || pendingRef.current) return; archiveTriggerRef.current = event.currentTarget; archiveTargetRef.current = item; setArchiveTarget(item); setArchiveReason(""); setArchiveError(null); }}><Archive size={16} aria-hidden="true" /></button>}</li>)}</ul>}{evidencePage < evidenceTotalPages && <button className="recurrence-evidence-panel__more" type="button" disabled={evidenceListState === "loading" || pendingAction !== null || archiveTarget !== null} onClick={() => { if (pendingRef.current || archiveTargetRef.current) return; void loadEvidences(evidencePage + 1); }}>{evidenceListState === "loading" ? "Cargando más…" : "Cargar más evidencias"}</button>}</section>}
     {!canView && <p className="recurrence-evidence-panel__unavailable">La evidencia existente no está disponible para tu perfil.</p>}
