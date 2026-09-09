@@ -7,6 +7,15 @@ import { formatBytes } from "./recurrence-format";
 const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const maxEvidenceBytes = 10 * 1024 * 1024;
 
+type EvidenceListStatus = "idle" | "loading" | "ready" | "empty" | "error";
+
+interface EvidenceListSnapshot {
+  items: Evidence[];
+  status: EvidenceListStatus;
+  page: number;
+  totalPages: number;
+}
+
 export interface RecurrenceEvidencePanelProps {
   recurrenceId: string;
   recurrenceNumber: string;
@@ -48,18 +57,33 @@ export function RecurrenceEvidencePanel({
   const [archiveTarget, setArchiveTarget] = useState<Evidence | null>(null);
   const [archiveReason, setArchiveReason] = useState("");
   const [archiveError, setArchiveError] = useState<string | null>(null);
-  const [listedEvidences, setListedEvidences] = useState<Evidence[]>([]);
-  const [evidenceListState, setEvidenceListState] = useState<"idle" | "loading" | "ready" | "empty" | "error">(canView ? "loading" : "idle");
-  const [evidencePage, setEvidencePage] = useState(1);
-  const [evidenceTotalPages, setEvidenceTotalPages] = useState(1);
+  const initialEvidenceList: EvidenceListSnapshot = { items: [], status: canView ? "loading" : "idle", page: 1, totalPages: 1 };
+  const [evidenceList, setEvidenceList] = useState<EvidenceListSnapshot>(initialEvidenceList);
   const panelRef = useRef<HTMLElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const descriptionRef = useRef<HTMLInputElement>(null);
   const archiveReasonRef = useRef<HTMLTextAreaElement>(null);
   const archiveTargetRef = useRef<Evidence | null>(null);
+  const archiveTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const restoreArchiveFocusRef = useRef(false);
   const pendingRef = useRef(false);
   const closeRef = useRef(onClose);
   const evidenceControllerRef = useRef<AbortController | null>(null);
   const evidenceGenerationRef = useRef(0);
+  const evidenceListRef = useRef(initialEvidenceList);
+
+  const publishEvidenceList = useCallback((next: EvidenceListSnapshot) => {
+    evidenceListRef.current = next;
+    setEvidenceList(next);
+  }, []);
+
+  const dismissArchive = () => {
+    archiveTargetRef.current = null;
+    restoreArchiveFocusRef.current = true;
+    setArchiveTarget(null);
+    setArchiveReason("");
+    setArchiveError(null);
+  };
 
   useEffect(() => { closeRef.current = onClose; }, [onClose]);
   useEffect(() => { archiveTargetRef.current = archiveTarget; }, [archiveTarget]);
@@ -69,9 +93,7 @@ export function RecurrenceEvidencePanel({
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || pendingRef.current) return;
       if (archiveTargetRef.current) {
-        setArchiveTarget(null);
-        setArchiveReason("");
-        setArchiveError(null);
+        dismissArchive();
       } else closeRef.current();
     };
     document.addEventListener("keydown", handleEscape);
@@ -86,7 +108,16 @@ export function RecurrenceEvidencePanel({
   }, [archiveTarget]);
 
   useEffect(() => {
+    if (archiveTarget || !restoreArchiveFocusRef.current) return;
+    restoreArchiveFocusRef.current = false;
+    const trigger = archiveTriggerRef.current;
+    if (trigger?.isConnected && !trigger.disabled) trigger.focus();
+    else fileInputRef.current?.focus();
+  }, [archiveTarget, canManage, evidenceList]);
+
+  useEffect(() => {
     if (canManage) return;
+    if (archiveTargetRef.current) restoreArchiveFocusRef.current = true;
     archiveTargetRef.current = null;
     let active = true;
     void Promise.resolve().then(() => {
@@ -99,35 +130,35 @@ export function RecurrenceEvidencePanel({
     return () => { active = false; };
   }, [canManage]);
 
-  const loadEvidences = useCallback(async (requestedPage: number) => {
-    if (!canView) return;
-    evidenceControllerRef.current?.abort();
+  const loadEvidences = useCallback(async (requestedPage: number, afterMutation = false) => {
+    if (!canView || evidenceControllerRef.current || !afterMutation && (pendingRef.current || archiveTargetRef.current)) return;
     const controller = new AbortController();
     evidenceControllerRef.current = controller;
     const generation = ++evidenceGenerationRef.current;
-    if (requestedPage === 1) {
-      setListedEvidences([]);
-      setEvidencePage(1);
-      setEvidenceTotalPages(1);
-    }
-    setEvidenceListState("loading");
+    const loadingSnapshot: EvidenceListSnapshot = requestedPage === 1
+      ? { items: [], status: "loading", page: 1, totalPages: 1 }
+      : { ...evidenceListRef.current, status: "loading" };
+    publishEvidenceList(loadingSnapshot);
     try {
       const incoming = await evidenceApi.listRecurrence(recurrenceId, requestedPage, controller.signal);
       if (controller.signal.aborted || generation !== evidenceGenerationRef.current) return;
-      setListedEvidences((current) => {
-        const combined = requestedPage === 1 ? incoming.items : [...current, ...incoming.items];
-        return [...new Map(combined.map((item) => [item.id, item])).values()];
+      const combined = requestedPage === 1 ? incoming.items : [...loadingSnapshot.items, ...incoming.items];
+      const items = [...new Map(combined.map((item) => [item.id, item])).values()];
+      const page = incoming.pagination.page;
+      const totalPages = incoming.pagination.totalPages;
+      publishEvidenceList({
+        items,
+        status: items.length === 0 && page >= totalPages ? "empty" : "ready",
+        page,
+        totalPages,
       });
-      setEvidencePage(incoming.pagination.page);
-      setEvidenceTotalPages(incoming.pagination.totalPages);
-      setEvidenceListState(incoming.items.length === 0 && requestedPage === 1 ? "empty" : "ready");
     } catch (loadError: unknown) {
       if (controller.signal.aborted || generation !== evidenceGenerationRef.current || loadError instanceof Error && loadError.name === "AbortError") return;
-      setEvidenceListState("error");
+      publishEvidenceList({ ...evidenceListRef.current, status: "error" });
     } finally {
       if (evidenceControllerRef.current === controller) evidenceControllerRef.current = null;
     }
-  }, [canView, evidenceApi, recurrenceId]);
+  }, [canView, evidenceApi, publishEvidenceList, recurrenceId]);
 
   useEffect(() => {
     if (!canView) {
@@ -156,16 +187,17 @@ export function RecurrenceEvidencePanel({
   };
 
   const effectiveAccessLevel: EvidenceAccessLevel = canManage ? accessLevel : "TECHNICIAN";
+  const { items: listedEvidences, status: evidenceListState, page: evidencePage, totalPages: evidenceTotalPages } = evidenceList;
 
   const upload = async (event?: FormEvent) => {
     event?.preventDefault();
     if (pendingRef.current) return;
     const selectedFile = file;
     const invalidFile = fileValidation(selectedFile);
-    if (invalidFile) { setValidationError(invalidFile); return; }
+    if (invalidFile) { setValidationError(invalidFile); fileInputRef.current?.focus(); return; }
     if (!selectedFile) return;
     const normalizedDescription = description.trim();
-    if (normalizedDescription.length > 500) { setValidationError("La descripción no puede exceder 500 caracteres."); return; }
+    if (normalizedDescription.length > 500) { setValidationError("La descripción no puede exceder 500 caracteres."); descriptionRef.current?.focus(); return; }
     setValidationError(null);
     setUploadFailed(false);
     pendingRef.current = true;
@@ -186,7 +218,7 @@ export function RecurrenceEvidencePanel({
   };
 
   const download = async (item: Evidence) => {
-    if (pendingRef.current || !canView) return;
+    if (pendingRef.current || evidenceControllerRef.current || !canView) return;
     pendingRef.current = true;
     setPendingAction("download");
     try { await onDownload(item); } finally {
@@ -196,24 +228,23 @@ export function RecurrenceEvidencePanel({
   };
 
   const archive = async () => {
-    if (pendingRef.current || !archiveTarget || !canManage) return;
+    if (pendingRef.current || evidenceControllerRef.current || !archiveTarget || !canManage) return;
     const reason = archiveReason.trim();
-    if (reason.length < 10) { setArchiveError("Escribe el motivo con al menos 10 caracteres."); return; }
-    if (reason.length > 500) { setArchiveError("El motivo no puede exceder 500 caracteres."); return; }
+    if (reason.length < 10) { setArchiveError("Escribe el motivo con al menos 10 caracteres."); archiveReasonRef.current?.focus(); return; }
+    if (reason.length > 500) { setArchiveError("El motivo no puede exceder 500 caracteres."); archiveReasonRef.current?.focus(); return; }
     setArchiveError(null);
     pendingRef.current = true;
     setPendingAction("archive");
+    let archived = false;
     try {
       if (await onArchive(archiveTarget, reason)) {
-        const archivedId = archiveTarget.id;
-        setListedEvidences((current) => current.filter((item) => item.id !== archivedId));
-        if (listedEvidences.length === 1 && listedEvidences[0]?.id === archivedId) setEvidenceListState("empty");
-        setArchiveTarget(null);
-        setArchiveReason("");
+        await loadEvidences(1, true);
+        archived = true;
       }
     } finally {
       pendingRef.current = false;
       setPendingAction(null);
+      if (archived) dismissArchive();
     }
   };
 
@@ -226,7 +257,7 @@ export function RecurrenceEvidencePanel({
         <label className="recurrence-evidence-panel__file"><span>Archivo de evidencia</span><input ref={fileInputRef} name="evidenceFile" type="file" aria-label="Archivo de evidencia" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => { setFile(event.target.files?.[0] ?? null); setValidationError(null); setUploadFailed(false); }} /><small>{file ? `${file.name} · ${formatBytes(String(file.size))}` : "JPEG, PNG, WebP o PDF · máximo 10 MiB"}</small></label>
         <div className="recurrence-evidence-panel__fields">
           <label><span>Acceso</span><select name="accessLevel" value={effectiveAccessLevel} onChange={(event) => setAccessLevel(event.target.value as EvidenceAccessLevel)}><option value="TECHNICIAN">Técnicos</option>{canManage && <option value="INTERNAL">Interna</option>}</select></label>
-          <label><span>Descripción</span><input name="description" type="text" maxLength={500} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ej.: indicador del router sin luz…" /></label>
+          <label><span>Descripción</span><input ref={descriptionRef} name="description" type="text" maxLength={500} autoComplete="off" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ej.: indicador del router sin luz…" /></label>
         </div>
       </fieldset>
       {(validationError || error) && <p className="recurrence-evidence-panel__error" role="alert"><AlertTriangle size={15} aria-hidden="true" />{validationError ?? error}</p>}
@@ -236,9 +267,9 @@ export function RecurrenceEvidencePanel({
     {canView && evidenceListState === "loading" && listedEvidences.length === 0 && <div className="recurrence-evidence-panel__list-state" role="status" aria-label="Cargando evidencias">Cargando evidencias…</div>}
     {canView && evidenceListState === "error" && <div className="recurrence-evidence-panel__list-state recurrence-evidence-panel__list-state--error" role="alert"><p>No fue posible cargar las evidencias.</p><button className="button button--ghost" type="button" onClick={() => void loadEvidences(1)}>Reintentar evidencias</button></div>}
     {canView && evidenceListState === "empty" && <p className="recurrence-evidence-panel__unavailable" role="status" aria-label="Sin evidencias activas">No hay evidencias activas para este caso.</p>}
-    {canView && listedEvidences.length > 0 && <section className="recurrence-evidence-panel__list" aria-labelledby="recurrence-evidence-list-title"><span className="recurrence-evidence-panel__label">Respaldo del caso</span><h3 id="recurrence-evidence-list-title">Archivos disponibles</h3><ul>{listedEvidences.map((item) => <li key={item.id}><FileText size={17} aria-hidden="true" /><span><strong>{item.originalName}</strong><small>{item.mimeType} · {formatBytes(String(item.sizeBytes))} · v{item.version}</small></span><button type="button" aria-label={`Descargar ${item.originalName}`} disabled={pendingAction !== null} onClick={() => void download(item)}><Download size={16} aria-hidden="true" /></button>{canManage && <button type="button" aria-label={`Archivar ${item.originalName}`} disabled={pendingAction !== null} onClick={() => { setArchiveTarget(item); setArchiveReason(""); setArchiveError(null); }}><Archive size={16} aria-hidden="true" /></button>}</li>)}</ul>{evidencePage < evidenceTotalPages && <button className="recurrence-evidence-panel__more" type="button" disabled={evidenceListState === "loading"} onClick={() => void loadEvidences(evidencePage + 1)}>{evidenceListState === "loading" ? "Cargando más…" : "Cargar más evidencias"}</button>}</section>}
+    {canView && (listedEvidences.length > 0 || evidencePage < evidenceTotalPages) && <section className="recurrence-evidence-panel__list" aria-labelledby="recurrence-evidence-list-title"><span className="recurrence-evidence-panel__label">Respaldo del caso</span><h3 id="recurrence-evidence-list-title">Archivos disponibles</h3>{listedEvidences.length > 0 && <ul>{listedEvidences.map((item) => <li key={item.id}><FileText size={17} aria-hidden="true" /><span><strong>{item.originalName}</strong><small>{item.mimeType} · {formatBytes(String(item.sizeBytes))} · v{item.version}</small></span><button type="button" aria-label={`Descargar ${item.originalName}`} disabled={pendingAction !== null || evidenceListState === "loading"} onClick={() => void download(item)}><Download size={16} aria-hidden="true" /></button>{canManage && <button type="button" aria-label={`Archivar ${item.originalName}`} disabled={pendingAction !== null || evidenceListState === "loading"} onClick={(event) => { if (evidenceControllerRef.current || pendingRef.current) return; archiveTriggerRef.current = event.currentTarget; archiveTargetRef.current = item; setArchiveTarget(item); setArchiveReason(""); setArchiveError(null); }}><Archive size={16} aria-hidden="true" /></button>}</li>)}</ul>}{evidencePage < evidenceTotalPages && <button className="recurrence-evidence-panel__more" type="button" disabled={evidenceListState === "loading" || pendingAction !== null || archiveTarget !== null} onClick={() => { if (pendingRef.current || archiveTargetRef.current) return; void loadEvidences(evidencePage + 1); }}>{evidenceListState === "loading" ? "Cargando más…" : "Cargar más evidencias"}</button>}</section>}
     {!canView && <p className="recurrence-evidence-panel__unavailable">La evidencia existente no está disponible para tu perfil.</p>}
 
-    {archiveTarget && canManage && <div className="recurrence-evidence-panel__archive"><label><span>{`Motivo para archivar ${archiveTarget.originalName}`}</span><textarea ref={archiveReasonRef} name="archiveReason" rows={3} maxLength={500} value={archiveReason} onChange={(event) => { setArchiveReason(event.target.value); setArchiveError(null); }} placeholder="Ej.: archivo reemplazado por una versión legible…" /></label>{archiveError && <p role="alert">{archiveError}</p>}<div><button className="button button--ghost" type="button" disabled={pendingAction !== null} onClick={() => { setArchiveTarget(null); setArchiveReason(""); setArchiveError(null); }}>Cancelar archivo</button><button className="button button--primary" type="button" disabled={pendingAction !== null} onClick={() => void archive()}>{pendingAction === "archive" ? "Archivando…" : "Confirmar archivo"}</button></div></div>}
+    {archiveTarget && canManage && <div className="recurrence-evidence-panel__archive"><label><span>{`Motivo para archivar ${archiveTarget.originalName}`}</span><textarea ref={archiveReasonRef} name="archiveReason" rows={3} maxLength={500} value={archiveReason} onChange={(event) => { setArchiveReason(event.target.value); setArchiveError(null); }} placeholder="Ej.: archivo reemplazado por una versión legible…" /></label>{archiveError && <p role="alert">{archiveError}</p>}<div><button className="button button--ghost" type="button" disabled={pendingAction !== null} onClick={dismissArchive}>Cancelar archivo</button><button className="button button--primary" type="button" disabled={pendingAction !== null} onClick={() => void archive()}>{pendingAction === "archive" ? "Archivando…" : "Confirmar archivo"}</button></div></div>}
   </aside>;
 }

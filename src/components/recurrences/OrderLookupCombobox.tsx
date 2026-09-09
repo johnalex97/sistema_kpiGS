@@ -187,6 +187,12 @@ export function OrderLookupCombobox({
     return () => controller.abort();
   }, [disabled, open, request]);
 
+  useEffect(() => {
+    const activeOrder = activeIndex >= 0 ? items[activeIndex] : undefined;
+    if (!open || !activeOrder) return;
+    document.getElementById(`${listId}-option-${activeOrder.id}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [activeIndex, items, listId, open]);
+
   const openList = () => {
     if (disabled) return;
     setOpen(true);
@@ -264,18 +270,22 @@ export function OrderLookupCombobox({
       }
       return;
     }
-    if (event.key === "Escape" && open) {
-      event.preventDefault();
-      event.stopPropagation();
-      setActiveIndex(-1);
-      setOpen(false);
-      return;
-    }
     if (event.key === "Enter" && open) {
       event.preventDefault();
       const active = items[activeIndex];
       if (active) selectOrder(active);
     }
+  };
+
+  const handleComboboxKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape" || !open) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.target !== event.currentTarget.querySelector('[role="combobox"]')) {
+      event.currentTarget.querySelector<HTMLInputElement>('[role="combobox"]')?.focus();
+    }
+    setActiveIndex(-1);
+    setOpen(false);
   };
 
   const activeOrder = activeIndex >= 0 ? items[activeIndex] : undefined;
@@ -284,7 +294,7 @@ export function OrderLookupCombobox({
     : loadError ? "No fue posible cargar las órdenes"
       : `${items.length} ${items.length === 1 ? "orden disponible" : "órdenes disponibles"}`;
 
-  return <div className="recurrence-order-combobox">
+  return <div className="recurrence-order-combobox" onKeyDown={handleComboboxKeyDown}>
     <label htmlFor={inputId}>{label}</label>
     <div className="recurrence-order-combobox__control">
       <Search size={15} aria-hidden="true" />

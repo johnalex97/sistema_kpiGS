@@ -140,6 +140,27 @@ describe("OrderLookupCombobox", () => {
     expect(input).toHaveAttribute("aria-expanded", "false");
     expect(parentEscape).not.toHaveBeenCalled();
   });
+
+  it("scrolls the keyboard-active option into view when the platform supports it", async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    const previous = HTMLElement.prototype.scrollIntoView;
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    try {
+      render(<OrderLookupCombobox label="Orden correctiva" name="correctionOrderId" api={lookupApi()} statuses={["IN_PROGRESS"]} value={null} onChange={vi.fn()} />);
+      const input = screen.getByRole("combobox", { name: "Orden correctiva" });
+      await user.click(input);
+      const option = await screen.findByRole("option", { name: /OT-205/ });
+
+      await user.keyboard("{ArrowDown}");
+
+      expect(input).toHaveAttribute("aria-activedescendant", option.id);
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    } finally {
+      if (previous) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: previous });
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+    }
+  });
 });
 
 describe("RecurrenceReportForm", () => {
@@ -197,6 +218,31 @@ describe("RecurrenceReportForm", () => {
     expect(screen.getByLabelText("Problema detectado")).toHaveFocus();
   });
 
+  it("consumes Escape from retry and load-more controls without closing the report dialog", async () => {
+    const user = userEvent.setup();
+    const orders = vi.fn()
+      .mockRejectedValueOnce(new Error("red privada"))
+      .mockResolvedValueOnce(page([original], 1, 2));
+    const onCancel = vi.fn();
+    render(<RecurrenceReportForm lookupApi={lookupApi(orders)} onSubmit={vi.fn(async () => true)} onCancel={onCancel} />);
+    const input = screen.getByRole("combobox", { name: "Orden original" });
+
+    const retry = await screen.findByRole("button", { name: "Reintentar órdenes" });
+    retry.focus();
+    await user.keyboard("{Escape}");
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(input).toHaveFocus();
+
+    await user.click(input);
+    const loadMore = await screen.findByRole("button", { name: "Cargar más órdenes" });
+    loadMore.focus();
+    await user.keyboard("{Escape}");
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(input).toHaveFocus();
+  });
+
   it("clears a pending corrective search when the original order changes", async () => {
     const user = userEvent.setup();
     const anotherOriginal = { ...original, id: "order-original-2", orderNumber: "OT-101" };
@@ -244,6 +290,7 @@ describe("RecurrenceReportForm", () => {
     rerender(<RecurrenceReportForm lookupApi={api} apiError="Ya existe una reincidencia para estas órdenes." onSubmit={onSubmit} onCancel={vi.fn()} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Ya existe una reincidencia");
     expect(screen.getByLabelText("Problema detectado")).toHaveValue("Falla repetida");
+    expect(screen.getByLabelText("Problema detectado")).toHaveFocus();
   });
 
   it("blocks duplicate submission and keeps Escape disabled while pending", async () => {

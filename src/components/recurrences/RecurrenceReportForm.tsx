@@ -29,6 +29,10 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
 
   useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
   useEffect(() => {
+    if (!apiError) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [apiError]);
+  useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     formRef.current?.querySelector<HTMLInputElement>('[role="combobox"]')?.focus();
     const handleEscape = (event: KeyboardEvent) => {

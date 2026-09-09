@@ -24,6 +24,12 @@ const evidence: Evidence = {
 
 const emptyEvidencePage = { items: [] as Evidence[], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 function evidenceReader(listRecurrence = vi.fn().mockResolvedValue(emptyEvidencePage)): Pick<EvidenceApi, "listRecurrence"> {
   return { listRecurrence };
 }
@@ -53,11 +59,13 @@ describe("RecurrenceEvidencePanel", () => {
     const onUpload = vi.fn(async () => true);
     render(<RecurrenceEvidencePanel {...props({ onUpload })} />);
     const file = new File([new Uint8Array(size)], name, { type });
+    const input = screen.getByLabelText("Archivo de evidencia");
 
-    await user.upload(screen.getByLabelText("Archivo de evidencia"), file);
+    await user.upload(input, file);
     await user.click(screen.getByRole("button", { name: "Subir evidencia" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(message);
+    expect(input).toHaveFocus();
     expect(onUpload).not.toHaveBeenCalled();
   });
 
@@ -77,6 +85,7 @@ describe("RecurrenceEvidencePanel", () => {
     expect(screen.getByLabelText("Acceso")).toHaveAttribute("name", "accessLevel");
     expect(screen.getByLabelText("Descripción")).toHaveAttribute("name", "description");
     expect(screen.getByLabelText("Descripción")).toHaveAttribute("placeholder", expect.stringMatching(/^Ej\.:/u));
+    expect(screen.getByLabelText("Descripción")).toHaveAttribute("autocomplete", "off");
 
     const managerUpload = vi.fn(async () => true);
     rendered.rerender(<RecurrenceEvidencePanel {...props({ canManage: true, onUpload: managerUpload })} />);
@@ -115,6 +124,31 @@ describe("RecurrenceEvidencePanel", () => {
     await user.click(screen.getByRole("button", { name: "Cargar más evidencias" }));
     expect(await screen.findByText("diagnostico.pdf")).toBeInTheDocument();
     expect(listRecurrence).toHaveBeenNthCalledWith(2, "rec-1", 2, expect.any(AbortSignal));
+  });
+
+  it("serializes load-more and archive controls in both directions", async () => {
+    const secondPage = deferred<Awaited<ReturnType<EvidenceApi["listRecurrence"]>>>();
+    const evidenceTwo: Evidence = { ...evidence, id: "evidence-2", originalName: "diagnostico.pdf", mimeType: "application/pdf", fileExtension: "pdf" };
+    const listRecurrence = vi.fn()
+      .mockResolvedValueOnce({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 3, totalPages: 3 } })
+      .mockImplementationOnce(() => secondPage.promise);
+    const user = userEvent.setup();
+    render(<RecurrenceEvidencePanel {...props({ evidenceApi: evidenceReader(listRecurrence), canManage: true })} />);
+
+    await screen.findByText("router-frontal.png");
+    await user.click(screen.getByRole("button", { name: "Cargar más evidencias" }));
+    const archiveTrigger = screen.getByRole("button", { name: "Archivar router-frontal.png" });
+    expect(archiveTrigger).toBeDisabled();
+    fireEvent.click(archiveTrigger);
+    expect(screen.queryByLabelText("Motivo para archivar router-frontal.png")).not.toBeInTheDocument();
+
+    await act(async () => secondPage.resolve({ items: [evidenceTwo], pagination: { page: 2, pageSize: 20, totalItems: 3, totalPages: 3 } }));
+    await screen.findByText("diagnostico.pdf");
+    await user.click(screen.getByRole("button", { name: "Archivar router-frontal.png" }));
+    const loadMore = screen.getByRole("button", { name: "Cargar más evidencias" });
+    expect(loadMore).toBeDisabled();
+    fireEvent.click(loadMore);
+    expect(listRecurrence).toHaveBeenCalledTimes(2);
   });
 
   it("offers retry after the evidence list fails", async () => {
@@ -167,7 +201,10 @@ describe("RecurrenceEvidencePanel", () => {
     const user = userEvent.setup();
     const onDownload = vi.fn(async () => true);
     const onArchive = vi.fn(async () => true);
-    render(<RecurrenceEvidencePanel {...props({ evidenceApi: evidenceReader(vi.fn().mockResolvedValue({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } })), canManage: true, onDownload, onArchive })} />);
+    const listRecurrence = vi.fn()
+      .mockResolvedValueOnce({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } })
+      .mockResolvedValueOnce(emptyEvidencePage);
+    render(<RecurrenceEvidencePanel {...props({ evidenceApi: evidenceReader(listRecurrence), canManage: true, onDownload, onArchive })} />);
 
     await user.click(await screen.findByRole("button", { name: "Descargar router-frontal.png" }));
     expect(onDownload).toHaveBeenCalledWith(evidence);
@@ -177,12 +214,48 @@ describe("RecurrenceEvidencePanel", () => {
     expect(reason).toHaveAttribute("placeholder", expect.stringMatching(/^Ej\.:/u));
     fireEvent.click(screen.getByRole("button", { name: "Confirmar archivo" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Escribe el motivo");
+    expect(reason).toHaveFocus();
     await user.type(reason, "  Documento reemplazado  ");
     await user.click(screen.getByRole("button", { name: "Confirmar archivo" }));
 
     expect(onArchive).toHaveBeenCalledWith(evidence, "Documento reemplazado");
     await waitFor(() => expect(screen.queryByLabelText("Motivo para archivar router-frontal.png")).not.toBeInTheDocument());
     expect(screen.getByRole("status", { name: "Sin evidencias activas" })).toBeInTheDocument();
+    expect(listRecurrence).toHaveBeenNthCalledWith(2, "rec-1", 1, expect.any(AbortSignal));
+    expect(screen.getByLabelText("Archivo de evidencia")).toHaveFocus();
+  });
+
+  it("refreshes page 1 after archiving every loaded item while server pages remain", async () => {
+    const user = userEvent.setup();
+    const evidenceTwo: Evidence = { ...evidence, id: "evidence-2", originalName: "diagnostico.pdf", mimeType: "application/pdf", fileExtension: "pdf" };
+    const listRecurrence = vi.fn()
+      .mockResolvedValueOnce({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 2, totalPages: 2 } })
+      .mockResolvedValueOnce({ items: [evidenceTwo], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } });
+    render(<RecurrenceEvidencePanel {...props({ evidenceApi: evidenceReader(listRecurrence), canManage: true })} />);
+
+    await user.click(await screen.findByRole("button", { name: "Archivar router-frontal.png" }));
+    await user.type(screen.getByLabelText("Motivo para archivar router-frontal.png"), "Documento reemplazado");
+    await user.click(screen.getByRole("button", { name: "Confirmar archivo" }));
+
+    expect(await screen.findByText("diagnostico.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("router-frontal.png")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Sin evidencias activas" })).not.toBeInTheDocument();
+    expect(listRecurrence).toHaveBeenNthCalledWith(2, "rec-1", 1, expect.any(AbortSignal));
+  });
+
+  it("returns focus to the archive trigger after cancel or Escape", async () => {
+    const reader = evidenceReader(vi.fn().mockResolvedValue({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }));
+    const user = userEvent.setup();
+    render(<RecurrenceEvidencePanel {...props({ evidenceApi: reader, canManage: true })} />);
+    const trigger = await screen.findByRole("button", { name: "Archivar router-frontal.png" });
+
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Cancelar archivo" }));
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
   });
 
   it("does not render evidence operations after permissions are revoked", async () => {
@@ -206,6 +279,7 @@ describe("RecurrenceEvidencePanel", () => {
 
     rendered.rerender(<RecurrenceEvidencePanel {...props({ evidenceApi: reader, canManage: false })} />);
     await act(async () => { await Promise.resolve(); });
+    expect(screen.getByLabelText("Archivo de evidencia")).toHaveFocus();
     rendered.rerender(<RecurrenceEvidencePanel {...props({ evidenceApi: reader, canManage: true })} />);
 
     expect(screen.queryByLabelText("Motivo para archivar router-frontal.png")).not.toBeInTheDocument();
