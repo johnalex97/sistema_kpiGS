@@ -136,7 +136,9 @@ export function RecurrenceEvidencePanel({
     evidenceControllerRef.current = controller;
     const generation = ++evidenceGenerationRef.current;
     const loadingSnapshot: EvidenceListSnapshot = requestedPage === 1
-      ? { items: [], status: "loading", page: 1, totalPages: 1 }
+      ? afterMutation
+        ? { ...evidenceListRef.current, status: "loading" }
+        : { items: [], status: "loading", page: 1, totalPages: 1 }
       : { ...evidenceListRef.current, status: "loading" };
     publishEvidenceList(loadingSnapshot);
     try {
@@ -238,6 +240,13 @@ export function RecurrenceEvidencePanel({
     let archived = false;
     try {
       if (await onArchive(archiveTarget, reason)) {
+        const currentList = evidenceListRef.current;
+        const remainingItems = currentList.items.filter((item) => item.id !== archiveTarget.id);
+        publishEvidenceList({
+          ...currentList,
+          items: remainingItems,
+          status: remainingItems.length === 0 && currentList.page >= currentList.totalPages ? "empty" : "ready",
+        });
         await loadEvidences(1, true);
         archived = true;
       }

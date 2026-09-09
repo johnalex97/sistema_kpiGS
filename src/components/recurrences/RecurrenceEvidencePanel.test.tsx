@@ -243,6 +243,31 @@ describe("RecurrenceEvidencePanel", () => {
     expect(listRecurrence).toHaveBeenNthCalledWith(2, "rec-1", 1, expect.any(AbortSignal));
   });
 
+  it("retires archived evidence locally when refreshing page 1 fails", async () => {
+    const user = userEvent.setup();
+    const evidenceTwo: Evidence = { ...evidence, id: "evidence-2", originalName: "diagnostico.pdf", mimeType: "application/pdf", fileExtension: "pdf" };
+    const listRecurrence = vi.fn()
+      .mockResolvedValueOnce({ items: [evidence, evidenceTwo], pagination: { page: 1, pageSize: 20, totalItems: 2, totalPages: 1 } })
+      .mockRejectedValueOnce(new Error("red privada"))
+      .mockResolvedValueOnce({ items: [evidenceTwo], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } });
+    render(<RecurrenceEvidencePanel {...props({ evidenceApi: evidenceReader(listRecurrence), canManage: true })} />);
+
+    await user.click(await screen.findByRole("button", { name: "Archivar router-frontal.png" }));
+    await user.type(screen.getByLabelText("Motivo para archivar router-frontal.png"), "Documento reemplazado");
+    await user.click(screen.getByRole("button", { name: "Confirmar archivo" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("No fue posible cargar las evidencias");
+    expect(screen.queryByText("router-frontal.png")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Descargar router-frontal.png" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Archivar router-frontal.png" })).not.toBeInTheDocument();
+    expect(screen.getByText("diagnostico.pdf")).toBeInTheDocument();
+    expect(screen.getByLabelText("Archivo de evidencia")).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Reintentar evidencias" }));
+    expect(await screen.findByText("diagnostico.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("router-frontal.png")).not.toBeInTheDocument();
+  });
+
   it("returns focus to the archive trigger after cancel or Escape", async () => {
     const reader = evidenceReader(vi.fn().mockResolvedValue({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }));
     const user = userEvent.setup();
