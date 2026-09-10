@@ -35,10 +35,10 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
     const previouslyFocused = document.activeElement as HTMLElement | null;
     formRef.current?.querySelector<HTMLInputElement>('[role="combobox"]')?.focus();
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || pendingRef.current) return;
+      if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      cancelRef.current();
+      if (!pendingRef.current) cancelRef.current();
     };
     document.addEventListener("keydown", handleEscape);
     return () => {
@@ -99,6 +99,7 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
     setValidationError(null);
     pendingRef.current = true;
     setPending(true);
+    formRef.current?.focus();
     try {
       await onSubmit({ originalOrderId: original.id, correctionOrderId: correction.id, detectedProblem: problem });
     } finally {

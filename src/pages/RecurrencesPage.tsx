@@ -12,6 +12,7 @@ import { RecurrenceReportForm } from "../components/recurrences/RecurrenceReport
 import { RecurrenceSummaryCards } from "../components/recurrences/RecurrenceSummaryCards";
 import { RecurrenceTable } from "../components/recurrences/RecurrenceTable";
 import { useRecurrencesWorkspace, type RecurrencesWorkspace } from "../hooks/useRecurrencesWorkspace";
+import { hasEffectiveRecurrenceFilters } from "../hooks/recurrence-workspace.helpers";
 
 const defaultRecurrenceApi = createRecurrenceApi();
 const defaultEvidenceApi = createEvidenceApi();
@@ -182,7 +183,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
         {workspace.listState === "loading" && !workspace.page && <div className="recurrence-list-state" role="status" aria-label="Cargando casos"><span aria-hidden="true" />Cargando casos de reincidencia…</div>}
         {workspace.listState === "loading" && workspace.page && <div className="recurrence-list-refreshing" role="status"><RefreshCw size={14} aria-hidden="true" />Actualizando casos…</div>}
         {workspace.listState === "error" && !workspace.page && <div className="recurrence-list-state recurrence-list-state--error" role="alert"><AlertTriangle size={23} aria-hidden="true" /><strong>No fue posible cargar los casos</strong><p>Reintenta para recuperar el registro de reincidencias.</p><button className="button button--ghost" type="button" onClick={workspace.retryList}>Reintentar casos</button></div>}
-        {workspace.listState === "empty" && <div className="recurrence-list-state" role="status" aria-live="polite" aria-label="Sin casos"><Search size={24} aria-hidden="true" /><strong>No hay reincidencias para estos filtros</strong><p>Ajusta los filtros para ampliar la consulta.</p></div>}
+        {workspace.listState === "empty" && <div className="recurrence-list-state" role="status" aria-live="polite" aria-label="Sin casos"><Search size={24} aria-hidden="true" /><strong>{hasEffectiveRecurrenceFilters(workspace.query.filters) ? "No hay reincidencias para estos filtros" : "No hay reincidencias registradas"}</strong><p>{hasEffectiveRecurrenceFilters(workspace.query.filters) ? "Ajusta los filtros para ampliar la consulta." : "Los nuevos casos aparecerán aquí cuando se reporten."}</p></div>}
         {workspace.page && workspace.page.items.length > 0 && <RecurrenceTable recurrences={workspace.page.items} onSelect={openDetail} />}
 
         {pagination && pagination.totalPages > 1 && <nav className="recurrence-pagination" aria-label="Paginación de reincidencias">
@@ -200,6 +201,6 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     </div>
     {showReport && <div className="recurrence-action-backdrop"><RecurrenceReportForm lookupApi={workspace.lookupApi} apiError={workspace.mutation?.name === "report" ? workspace.mutation.error : null} onCancel={closeReport} onSubmit={workspace.reportRecurrence} /></div>}
     {showAnalysis && workspace.selected && workspace.catalog && <div className="recurrence-action-backdrop recurrence-action-backdrop--analysis"><RecurrenceAnalysisForm catalog={workspace.catalog} originalTechnicians={workspace.selected.technicians.filter((entry) => entry.participation !== "CORRECTION_PARTICIPANT")} apiError={workspace.mutation?.name === "analyze" ? workspace.mutation.error : null} submissionBlocked={workspace.selected.status !== "OPEN"} onCancel={closeAnalysis} onSubmit={workspace.analyzeRecurrence} /></div>}
-    {activeEvidenceCase && <div className="recurrence-action-backdrop recurrence-action-backdrop--evidence"><RecurrenceEvidencePanel recurrenceId={activeEvidenceCase.id} recurrenceNumber={activeEvidenceCase.number} evidenceApi={workspace.evidenceApi} canView={workspace.capabilities.canViewEvidence} canManage={workspace.capabilities.canManageEvidence} error={workspace.mutation?.name === "evidence" ? workspace.mutation.error : null} onUpload={workspace.uploadEvidence} onDownload={workspace.downloadEvidence} onArchive={workspace.archiveEvidence} onClose={closeEvidence} /></div>}
+    {activeEvidenceCase && <div className="recurrence-action-backdrop recurrence-action-backdrop--evidence"><RecurrenceEvidencePanel recurrenceId={activeEvidenceCase.id} recurrenceNumber={activeEvidenceCase.number} evidenceApi={workspace.evidenceApi} canView={workspace.capabilities.canViewEvidence} canUpload={workspace.capabilities.canUploadEvidence} canManage={workspace.capabilities.canManageEvidence} mode={evidenceCase ? "manage" : "prompt"} error={workspace.mutation?.name === "evidence" ? workspace.mutation.error : null} onUpload={workspace.uploadEvidence} onDownload={workspace.downloadEvidence} onArchive={workspace.archiveEvidence} onClose={closeEvidence} /></div>}
   </section>;
 }

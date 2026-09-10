@@ -21,7 +21,9 @@ export interface RecurrenceEvidencePanelProps {
   recurrenceNumber: string;
   evidenceApi: Pick<EvidenceApi, "listRecurrence">;
   canView: boolean;
+  canUpload?: boolean;
   canManage: boolean;
+  mode?: "prompt" | "manage";
   error?: string | null;
   onUpload(input: EvidenceUploadInput): Promise<boolean>;
   onDownload(evidence: Evidence): Promise<boolean>;
@@ -41,7 +43,9 @@ export function RecurrenceEvidencePanel({
   recurrenceNumber,
   evidenceApi,
   canView,
+  canUpload = true,
   canManage,
+  mode = "prompt",
   error = null,
   onUpload,
   onDownload,
@@ -89,11 +93,12 @@ export function RecurrenceEvidencePanel({
   useEffect(() => { archiveTargetRef.current = archiveTarget; }, [archiveTarget]);
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    panelRef.current?.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
+    (canUpload ? panelRef.current?.querySelector<HTMLInputElement>('input[type="file"]') : panelRef.current)?.focus();
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || pendingRef.current) return;
+      if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
+      if (pendingRef.current) return;
       if (archiveTargetRef.current) {
         dismissArchive();
       } else closeRef.current();
@@ -103,7 +108,7 @@ export function RecurrenceEvidencePanel({
       document.removeEventListener("keydown", handleEscape);
       previouslyFocused?.focus();
     };
-  }, []);
+  }, [canUpload]);
 
   useEffect(() => {
     if (archiveTarget) archiveReasonRef.current?.focus();
@@ -200,7 +205,7 @@ export function RecurrenceEvidencePanel({
 
   const upload = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (pendingRef.current) return;
+    if (pendingRef.current || !canUpload) return;
     const selectedFile = file;
     const invalidFile = fileValidation(selectedFile);
     if (invalidFile) { setValidationError(invalidFile); fileInputRef.current?.focus(); return; }
@@ -211,6 +216,7 @@ export function RecurrenceEvidencePanel({
     setUploadFailed(false);
     pendingRef.current = true;
     setPendingAction("upload");
+    panelRef.current?.focus();
     try {
       const saved = await onUpload({ file: selectedFile, accessLevel: effectiveAccessLevel, ...(normalizedDescription ? { description: normalizedDescription } : {}) });
       if (saved) {
@@ -230,6 +236,7 @@ export function RecurrenceEvidencePanel({
     if (pendingRef.current || evidenceControllerRef.current || !canView) return;
     pendingRef.current = true;
     setPendingAction("download");
+    panelRef.current?.focus();
     try { await onDownload(item); } finally {
       pendingRef.current = false;
       setPendingAction(null);
@@ -244,6 +251,7 @@ export function RecurrenceEvidencePanel({
     setArchiveError(null);
     pendingRef.current = true;
     setPendingAction("archive");
+    panelRef.current?.focus();
     let archived = false;
     try {
       if (await onArchive(archiveTarget, reason)) {
@@ -265,9 +273,9 @@ export function RecurrenceEvidencePanel({
   };
 
   return <aside className="recurrence-evidence-panel" role="dialog" aria-modal="true" aria-labelledby="recurrence-evidence-title" aria-busy={pendingAction !== null || undefined} data-recurrence-id={recurrenceId} tabIndex={-1} ref={panelRef} onKeyDown={trapFocus}>
-    <header className="recurrence-evidence-panel__head"><div><p className="eyebrow">Caso creado · evidencia pendiente</p><h2 id="recurrence-evidence-title">Agregar evidencia</h2><span>{recurrenceNumber}</span></div><button className="icon-button" type="button" aria-label="Cerrar evidencia" disabled={pendingAction !== null} onClick={onClose}><X size={18} aria-hidden="true" /></button></header>
-    <form className="recurrence-evidence-panel__upload" noValidate onSubmit={upload}>
-      <p className="recurrence-evidence-panel__pending" role="status" aria-label="Evidencia pendiente"><Upload size={15} aria-hidden="true" />Caso creado · evidencia pendiente</p>
+    <header className="recurrence-evidence-panel__head"><div><p className="eyebrow">{mode === "prompt" ? "Caso creado · evidencia pendiente" : "Respaldo operativo"}</p><h2 id="recurrence-evidence-title">{mode === "prompt" ? "Agregar evidencia" : "Gestionar evidencia"}</h2><span>{recurrenceNumber}</span></div><button className="icon-button" type="button" aria-label="Cerrar evidencia" disabled={pendingAction !== null} onClick={onClose}><X size={18} aria-hidden="true" /></button></header>
+    {canUpload && <form className="recurrence-evidence-panel__upload" noValidate onSubmit={upload}>
+      {mode === "prompt" && <p className="recurrence-evidence-panel__pending" role="status" aria-label="Evidencia pendiente"><Upload size={15} aria-hidden="true" />Caso creado · evidencia pendiente</p>}
       <fieldset disabled={pendingAction !== null}>
         <legend className="sr-only">Carga de archivo</legend>
         <label className="recurrence-evidence-panel__file"><span>Archivo de evidencia</span><input ref={fileInputRef} name="evidenceFile" type="file" aria-label="Archivo de evidencia" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => { setFile(event.target.files?.[0] ?? null); setValidationError(null); setUploadFailed(false); }} /><small>{file ? `${file.name} · ${formatBytes(String(file.size))}` : "JPEG, PNG, WebP o PDF · máximo 10 MiB"}</small></label>
@@ -278,7 +286,7 @@ export function RecurrenceEvidencePanel({
       </fieldset>
       {(validationError || error) && <p className="recurrence-evidence-panel__error" role="alert"><AlertTriangle size={15} aria-hidden="true" />{validationError ?? error}</p>}
       <div className="recurrence-evidence-panel__actions"><button className="button button--primary" type="submit" disabled={pendingAction !== null}>{pendingAction === "upload" ? "Subiendo…" : uploadFailed ? "Reintentar evidencia" : "Subir evidencia"}</button><button className="button button--ghost" type="button" disabled={pendingAction !== null} onClick={onClose}>Continuar sin evidencia</button></div>
-    </form>
+    </form>}
 
     {canView && evidenceListState === "loading" && listedEvidences.length === 0 && <div className="recurrence-evidence-panel__list-state" role="status" aria-label="Cargando evidencias">Cargando evidencias…</div>}
     {canView && evidenceListState === "error" && <div className="recurrence-evidence-panel__list-state recurrence-evidence-panel__list-state--error" role="alert"><p>No fue posible cargar las evidencias.</p><button className="button button--ghost" type="button" onClick={() => void loadEvidences(1, "retry")}>Reintentar evidencias</button></div>}

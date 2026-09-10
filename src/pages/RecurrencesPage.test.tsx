@@ -306,7 +306,7 @@ describe("RecurrencesPage", () => {
     render(view(current));
 
     await user.click(screen.getByRole("button", { name: "Gestionar evidencia" }));
-    expect(screen.getByRole("dialog", { name: "Agregar evidencia" })).toHaveAttribute("data-recurrence-id", selected.id);
+    expect(screen.getByRole("dialog", { name: "Gestionar evidencia" })).toHaveAttribute("data-recurrence-id", selected.id);
   });
 
   it("loads the real evidence list and exposes download and archive operations", async () => {
