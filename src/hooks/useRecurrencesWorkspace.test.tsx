@@ -962,7 +962,7 @@ describe("useRecurrencesWorkspace", () => {
 
   it("keeps analysis mode and reloads the current detail on VERSION_CONFLICT without refreshing aggregate reads", async () => {
     const current = { ...detail, version: 3 };
-    const refreshed = { ...detail, version: 4, detectedProblem: "Versión vigente" };
+    const refreshed = { ...detail, status: "ANALYSIS" as const, version: 4, detectedProblem: "Versión vigente" };
     const api = recurrenceApi({
       detail: vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(refreshed),
       analyze: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")),
@@ -991,6 +991,185 @@ describe("useRecurrencesWorkspace", () => {
     });
     expect(api.list).toHaveBeenCalledTimes(1);
     expect(api.summary).toHaveBeenCalledTimes(1);
+
+    await act(async () => expect(await result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id,
+      impact: "MEDIUM",
+      responsibility: "EQUIPMENT",
+      analysis: "Segundo intento inválido",
+      qualityDecisions: [],
+    })).toBe(false));
+    expect(api.analyze).toHaveBeenCalledTimes(1);
+    expect(result.current.mutation?.conflict).toBe(true);
+  });
+
+  it("closes analysis when an ordinary detail refresh moves the selected case out of OPEN", async () => {
+    const transitioned = { ...detail, status: "ANALYSIS" as const, version: 2 };
+    const api = recurrenceApi({ detail: vi.fn().mockResolvedValueOnce(detail).mockResolvedValueOnce(transitioned) });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+    act(() => result.current.setActionMode("analyze"));
+
+    act(() => result.current.retryDetail());
+    await waitFor(() => expect(result.current.selected).toEqual(transitioned));
+
+    expect(result.current.actionMode).toBeNull();
+  });
+
+  it("does not publish a pending analysis after review permission is revoked", async () => {
+    const pending = deferred<RecurrenceDetail>();
+    const analyzed = { ...detail, status: "ANALYSIS" as const, version: 2 };
+    const api = recurrenceApi({ analyze: vi.fn(() => pending.promise) });
+    const stableOptions = options({ api });
+    const { result, rerender } = renderHook(
+      ({ permissions }) => useRecurrencesWorkspace({ ...stableOptions, permissions }),
+      { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] } },
+    );
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+    act(() => result.current.setActionMode("analyze"));
+    let operation!: Promise<boolean>;
+    act(() => { operation = result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id, impact: "HIGH", responsibility: "EQUIPMENT", analysis: "Falla de equipo", qualityDecisions: [],
+    }); });
+
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL"] });
+    await waitFor(() => expect(result.current.actionMode).toBeNull());
+    pending.resolve(analyzed);
+    await act(async () => expect(await operation).toBe(false));
+
+    expect(result.current.selected).toEqual(detail);
+    expect(api.list).toHaveBeenCalledTimes(1);
+    expect(api.summary).toHaveBeenCalledTimes(1);
+    expect(result.current.mutation).toBeNull();
+  });
+
+  it("lets a new selected case analysis supersede a pending one without late publication", async () => {
+    const pendingA = deferred<RecurrenceDetail>();
+    const pendingB = deferred<RecurrenceDetail>();
+    const detailB = { ...detail, id: anotherRecurrenceId, recurrenceNumber: "RI-2026-0002" };
+    const analyzedA = { ...detail, status: "ANALYSIS" as const, version: 2 };
+    const analyzedB = { ...detailB, status: "ANALYSIS" as const, version: 2 };
+    const api = recurrenceApi({
+      detail: vi.fn((id: string) => Promise.resolve(id === anotherRecurrenceId ? detailB : detail)),
+      analyze: vi.fn((id: string) => id === recurrenceId ? pendingA.promise : pendingB.promise),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+    act(() => result.current.setActionMode("analyze"));
+    let operationA!: Promise<boolean>;
+    act(() => { operationA = result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id, impact: "HIGH", responsibility: "EQUIPMENT", analysis: "Caso A", qualityDecisions: [],
+    }); });
+
+    act(() => {
+      result.current.setActionMode(null);
+      result.current.select(anotherRecurrenceId);
+    });
+    await waitFor(() => expect(result.current.selected).toEqual(detailB));
+    act(() => result.current.setActionMode("analyze"));
+    let operationB!: Promise<boolean>;
+    act(() => { operationB = result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id, impact: "LOW", responsibility: "CLIENT", analysis: "Caso B", qualityDecisions: [],
+    }); });
+    expect(api.analyze).toHaveBeenCalledTimes(2);
+
+    pendingB.resolve(analyzedB);
+    await act(async () => expect(await operationB).toBe(true));
+    pendingA.resolve(analyzedA);
+    await act(async () => expect(await operationA).toBe(false));
+
+    expect(result.current.selected?.id).toBe(anotherRecurrenceId);
+    expect(result.current.selected?.status).toBe("ANALYSIS");
+    expect(api.list).toHaveBeenCalledTimes(2);
+    expect(api.summary).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a conflict refresh and its late error after analysis mode is closed", async () => {
+    const pendingDetail = deferred<RecurrenceDetail>();
+    const current = { ...detail, version: 3 };
+    const refreshed = { ...detail, version: 4, detectedProblem: "No debe publicarse" };
+    const api = recurrenceApi({
+      detail: vi.fn().mockResolvedValueOnce(current).mockImplementationOnce(() => pendingDetail.promise),
+      analyze: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("analyze"));
+    let operation!: Promise<boolean>;
+    act(() => { operation = result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id, impact: "MEDIUM", responsibility: "CLIENT", analysis: "Conflicto", qualityDecisions: [],
+    }); });
+    await waitFor(() => expect(api.detail).toHaveBeenCalledTimes(2));
+
+    act(() => result.current.setActionMode(null));
+    pendingDetail.resolve(refreshed);
+    await act(async () => expect(await operation).toBe(false));
+
+    expect(result.current.selected).toEqual(current);
+    expect(result.current.actionMode).toBeNull();
+    expect(result.current.mutation).toBeNull();
+  });
+
+  it("reloads the catalog after RECURRENCE_CAUSE_NOT_FOUND and preserves analysis mode", async () => {
+    const refreshedCatalog = { ...catalog, causes: [{ id: "cause-2", code: "EQUIPMENT", name: "Equipo" }] };
+    const api = recurrenceApi({
+      catalog: vi.fn().mockResolvedValueOnce(catalog).mockResolvedValueOnce(refreshedCatalog),
+      analyze: vi.fn().mockRejectedValue(new ApiClientError(400, "RECURRENCE_CAUSE_NOT_FOUND", "interno")),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+    act(() => result.current.setActionMode("analyze"));
+
+    await act(async () => expect(await result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id, impact: "HIGH", responsibility: "CLIENT", analysis: "Causa retirada", qualityDecisions: [],
+    })).toBe(false));
+
+    expect(api.catalog).toHaveBeenCalledTimes(2);
+    expect(result.current.catalog).toEqual(refreshedCatalog);
+    expect(result.current.actionMode).toBe("analyze");
+    expect(result.current.mutation?.error).toContain("causa seleccionada");
+  });
+
+  it("reloads detail on INVALID_RECURRENCE_TRANSITION and closes analysis when the case transitioned", async () => {
+    const transitioned = { ...detail, status: "ANALYSIS" as const, version: 2 };
+    const api = recurrenceApi({
+      detail: vi.fn().mockResolvedValueOnce(detail).mockResolvedValueOnce(transitioned),
+      analyze: vi.fn().mockRejectedValue(new ApiClientError(409, "INVALID_RECURRENCE_TRANSITION", "interno")),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+    act(() => result.current.setActionMode("analyze"));
+
+    await act(async () => expect(await result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id, impact: "LOW", responsibility: "CLIENT", analysis: "Transición tardía", qualityDecisions: [],
+    })).toBe(false));
+
+    expect(api.detail).toHaveBeenCalledTimes(2);
+    expect(result.current.selected).toEqual(transitioned);
+    expect(result.current.actionMode).toBeNull();
+  });
+
+  it("clears the selected detail on RECURRENCE_NOT_FOUND without retrying it", async () => {
+    const api = recurrenceApi({ analyze: vi.fn().mockRejectedValue(new ApiClientError(404, "RECURRENCE_NOT_FOUND", "interno")) });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+    act(() => result.current.setActionMode("analyze"));
+
+    await act(async () => expect(await result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id, impact: "LOW", responsibility: "CLIENT", analysis: "Caso retirado", qualityDecisions: [],
+    })).toBe(false));
+
+    expect(result.current.selected).toBeNull();
+    expect(result.current.query.selectedId).toBeNull();
+    expect(result.current.actionMode).toBeNull();
+    expect(api.detail).toHaveBeenCalledTimes(1);
   });
 
   it("rejects analysis immediately after review permission is revoked", async () => {

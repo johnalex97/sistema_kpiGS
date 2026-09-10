@@ -569,7 +569,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-evidence-panel__archive > div { margin-top: 11px; display: flex; justify-content: flex-end; gap: 8px; }
 .recurrence-evidence-panel__archive .button { min-height: 44px; }
 
-.recurrence-analysis-form { width: 820px; max-width: 100%; max-height: 94vh; border: 1px solid #cbdde2; border-left: 5px solid #09aeb4; border-radius: 10px; color: #29485d; background: #fff; box-shadow: 0 24px 64px rgba(6, 32, 52, .28); overflow-y: auto; }
+.recurrence-analysis-form { width: 820px; max-width: 100%; max-height: 94vh; scroll-padding-block: 96px 76px; border: 1px solid #cbdde2; border-left: 5px solid #09aeb4; border-radius: 10px; color: #29485d; background: #fff; box-shadow: 0 24px 64px rgba(6, 32, 52, .28); overflow-y: auto; }
 .recurrence-analysis-form__head { position: sticky; z-index: 4; top: 0; padding: 18px 20px 15px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid #dbe5e9; background: rgba(255, 255, 255, .98); }
 .recurrence-analysis-form__head h2 { margin: 4px 0 0; color: #0b2340; font: 700 20px/1.15 "Bahnschrift", "Arial Narrow", sans-serif; letter-spacing: -.015em; }
 .recurrence-analysis-form__head span { display: block; margin-top: 6px; color: #647c89; font-size: 11px; line-height: 1.4; }

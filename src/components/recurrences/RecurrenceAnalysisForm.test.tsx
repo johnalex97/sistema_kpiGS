@@ -161,12 +161,12 @@ describe("RecurrenceAnalysisForm", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("preserves values on API conflict, blocks duplicate submit and keeps focus trapped", async () => {
+  it("blocks duplicate submit and keeps the dialog as a focus target while every control is pending", async () => {
     const user = userEvent.setup();
     let finish: ((value: boolean) => void) | undefined;
     const onSubmit = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
     const onCancel = vi.fn();
-    const rendered = render(<RecurrenceAnalysisForm catalog={catalog} originalTechnicians={technicians} onSubmit={onSubmit} onCancel={onCancel} />);
+    render(<RecurrenceAnalysisForm catalog={catalog} originalTechnicians={technicians} onSubmit={onSubmit} onCancel={onCancel} />);
 
     await fillRequiredFields(user);
     await user.click(screen.getByLabelText("Afecta calidad de Ana López"));
@@ -176,14 +176,14 @@ describe("RecurrenceAnalysisForm", () => {
     fireEvent.submit(form);
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Guardando…" })).toBeDisabled();
+    expect(form).toHaveFocus();
+    fireEvent.keyDown(form, { key: "Tab" });
+    expect(form).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(onCancel).not.toHaveBeenCalled();
 
     finish?.(false);
     await waitFor(() => expect(screen.getByRole("button", { name: "Guardar análisis" })).toBeEnabled());
-    rendered.rerender(<RecurrenceAnalysisForm catalog={catalog} originalTechnicians={technicians} apiError="El caso cambió en el servidor." onSubmit={onSubmit} onCancel={onCancel} />);
-    expect(screen.getByLabelText("Análisis técnico")).toHaveValue("  Diagnóstico de la instalación  ");
-    expect(screen.getByLabelText("Análisis técnico")).toHaveFocus();
 
     const close = screen.getByRole("button", { name: "Cerrar análisis" });
     const save = screen.getByRole("button", { name: "Guardar análisis" });
@@ -192,5 +192,27 @@ describe("RecurrenceAnalysisForm", () => {
     expect(close).toHaveFocus();
     await user.tab({ shift: true });
     expect(save).toHaveFocus();
+  });
+
+  it("preserves the draft and reports a global API error without invalidating or focusing analysis", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(async () => false);
+    const rendered = render(<RecurrenceAnalysisForm catalog={catalog} originalTechnicians={technicians} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+    await fillRequiredFields(user);
+    await user.click(screen.getByLabelText("Afecta calidad de Ana López"));
+    await user.type(screen.getByLabelText("Justificación para Ana López"), "Intervención incompleta");
+    const save = screen.getByRole("button", { name: "Guardar análisis" });
+    save.focus();
+
+    rendered.rerender(<RecurrenceAnalysisForm catalog={catalog} originalTechnicians={technicians} apiError="El caso cambió en el servidor." submissionBlocked onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+    expect(screen.getByLabelText("Análisis técnico")).toHaveValue("  Diagnóstico de la instalación  ");
+    expect(screen.getByLabelText("Análisis técnico")).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByLabelText("Análisis técnico")).not.toHaveFocus();
+    expect(screen.getByRole("alert")).toHaveTextContent("El caso cambió en el servidor.");
+    expect(save).toBeDisabled();
+    fireEvent.submit(screen.getByRole("dialog", { name: "Analizar caso" }));
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

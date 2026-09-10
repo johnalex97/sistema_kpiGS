@@ -89,11 +89,13 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     || workspace.selected !== null;
   const canOpenReport = workspace.capabilities.canReport && workspace.capabilities.lookupCapabilities.orders;
   const showReport = canOpenReport && workspace.actionMode === "report";
+  const analysisConflict = workspace.mutation?.name === "analyze" && workspace.mutation.conflict;
   const showAnalysis = Boolean(
     workspace.actionMode === "analyze"
     && workspace.capabilities.canReview
     && workspace.selected
-    && workspace.catalog,
+    && workspace.catalog
+    && (workspace.selected.status === "OPEN" || analysisConflict),
   );
   const promptedRecurrence = workspace.evidencePromptForId
     ? workspace.selected?.id === workspace.evidencePromptForId
@@ -182,7 +184,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
       </div>}
     </div>
     {showReport && <div className="recurrence-action-backdrop"><RecurrenceReportForm lookupApi={workspace.lookupApi} apiError={workspace.mutation?.name === "report" ? workspace.mutation.error : null} onCancel={closeReport} onSubmit={workspace.reportRecurrence} /></div>}
-    {showAnalysis && workspace.selected && workspace.catalog && <div className="recurrence-action-backdrop recurrence-action-backdrop--analysis"><RecurrenceAnalysisForm catalog={workspace.catalog} originalTechnicians={workspace.selected.technicians.filter((entry) => entry.participation !== "CORRECTION_PARTICIPANT")} apiError={workspace.mutation?.name === "analyze" ? workspace.mutation.error : null} onCancel={closeAnalysis} onSubmit={workspace.analyzeRecurrence} /></div>}
+    {showAnalysis && workspace.selected && workspace.catalog && <div className="recurrence-action-backdrop recurrence-action-backdrop--analysis"><RecurrenceAnalysisForm catalog={workspace.catalog} originalTechnicians={workspace.selected.technicians.filter((entry) => entry.participation !== "CORRECTION_PARTICIPANT")} apiError={workspace.mutation?.name === "analyze" ? workspace.mutation.error : null} submissionBlocked={workspace.selected.status !== "OPEN"} onCancel={closeAnalysis} onSubmit={workspace.analyzeRecurrence} /></div>}
     {showEvidencePrompt && workspace.evidencePromptForId && <div className="recurrence-action-backdrop recurrence-action-backdrop--evidence"><RecurrenceEvidencePanel recurrenceId={workspace.evidencePromptForId} recurrenceNumber={promptedRecurrence?.recurrenceNumber ?? workspace.evidencePromptForId} evidenceApi={workspace.evidenceApi} canView={workspace.capabilities.canViewEvidence} canManage={workspace.capabilities.canManageEvidence} error={workspace.mutation?.name === "evidence" ? workspace.mutation.error : null} onUpload={workspace.uploadEvidence} onDownload={workspace.downloadEvidence} onArchive={workspace.archiveEvidence} onClose={workspace.clearEvidencePrompt} /></div>}
   </section>;
 }

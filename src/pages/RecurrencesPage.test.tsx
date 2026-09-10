@@ -414,4 +414,44 @@ describe("RecurrencesPage", () => {
     expect(screen.queryByRole("button", { name: "Analizar caso" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Casos registrados")).toHaveFocus());
   });
+
+  it("keeps a conflict draft visible after the case leaves OPEN but blocks resubmission", async () => {
+    const user = userEvent.setup();
+    const open = { ...selected, status: "OPEN" as const };
+    const current = workspace({
+      selected: open,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: open.id },
+      actionMode: "analyze",
+      capabilities: { ...workspace().capabilities, canReview: true },
+    });
+    const rendered = render(view(current));
+    const dialog = screen.getByRole("dialog", { name: "Analizar caso" });
+    await user.type(within(dialog).getByLabelText("Análisis técnico"), "Borrador que debe conservarse");
+
+    rendered.rerender(view({
+      ...current,
+      selected: { ...open, status: "ANALYSIS", version: open.version + 1 },
+      mutation: { name: "analyze", pending: false, error: "El caso cambió en el servidor.", conflict: true },
+    }));
+
+    expect(screen.getByRole("dialog", { name: "Analizar caso" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Análisis técnico")).toHaveValue("Borrador que debe conservarse");
+    expect(screen.getByRole("button", { name: "Guardar análisis" })).toBeDisabled();
+    expect(getComputedStyle(screen.getByRole("dialog", { name: "Analizar caso" })).scrollPaddingBlock).toBe("96px 76px");
+  });
+
+  it("hides analysis for an ordinary non-OPEN status refresh without conflict mode", () => {
+    const current = workspace({
+      selected: { ...selected, status: "ANALYSIS" },
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: selected.id },
+      actionMode: "analyze",
+      capabilities: { ...workspace().capabilities, canReview: true },
+    });
+
+    render(view(current));
+
+    expect(screen.queryByRole("dialog", { name: "Analizar caso" })).not.toBeInTheDocument();
+  });
 });

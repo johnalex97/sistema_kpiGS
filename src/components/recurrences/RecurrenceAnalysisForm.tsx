@@ -37,6 +37,7 @@ export interface RecurrenceAnalysisFormProps {
   catalog: RecurrenceCatalog;
   originalTechnicians: readonly RecurrenceTechnician[];
   apiError?: string | null;
+  submissionBlocked?: boolean;
   onSubmit(input: AnalysisInput): Promise<boolean>;
   onCancel(): void;
 }
@@ -55,6 +56,7 @@ export function RecurrenceAnalysisForm({
   catalog,
   originalTechnicians,
   apiError = null,
+  submissionBlocked = false,
   onSubmit,
   onCancel,
 }: RecurrenceAnalysisFormProps) {
@@ -88,10 +90,6 @@ export function RecurrenceAnalysisForm({
   const cancelRef = useRef(onCancel);
 
   useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
-  useEffect(() => {
-    if (!apiError) return;
-    analysisRef.current?.focus();
-  }, [apiError]);
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     causeRef.current?.focus();
@@ -162,6 +160,16 @@ export function RecurrenceAnalysisForm({
     ));
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
+    if (!first || !last) {
+      event.preventDefault();
+      formRef.current.focus();
+      return;
+    }
+    if (document.activeElement === formRef.current) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+      return;
+    }
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last?.focus();
@@ -173,7 +181,7 @@ export function RecurrenceAnalysisForm({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (pendingRef.current) return;
+    if (pendingRef.current || submissionBlocked) return;
 
     const normalizedAnalysis = analysis.trim();
     const normalizedCost = estimatedCost.trim();
@@ -247,6 +255,7 @@ export function RecurrenceAnalysisForm({
     clearValidation();
     pendingRef.current = true;
     setPending(true);
+    formRef.current?.focus();
     try {
       await onSubmit(input);
     } finally {
@@ -255,10 +264,10 @@ export function RecurrenceAnalysisForm({
     }
   };
 
-  const errorId = validationError || apiError ? "recurrence-analysis-error" : undefined;
+  const errorId = validationError ? "recurrence-analysis-error" : undefined;
   const technical = responsibility === "TECHNICAL_WORK";
 
-  return <form className="recurrence-analysis-form" role="dialog" aria-modal="true" aria-labelledby="recurrence-analysis-title" ref={formRef} noValidate onSubmit={submit} onKeyDown={trapFocus}>
+  return <form className="recurrence-analysis-form" role="dialog" aria-modal="true" aria-labelledby="recurrence-analysis-title" aria-busy={pending || undefined} tabIndex={-1} ref={formRef} noValidate onSubmit={submit} onKeyDown={trapFocus}>
     <header className="recurrence-analysis-form__head">
       <div><p className="eyebrow">Decisión de calidad</p><h2 id="recurrence-analysis-title">Analizar caso</h2><span>Determina la causa, el impacto y la atribución del trabajo original.</span></div>
       <button className="icon-button" type="button" aria-label="Cerrar análisis" disabled={pending} onClick={onCancel}><X size={18} aria-hidden="true" /></button>
@@ -270,7 +279,7 @@ export function RecurrenceAnalysisForm({
         <label><span>Impacto</span><select ref={impactRef} name="impact" autoComplete="off" aria-invalid={invalidField === "impact" || undefined} aria-describedby={invalidField === "impact" ? errorId : undefined} value={impact} onChange={(event) => { setImpact(event.target.value as RecurrenceImpact | ""); clearValidation(); }}><option value="">Selecciona el impacto</option>{catalog.impacts.map((item) => <option key={item} value={item}>{impactLabel[item]}</option>)}</select></label>
         <label><span>Responsabilidad</span><select ref={responsibilityRef} name="responsibility" autoComplete="off" aria-invalid={invalidField === "responsibility" || undefined} aria-describedby={invalidField === "responsibility" ? errorId : undefined} value={responsibility} onChange={(event) => selectResponsibility(event.target.value)}><option value="">Selecciona la responsabilidad</option>{catalog.responsibilities.filter((item): item is Responsibility => item !== "UNDETERMINED").map((item) => <option key={item} value={item}>{responsibilityLabel[item]}</option>)}</select></label>
       </div>
-      <label className="recurrence-analysis-form__analysis"><span>Análisis técnico</span><textarea ref={analysisRef} name="analysis" rows={5} autoComplete="off" aria-invalid={invalidField === "analysis" || Boolean(apiError) || undefined} aria-describedby={invalidField === "analysis" || apiError ? errorId : undefined} value={analysis} onChange={(event) => { setAnalysis(event.target.value); clearValidation(); }} placeholder="Describe los hallazgos y cómo se relacionan con la reincidencia…" /></label>
+      <label className="recurrence-analysis-form__analysis"><span>Análisis técnico</span><textarea ref={analysisRef} name="analysis" rows={5} autoComplete="off" aria-invalid={invalidField === "analysis" || undefined} aria-describedby={invalidField === "analysis" ? errorId : undefined} value={analysis} onChange={(event) => { setAnalysis(event.target.value); clearValidation(); }} placeholder="Describe los hallazgos y cómo se relacionan con la reincidencia…" /></label>
 
       <section className="recurrence-analysis-form__quality" aria-labelledby="recurrence-analysis-quality-title">
         <div><span className="recurrence-analysis-form__label">Participación original</span><h3 id="recurrence-analysis-quality-title"><ClipboardCheck size={16} aria-hidden="true" />Decisiones de calidad</h3><p>{technical ? "Marca cada afectación y documenta el criterio." : "La calidad sólo se atribuye cuando la responsabilidad es trabajo técnico."}</p></div>
@@ -294,8 +303,9 @@ export function RecurrenceAnalysisForm({
         <label className="recurrence-analysis-form__age"><span>Motivo de antigüedad</span><textarea ref={ageRef} name="ageOverrideReason" rows={2} autoComplete="off" aria-label="Motivo de antigüedad" aria-invalid={invalidField === "age" || undefined} aria-describedby={invalidField === "age" ? errorId : undefined} value={ageOverrideReason} onChange={(event) => { setAgeOverrideReason(event.target.value); clearValidation(); }} placeholder="Completa este campo si el caso supera el plazo de advertencia…" /><small>Requerido por el servidor cuando la detección excede el plazo configurado.</small></label>
       </section>
 
-      {(validationError || apiError) && <p className="recurrence-analysis-form__error" id={errorId} role="alert"><AlertTriangle size={16} aria-hidden="true" />{validationError ?? apiError}</p>}
+      {validationError && <p className="recurrence-analysis-form__error" id={errorId} role="alert"><AlertTriangle size={16} aria-hidden="true" />{validationError}</p>}
+      {apiError && <p className="recurrence-analysis-form__error" role="alert"><AlertTriangle size={16} aria-hidden="true" />{apiError}</p>}
     </fieldset>
-    <footer className="recurrence-analysis-form__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onCancel}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending}>{pending ? "Guardando…" : "Guardar análisis"}</button></footer>
+    <footer className="recurrence-analysis-form__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onCancel}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submissionBlocked}>{pending ? "Guardando…" : "Guardar análisis"}</button></footer>
   </form>;
 }
