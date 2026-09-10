@@ -21,7 +21,7 @@ export interface RecurrenceEvidencePanelProps {
   recurrenceNumber: string;
   evidenceApi: Pick<EvidenceApi, "listRecurrence">;
   canView: boolean;
-  canUpload?: boolean;
+  canUpload: boolean;
   canManage: boolean;
   mode?: "prompt" | "manage";
   error?: string | null;
@@ -43,7 +43,7 @@ export function RecurrenceEvidencePanel({
   recurrenceNumber,
   evidenceApi,
   canView,
-  canUpload = true,
+  canUpload,
   canManage,
   mode = "prompt",
   error = null,
@@ -196,6 +196,11 @@ export function RecurrenceEvidencePanel({
       panelRef.current.focus();
       return;
     }
+    if (document.activeElement === panelRef.current) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+      return;
+    }
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   };
@@ -285,7 +290,7 @@ export function RecurrenceEvidencePanel({
         </div>
       </fieldset>
       {(validationError || error) && <p className="recurrence-evidence-panel__error" role="alert"><AlertTriangle size={15} aria-hidden="true" />{validationError ?? error}</p>}
-      <div className="recurrence-evidence-panel__actions"><button className="button button--primary" type="submit" disabled={pendingAction !== null}>{pendingAction === "upload" ? "Subiendo…" : uploadFailed ? "Reintentar evidencia" : "Subir evidencia"}</button><button className="button button--ghost" type="button" disabled={pendingAction !== null} onClick={onClose}>Continuar sin evidencia</button></div>
+      <div className="recurrence-evidence-panel__actions"><button className="button button--primary" type="submit" disabled={pendingAction !== null}>{pendingAction === "upload" ? "Subiendo…" : uploadFailed ? "Reintentar evidencia" : "Subir evidencia"}</button><button className="button button--ghost" type="button" disabled={pendingAction !== null} onClick={onClose}>{mode === "prompt" ? "Continuar sin evidencia" : "Cerrar"}</button></div>
     </form>}
 
     {canView && evidenceListState === "loading" && listedEvidences.length === 0 && <div className="recurrence-evidence-panel__list-state" role="status" aria-label="Cargando evidencias">Cargando evidencias…</div>}

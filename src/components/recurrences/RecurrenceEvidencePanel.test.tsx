@@ -40,6 +40,7 @@ function props(overrides: Partial<React.ComponentProps<typeof RecurrenceEvidence
     recurrenceId: "rec-1",
     recurrenceNumber: "RI-2026-0001",
     canView: true,
+    canUpload: true,
     canManage: false,
     evidenceApi: evidenceReader(),
     error: null,
