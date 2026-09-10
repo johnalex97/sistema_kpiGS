@@ -100,6 +100,22 @@ export function currentRecurrenceMonth(now = new Date()): { detectedFrom: string
   };
 }
 
+export function hasEffectiveRecurrenceFilters(filters: RecurrenceListFilters, now = new Date()): boolean {
+  const currentPeriod = currentRecurrenceMonth(now);
+  return Boolean(
+    filters.search?.trim()
+    || filters.status?.length
+    || filters.impact?.length
+    || filters.responsibility?.length
+    || filters.originalOrderId
+    || filters.technicianId
+    || filters.clientId
+    || filters.branchId
+    || filters.detectedFrom !== currentPeriod.detectedFrom
+    || filters.detectedTo !== currentPeriod.detectedTo
+  );
+}
+
 export function parseRecurrenceSearch(search: string, now = new Date()): RecurrenceQueryState {
   const query = new URLSearchParams(search);
   const from = date(query.get("recurrenceFrom"));

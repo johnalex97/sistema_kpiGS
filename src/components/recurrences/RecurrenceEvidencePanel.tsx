@@ -92,6 +92,8 @@ export function RecurrenceEvidencePanel({
     panelRef.current?.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || pendingRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
       if (archiveTargetRef.current) {
         dismissArchive();
       } else closeRef.current();
@@ -181,9 +183,14 @@ export function RecurrenceEvidencePanel({
 
   const trapFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key !== "Tab" || !panelRef.current) return;
-    const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'));
+    const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])')).filter((element) => !element.matches(":disabled"));
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
+    if (!first || !last) {
+      event.preventDefault();
+      panelRef.current.focus();
+      return;
+    }
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   };
@@ -257,7 +264,7 @@ export function RecurrenceEvidencePanel({
     }
   };
 
-  return <aside className="recurrence-evidence-panel" role="dialog" aria-modal="true" aria-labelledby="recurrence-evidence-title" data-recurrence-id={recurrenceId} ref={panelRef} onKeyDown={trapFocus}>
+  return <aside className="recurrence-evidence-panel" role="dialog" aria-modal="true" aria-labelledby="recurrence-evidence-title" aria-busy={pendingAction !== null || undefined} data-recurrence-id={recurrenceId} tabIndex={-1} ref={panelRef} onKeyDown={trapFocus}>
     <header className="recurrence-evidence-panel__head"><div><p className="eyebrow">Caso creado · evidencia pendiente</p><h2 id="recurrence-evidence-title">Agregar evidencia</h2><span>{recurrenceNumber}</span></div><button className="icon-button" type="button" aria-label="Cerrar evidencia" disabled={pendingAction !== null} onClick={onClose}><X size={18} aria-hidden="true" /></button></header>
     <form className="recurrence-evidence-panel__upload" noValidate onSubmit={upload}>
       <p className="recurrence-evidence-panel__pending" role="status" aria-label="Evidencia pendiente"><Upload size={15} aria-hidden="true" />Caso creado · evidencia pendiente</p>

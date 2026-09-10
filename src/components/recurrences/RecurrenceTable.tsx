@@ -1,7 +1,7 @@
 import { ArrowRight, Clock3 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { RecurrenceImpact, RecurrenceResponsibility, RecurrenceStatus, RecurrenceSummary } from "../../models/recurrence";
-import { formatCount, formatCurrency, formatMinutes } from "./recurrence-format";
+import { formatCount, formatCurrency, formatMinutes, formatRecurrenceDateTime } from "./recurrence-format";
 
 const statusLabel: Record<RecurrenceStatus, string> = {
   OPEN: "Abierto", ANALYSIS: "En análisis", CORRECTION: "En corrección", CLOSED: "Cerrado", DISMISSED: "Descartado",
@@ -10,10 +10,6 @@ const impactLabel: Record<RecurrenceImpact, string> = { LOW: "Impacto bajo", MED
 const responsibilityLabel: Record<RecurrenceResponsibility, string> = {
   TECHNICAL_WORK: "Trabajo técnico", EQUIPMENT: "Equipo", CLIENT: "Cliente", THIRD_PARTY: "Tercero", UNDETERMINED: "Sin determinar",
 };
-
-function formatUpdated(value: string): string {
-  return new Intl.DateTimeFormat("es-HN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
 
 interface CaseView {
   id: string;
@@ -47,7 +43,7 @@ function caseView(recurrence: RecurrenceSummary): CaseView {
     additionalTime: formatMinutes(recurrence.additionalMinutes),
     cost: formatCurrency(recurrence.estimatedCost),
     updatedAt: recurrence.updatedAt,
-    updatedText: formatUpdated(recurrence.updatedAt),
+    updatedText: formatRecurrenceDateTime(recurrence.updatedAt),
   };
 }
 

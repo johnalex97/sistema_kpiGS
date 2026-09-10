@@ -29,14 +29,16 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
 
   useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
   useEffect(() => {
-    if (!apiError) return;
-    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    if (apiError) formRef.current?.focus();
   }, [apiError]);
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     formRef.current?.querySelector<HTMLInputElement>('[role="combobox"]')?.focus();
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pendingRef.current) cancelRef.current();
+      if (event.key !== "Escape" || pendingRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelRef.current();
     };
     document.addEventListener("keydown", handleEscape);
     return () => {
@@ -47,9 +49,14 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
 
   const trapFocus = (event: ReactKeyboardEvent<HTMLFormElement>) => {
     if (event.key !== "Tab" || !formRef.current) return;
-    const focusable = Array.from(formRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    const focusable = Array.from(formRef.current.querySelectorAll<HTMLElement>('button, input, textarea, [tabindex]:not([tabindex="-1"])')).filter((element) => !element.matches(":disabled"));
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
+    if (!first || !last) {
+      event.preventDefault();
+      formRef.current.focus();
+      return;
+    }
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   };
@@ -100,9 +107,10 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
     }
   };
 
-  const errorId = validationError || apiError ? "recurrence-report-error" : undefined;
+  const validationErrorId = validationError ? "recurrence-report-validation-error" : undefined;
+  const apiErrorId = apiError ? "recurrence-report-api-error" : undefined;
 
-  return <form className="recurrence-report-form" role="dialog" aria-modal="true" aria-labelledby="recurrence-report-title" ref={formRef} noValidate onSubmit={submit} onKeyDown={trapFocus}>
+  return <form className="recurrence-report-form" role="dialog" aria-modal="true" aria-labelledby="recurrence-report-title" aria-busy={pending || undefined} tabIndex={-1} ref={formRef} noValidate onSubmit={submit} onKeyDown={trapFocus}>
     <header className="recurrence-report-form__head">
       <div><p className="eyebrow">Registro operativo</p><h2 id="recurrence-report-title">Reportar reincidencia</h2><span>Relaciona la visita original con la orden que corrige la falla.</span></div>
       <button className="icon-button" type="button" aria-label="Cerrar reporte" disabled={pending} onClick={onCancel}><X size={18} aria-hidden="true" /></button>
@@ -110,11 +118,12 @@ export function RecurrenceReportForm({ lookupApi, apiError = null, onSubmit, onC
     <fieldset className="recurrence-report-form__body" disabled={pending}>
       <legend className="sr-only">Datos de la reincidencia</legend>
       <div className="recurrence-report-form__orders">
-        <OrderLookupCombobox label="Orden original" name="originalOrderId" api={lookupApi} statuses={["COMPLETED"]} value={original} invalid={Boolean(errorId && !original)} describedBy={errorId} inputRef={originalRef} onChange={selectOriginal} />
-        <OrderLookupCombobox label="Orden correctiva" name="correctionOrderId" api={lookupApi} statuses={correctionStatuses} value={correction} excludeId={original?.id} invalid={Boolean(errorId && !correction)} describedBy={errorId} inputRef={correctionRef} onChange={(order) => { setCorrection(order); setValidationError(null); }} />
+        <OrderLookupCombobox label="Orden original" name="originalOrderId" api={lookupApi} statuses={["COMPLETED"]} value={original} invalid={Boolean(validationError && !original)} describedBy={validationErrorId} inputRef={originalRef} onChange={selectOriginal} />
+        <OrderLookupCombobox label="Orden correctiva" name="correctionOrderId" api={lookupApi} statuses={correctionStatuses} value={correction} excludeId={original?.id} invalid={Boolean(validationError && !correction)} describedBy={validationErrorId} inputRef={correctionRef} onChange={(order) => { setCorrection(order); setValidationError(null); }} />
       </div>
-      <label className="recurrence-report-form__problem"><span>Problema detectado</span><textarea ref={problemRef} name="detectedProblem" rows={5} maxLength={10_000} aria-describedby={errorId} aria-invalid={Boolean(errorId) || undefined} value={detectedProblem} onChange={(event) => { setDetectedProblem(event.target.value); setValidationError(null); }} placeholder="Ej.: la conexión volvió a fallar durante la visita…" /></label>
-      {(validationError || apiError) && <p className="recurrence-report-form__error" id={errorId} role="alert"><AlertTriangle size={16} aria-hidden="true" />{validationError ?? apiError}</p>}
+      <label className="recurrence-report-form__problem"><span>Problema detectado</span><textarea ref={problemRef} name="detectedProblem" rows={5} maxLength={10_000} aria-describedby={validationErrorId} aria-invalid={Boolean(validationError) || undefined} value={detectedProblem} onChange={(event) => { setDetectedProblem(event.target.value); setValidationError(null); }} placeholder="Ej.: la conexión volvió a fallar durante la visita…" /></label>
+      {validationError && <p className="recurrence-report-form__error" id={validationErrorId} role="alert"><AlertTriangle size={16} aria-hidden="true" />{validationError}</p>}
+      {apiError && <p className="recurrence-report-form__error" id={apiErrorId} role="alert"><AlertTriangle size={16} aria-hidden="true" />{apiError}</p>}
     </fieldset>
     <footer className="recurrence-report-form__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onCancel}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending}>{pending ? "Reportando…" : "Reportar reincidencia"}</button></footer>
   </form>;

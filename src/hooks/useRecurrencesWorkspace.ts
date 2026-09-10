@@ -301,6 +301,7 @@ export function useRecurrencesWorkspace({
   const analysisPendingGenerationRef = useRef<number | null>(null);
   const actionModeRef = useRef<RecurrenceActionMode | null>(null);
   const evidencePromptRef = useRef<string | null>(null);
+  const historyModeRef = useRef<"push" | "replace">("replace");
   const scheduleEvidencePromptClear = useCallback(() => {
     void Promise.resolve().then(() => setEvidencePrompt(null));
   }, []);
@@ -609,7 +610,11 @@ export function useRecurrencesWorkspace({
     const nextSearch = serialized.toString();
     const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (nextUrl !== currentUrl) window.history.replaceState(window.history.state, "", nextUrl);
+    if (nextUrl !== currentUrl) {
+      const method = historyModeRef.current === "push" ? "pushState" : "replaceState";
+      window.history[method](window.history.state, "", nextUrl);
+    }
+    historyModeRef.current = "replace";
   }, [clock, query]);
 
   useEffect(() => {
@@ -708,6 +713,7 @@ export function useRecurrencesWorkspace({
       setSummaryState("loading");
     }
     queryRef.current = next;
+    historyModeRef.current = "push";
     setQuery(next);
   }, [invalidateList, invalidateSummary]);
 
@@ -722,11 +728,15 @@ export function useRecurrencesWorkspace({
     const current = queryRef.current;
     const next = current.selectedId === id ? current : { ...current, selectedId: id };
     queryRef.current = next;
+    historyModeRef.current = "push";
     setQuery(next);
     void loadDetail(id);
   }, [invalidateAnalysisOperation, loadDetail]);
 
-  const closeDetail = useCallback(() => removeSelection(), [removeSelection]);
+  const closeDetail = useCallback(() => {
+    historyModeRef.current = "push";
+    removeSelection();
+  }, [removeSelection]);
 
   const retryCatalog = useCallback(() => {
     setCatalogState("loading");

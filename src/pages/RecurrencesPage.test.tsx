@@ -295,6 +295,20 @@ describe("RecurrencesPage", () => {
     expect(current.clearEvidencePrompt).toHaveBeenCalledTimes(1);
   });
 
+  it("abre la gestión de evidencia de un caso existente para perfiles autorizados", async () => {
+    const user = userEvent.setup();
+    const current = workspace({
+      selected,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: selected.id },
+      capabilities: { ...workspace().capabilities, canViewEvidence: true },
+    });
+    render(view(current));
+
+    await user.click(screen.getByRole("button", { name: "Gestionar evidencia" }));
+    expect(screen.getByRole("dialog", { name: "Agregar evidencia" })).toHaveAttribute("data-recurrence-id", selected.id);
+  });
+
   it("loads the real evidence list and exposes download and archive operations", async () => {
     const listRecurrence = vi.fn().mockResolvedValue({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } });
     const current = workspace({

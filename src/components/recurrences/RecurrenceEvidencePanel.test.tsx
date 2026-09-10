@@ -334,4 +334,30 @@ describe("RecurrenceEvidencePanel", () => {
     expect(screen.queryByLabelText("Motivo para archivar router-frontal.png")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Acceso")).toHaveValue("TECHNICIAN");
   });
+
+  it("mantiene el foco contenido mientras una carga está pendiente", async () => {
+    const pending = deferred<boolean>();
+    const user = userEvent.setup();
+    render(<RecurrenceEvidencePanel {...props({ onUpload: vi.fn(() => pending.promise) })} />);
+    await user.upload(screen.getByLabelText("Archivo de evidencia"), new File(["imagen"], "router.png", { type: "image/png" }));
+    await user.click(screen.getByRole("button", { name: "Subir evidencia" }));
+    const dialog = screen.getByRole("dialog", { name: "Agregar evidencia" });
+
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(dialog).toHaveFocus();
+    pending.resolve(true);
+  });
+
+  it("consume Escape antes de cerrar el detalle que queda debajo", async () => {
+    const onClose = vi.fn();
+    const closeUnderlyingDetail = vi.fn();
+    window.addEventListener("keydown", closeUnderlyingDetail);
+    render(<RecurrenceEvidencePanel {...props({ onClose })} />);
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(closeUnderlyingDetail).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", closeUnderlyingDetail);
+  });
 });

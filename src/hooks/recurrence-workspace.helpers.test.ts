@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RecurrenceDetail } from "../models/recurrence";
 import {
   currentRecurrenceMonth,
+  hasEffectiveRecurrenceFilters,
   parseRecurrenceSearch,
   reconcileRecurrence,
   serializeRecurrenceSearch,
@@ -20,6 +21,17 @@ const uuidCases = {
 function recurrence(id: string, version: number): RecurrenceDetail {
   return { id, version } as RecurrenceDetail;
 }
+
+describe("filtros efectivos de reincidencias", () => {
+  it("no considera filtro al periodo mensual materializado y sí detecta restricciones reales", () => {
+    const now = new Date("2026-09-10T12:00:00.000Z");
+    const currentPeriod = currentRecurrenceMonth(now);
+
+    expect(hasEffectiveRecurrenceFilters({ ...currentPeriod, page: 1, pageSize: 20 }, now)).toBe(false);
+    expect(hasEffectiveRecurrenceFilters({ ...currentPeriod, status: ["OPEN"], page: 1, pageSize: 20 }, now)).toBe(true);
+    expect(hasEffectiveRecurrenceFilters({ ...currentPeriod, detectedFrom: "2026-08-01T00:00:00-06:00", page: 1, pageSize: 20 }, now)).toBe(true);
+  });
+});
 
 describe("estado URL de reincidencias", () => {
   it("parsea filtros repetidos, selecciÃ³n y paginaciÃ³n", () => {

@@ -1,5 +1,5 @@
 import { AlertTriangle, FilePlus2, RefreshCw, Search } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createEvidenceApi, type EvidenceApi } from "../api/evidences";
 import { createRecurrenceLookupApi, type RecurrenceLookupApi } from "../api/recurrence-lookups";
 import { createRecurrenceApi, type RecurrenceApi } from "../api/recurrences";
@@ -58,6 +58,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
   const reportTriggerRef = useRef<HTMLButtonElement | null>(null);
   const analysisTriggerRef = useRef<HTMLButtonElement | null>(null);
   const previousShowAnalysisRef = useRef(false);
+  const [evidenceCase, setEvidenceCase] = useState<{ id: string; number: string } | null>(null);
   const pagination = workspace.page?.pagination;
   const select = workspace.select;
   const closeWorkspaceDetail = workspace.closeDetail;
@@ -102,7 +103,10 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
       ? workspace.selected
       : workspace.page?.items.find((item) => item.id === workspace.evidencePromptForId)
     : null;
-  const showEvidencePrompt = Boolean(workspace.evidencePromptForId && workspace.capabilities.canUploadEvidence);
+  const promptedEvidence = workspace.evidencePromptForId && workspace.capabilities.canUploadEvidence
+    ? { id: workspace.evidencePromptForId, number: promptedRecurrence?.recurrenceNumber ?? workspace.evidencePromptForId }
+    : null;
+  const activeEvidenceCase = evidenceCase ?? promptedEvidence;
 
   const openReport = (trigger: HTMLButtonElement) => {
     reportTriggerRef.current = trigger;
@@ -132,6 +136,17 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     workspace.clearMutationError();
     workspace.setActionMode(null);
     restoreAnalysisFocus();
+  };
+
+  const openEvidence = (trigger: HTMLButtonElement) => {
+    lastTriggerRef.current = trigger;
+    if (workspace.selected) setEvidenceCase({ id: workspace.selected.id, number: workspace.selected.recurrenceNumber });
+  };
+
+  const closeEvidence = () => {
+    setEvidenceCase(null);
+    workspace.clearEvidencePrompt();
+    restoreFocus();
   };
 
   useEffect(() => {
@@ -180,11 +195,11 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
       {hasDetailRegion && <div className="recurrence-register__detail">
         {workspace.detailState === "loading" && !workspace.selected && <div className="recurrence-detail-state" role="status" aria-label="Cargando detalle"><span aria-hidden="true" />Cargando detalle del caso…</div>}
         {workspace.detailState === "error" && !workspace.selected && <div className="recurrence-detail-state recurrence-detail-state--error" role="alert"><AlertTriangle size={22} aria-hidden="true" /><strong>No fue posible cargar el detalle</strong><p>El registro de casos sigue disponible.</p><button className="button button--ghost" type="button" onClick={workspace.retryDetail}>Reintentar detalle</button><button type="button" onClick={closeDetail}>Cerrar</button></div>}
-        {workspace.selected && <RecurrenceDetail recurrence={workspace.selected} capabilities={workspace.capabilities} onClose={closeDetail} onAnalyze={openAnalysis} />}
+        {workspace.selected && <RecurrenceDetail recurrence={workspace.selected} capabilities={workspace.capabilities} onClose={closeDetail} onAnalyze={openAnalysis} onManageEvidence={openEvidence} />}
       </div>}
     </div>
     {showReport && <div className="recurrence-action-backdrop"><RecurrenceReportForm lookupApi={workspace.lookupApi} apiError={workspace.mutation?.name === "report" ? workspace.mutation.error : null} onCancel={closeReport} onSubmit={workspace.reportRecurrence} /></div>}
     {showAnalysis && workspace.selected && workspace.catalog && <div className="recurrence-action-backdrop recurrence-action-backdrop--analysis"><RecurrenceAnalysisForm catalog={workspace.catalog} originalTechnicians={workspace.selected.technicians.filter((entry) => entry.participation !== "CORRECTION_PARTICIPANT")} apiError={workspace.mutation?.name === "analyze" ? workspace.mutation.error : null} submissionBlocked={workspace.selected.status !== "OPEN"} onCancel={closeAnalysis} onSubmit={workspace.analyzeRecurrence} /></div>}
-    {showEvidencePrompt && workspace.evidencePromptForId && <div className="recurrence-action-backdrop recurrence-action-backdrop--evidence"><RecurrenceEvidencePanel recurrenceId={workspace.evidencePromptForId} recurrenceNumber={promptedRecurrence?.recurrenceNumber ?? workspace.evidencePromptForId} evidenceApi={workspace.evidenceApi} canView={workspace.capabilities.canViewEvidence} canManage={workspace.capabilities.canManageEvidence} error={workspace.mutation?.name === "evidence" ? workspace.mutation.error : null} onUpload={workspace.uploadEvidence} onDownload={workspace.downloadEvidence} onArchive={workspace.archiveEvidence} onClose={workspace.clearEvidencePrompt} /></div>}
+    {activeEvidenceCase && <div className="recurrence-action-backdrop recurrence-action-backdrop--evidence"><RecurrenceEvidencePanel recurrenceId={activeEvidenceCase.id} recurrenceNumber={activeEvidenceCase.number} evidenceApi={workspace.evidenceApi} canView={workspace.capabilities.canViewEvidence} canManage={workspace.capabilities.canManageEvidence} error={workspace.mutation?.name === "evidence" ? workspace.mutation.error : null} onUpload={workspace.uploadEvidence} onDownload={workspace.downloadEvidence} onArchive={workspace.archiveEvidence} onClose={closeEvidence} /></div>}
   </section>;
 }

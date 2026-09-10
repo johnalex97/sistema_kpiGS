@@ -1195,3 +1195,34 @@ describe("useRecurrencesWorkspace", () => {
     expect(result.current.mutation).toMatchObject({ name: "analyze", conflict: false, error: "No tienes permiso para analizar reincidencias." });
   });
 });
+
+describe("historial explícito de reincidencias", () => {
+  it("crea entradas para filtros y selección sin reescribir una navegación popstate", async () => {
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    const { result } = renderWorkspace();
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    push.mockClear();
+    replace.mockClear();
+
+    act(() => result.current.setFilters({ status: ["OPEN"] }));
+    await waitFor(() => expect(window.location.search).toContain("recurrenceStatus=OPEN"));
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(replace).not.toHaveBeenCalled();
+
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(window.location.search).toContain(`recurrenceSelectedId=${recurrenceId}`));
+    expect(push).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      window.history.pushState({}, "", "/reincidencias?recurrenceStatus=ANALYSIS");
+      push.mockClear();
+      replace.mockClear();
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() => expect(result.current.query.filters.status).toEqual(["ANALYSIS"]));
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toContain("recurrenceFrom=");
+  });
+});

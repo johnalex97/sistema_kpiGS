@@ -290,7 +290,8 @@ describe("RecurrenceReportForm", () => {
     rerender(<RecurrenceReportForm lookupApi={api} apiError="Ya existe una reincidencia para estas órdenes." onSubmit={onSubmit} onCancel={vi.fn()} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Ya existe una reincidencia");
     expect(screen.getByLabelText("Problema detectado")).toHaveValue("Falla repetida");
-    expect(screen.getByLabelText("Problema detectado")).toHaveFocus();
+    expect(screen.getByLabelText("Problema detectado")).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("dialog", { name: "Reportar reincidencia" })).toHaveFocus();
   });
 
   it("blocks duplicate submission and keeps Escape disabled while pending", async () => {
@@ -311,6 +312,8 @@ describe("RecurrenceReportForm", () => {
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Reportando…" })).toBeDisabled();
+    fireEvent.keyDown(form, { key: "Tab" });
+    expect(form).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(onCancel).not.toHaveBeenCalled();
     finish?.(false);

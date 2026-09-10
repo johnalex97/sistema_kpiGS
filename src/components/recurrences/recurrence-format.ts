@@ -1,4 +1,9 @@
 const countFormatter = new Intl.NumberFormat("es-HN", { maximumFractionDigits: 0 });
+const recurrenceDateTimeFormatter = new Intl.DateTimeFormat("es-HN", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "America/Tegucigalpa",
+});
 
 function groupInteger(value: string): string {
   return value.replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
@@ -34,4 +39,8 @@ export function formatBytes(value: string): string {
   }
   const kilobytes = (bytes + 512n) / 1_024n;
   return `${kilobytes > 0n ? kilobytes : 1n}\u00a0KB`;
+}
+
+export function formatRecurrenceDateTime(value: string): string {
+  return recurrenceDateTimeFormatter.format(new Date(value));
 }
