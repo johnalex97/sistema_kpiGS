@@ -90,14 +90,14 @@ export function RecurrenceTable({ recurrences, onSelect }: RecurrenceTableProps)
       return <article className="recurrence-card" key={item.id} data-impact={item.impact.toLowerCase()} aria-labelledby={titleId}>
         <header className="recurrence-card__head"><div><strong id={titleId}>{item.number}</strong><p>{item.problem}</p></div><OpenButton item={item} onSelect={onSelect} /></header>
         <dl>
-          <div><dt>Orden original</dt><dd className="recurrence-table__data">{item.order}</dd></div>
-          <div><dt>Impacto</dt><dd><Impact item={item} /></dd></div>
-          <div><dt>Responsabilidad</dt><dd>{item.responsibility}</dd></div>
-          <div><dt>Estado</dt><dd><State item={item} /></dd></div>
-          <div><dt>Visitas</dt><dd className="recurrence-table__data">{item.visits}</dd></div>
-          <div><dt>Tiempo adicional</dt><dd className="recurrence-table__time"><Clock3 size={13} aria-hidden="true" />{item.additionalTime}</dd></div>
-          <div><dt>Costo</dt><dd className="recurrence-table__data">{item.cost}</dd></div>
-          <div><dt>Actualizado</dt><dd><time dateTime={item.updatedAt}>{item.updatedText}</time></dd></div>
+          <div><dt>Orden original</dt><dd data-label="Orden original" className="recurrence-table__data">{item.order}</dd></div>
+          <div><dt>Impacto</dt><dd data-label="Impacto"><Impact item={item} /></dd></div>
+          <div><dt>Responsabilidad</dt><dd data-label="Responsabilidad">{item.responsibility}</dd></div>
+          <div><dt>Estado</dt><dd data-label="Estado"><State item={item} /></dd></div>
+          <div><dt>Visitas</dt><dd data-label="Visitas" className="recurrence-table__data">{item.visits}</dd></div>
+          <div><dt>Tiempo adicional</dt><dd data-label="Tiempo adicional" className="recurrence-table__time"><Clock3 size={13} aria-hidden="true" />{item.additionalTime}</dd></div>
+          <div><dt>Costo</dt><dd data-label="Costo" className="recurrence-table__data">{item.cost}</dd></div>
+          <div><dt>Actualizado</dt><dd data-label="Actualizado"><time dateTime={item.updatedAt}>{item.updatedText}</time></dd></div>
         </dl>
       </article>;
     })}</section>;

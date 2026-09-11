@@ -19,17 +19,6 @@ export interface Work {
   repeated?: boolean;
 }
 
-export interface RecurrenceJob {
-  id: string;
-  issue: string;
-  client: string;
-  visits: number;
-  techs: string[];
-  opened: string;
-  impact: "Alto" | "Medio";
-  state: "En revisión" | "Resuelto" | "Escalado";
-}
-
 export interface NavigationItem {
   label: Page;
   path: PagePath;

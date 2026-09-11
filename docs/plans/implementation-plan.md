@@ -149,8 +149,8 @@ permisos, y retiene el archivo físico al archivar. El volumen local privado
 usa claves relativas, temporales en el mismo volumen y promoción atómica; la
 verificación `npm run evidences:verify` compara de forma sólo lectura los
 archivos finales con toda la metadata, incluidas filas archivadas y relaciones
-heredadas de reincidencia. El frontend aún no integra estos endpoints; las dos
-rutas de reincidencias se incorporaron con la fase 10.
+heredadas de reincidencia. El detalle frontend de Reincidencias ya integra su
+carga, listado y descarga; la gestión global de Evidencias continúa pendiente.
 
 Salida: carga y descarga privada preparada para migrar a nube, con nueve
 migraciones versionadas en total antes del flujo de reincidencias.
@@ -162,9 +162,9 @@ migraciones versionadas en total antes del flujo de reincidencias.
 - Registrar acciones correctivas y preventivas.
 - Afectar calidad únicamente cuando sea atribuible al trabajo técnico.
 
-Estado: completada. El backend expone 13 endpoints protegidos para catálogo,
-consulta, reporte, análisis, corrección, visitas, notas, descarte, cierre,
-ajuste y evidencias. La décima migración `20260820120000_recurrences_workflow_api`
+Estado: completada. El backend expone 14 endpoints protegidos para catálogo,
+consulta, resumen, reporte, análisis, corrección, visitas, notas, descarte,
+cierre, ajuste y evidencias. La décima migración `20260820120000_recurrences_workflow_api`
 añade el esquema y flujo persistente, secuencia anual `RI-AAAA-NNNN`,
 restricciones e índices; el seed idempotente provisiona los permisos
 `RECURRENCES_*` y sus asignaciones por rol. La undécima migración
@@ -178,15 +178,16 @@ con `RECURRENCES_VIEW_OWN` su historial. El caso avanza `OPEN → ANALYSIS →
 CORRECTION → CLOSED`; `DISMISSED` y `CLOSED` son terminales. Solo `CLOSED`
 entrega hechos a la fase 11 de KPI, que sigue pendiente y no calcula puntajes
 todavía. La evidencia de reincidencia respeta los niveles `TECHNICIAN` e
-`INTERNAL` y el archivo se conserva tras archivar la metadata.
+`INTERNAL` y el archivo se conserva tras archivar la metadata. La fase 11 de KPI
+ya consume de forma durable los cierres y ajustes atribuibles.
 
 Salida verificada: 66 pruebas unitarias de reincidencias, 94 pruebas de
 persistencia/HTTP de reincidencias, 8 de regresión HTTP de evidencias y 12 de
 seguridad/errores/servidor; typecheck, lint y build del backend correctos. Las
 pruebas PostgreSQL mantienen la advertencia deprecada conocida de `pg` sobre
-`client.query()` concurrente, sin fallo de suite. No existe integración de
-frontend, cálculo de puntajes, detección automática, exportaciones ni
-despliegue Docker/VPS terminados.
+`client.query()` concurrente, sin fallo de suite. La integración frontend queda
+registrada en el subbloque de fase 12; detección automática, exportaciones y
+despliegue Docker/VPS no están terminados.
 
 Salida: trazabilidad completa con pruebas de clasificación.
 
@@ -214,11 +215,12 @@ Salida: indicadores reproducibles y explicables, verificados con
 Salida: interfaz existente conectada a datos persistentes.
 
 Estado: en progreso. Los subbloques de autenticación, KPI,
-Actividades/Jornada operativa y Técnicos están completados. Actividades consume
+Actividades/Jornada operativa, Técnicos y Reincidencias están completados. Actividades consume
 catálogo, listado, detalle, búsquedas auxiliares y todas sus mutaciones desde la
 API, con URL, polling, control optimista y recuperación de conflictos. La
-jornada visual del Dashboard, Evidencias y Reincidencias conservan temporalmente
-sus fuentes o interfaces locales; por eso la fase 12 completa sigue abierta.
+La jornada visual del Dashboard y las interfaces globales de Evidencias,
+Órdenes y Clientes continúan pendientes; por eso la fase 12 completa sigue
+abierta.
 
 Subbloque de autenticación frontend: completado. La SPA restaura la sesión con
 `GET /api/v1/auth/me`, usa la cookie opaca `gs_session`, bloquea el contenido
@@ -236,6 +238,26 @@ lectura, `TECHNICIANS_MANAGE` habilita las mutaciones y
 `GET /api/v1/technicians/eligible-users`, y `KPI_VIEW_ALL` muestra métricas.
 La colección mock `technicians` permanece exclusivamente para la jornada visual
 del Dashboard hasta su migración posterior.
+
+Subbloque de Reincidencias: completado. `/reincidencias` consume catálogo,
+lista, `/api/v1/recurrences/summary`, detalle, reporte, análisis, corrección,
+visitas, notas, descarte, cierre, ajuste y evidencia desde la API. Sincroniza en
+URL estado, impacto, responsabilidad, orden original, técnico, cliente,
+sucursal y el periodo con límites de Honduras (`-06:00`); los filtros globales
+usan búsquedas legibles condicionadas por permisos. La evidencia cargada se
+publica inmediatamente y su descarga es binaria. El flujo integrado verifica
+las versiones `1 → 2 → 3 → 4 → 5 → 6`; nota y evidencia no inventan un
+incremento. `recurrenceJobs`, `RecurrenceJob` y el contador lateral ficticio se
+retiraron. El diseño mantiene tabla y detalle lateral en escritorio, y tarjetas,
+filtros apilados, detalle y formularios a pantalla completa en móvil.
+
+Este subbloque no completa la gestión global de Evidencias, las pantallas de
+Órdenes o Clientes, reportes/exportaciones ni el despliegue. Su matriz exacta es
+`npm test -- --pool=threads --maxWorkers=1`, `npm run lint` y `npm run build` en
+la raíz; y, desde `server/`, `npm test -- tests/recurrences`,
+`npm run test:db -- tests/database/recurrences-read-persistence.test.ts
+tests/recurrences/recurrences-http.test.ts`, `npm run typecheck`, `npm run lint`
+y `npm run build`.
 
 ## 13. Reportes y auditoría
 

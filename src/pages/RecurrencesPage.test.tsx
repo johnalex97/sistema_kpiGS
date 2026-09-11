@@ -275,12 +275,13 @@ describe("RecurrencesPage", () => {
     await user.click(trigger);
     expect(current.setActionMode).toHaveBeenCalledWith("report");
     rendered.rerender(view({ ...current, actionMode: "report" }));
-    await user.click(screen.getByRole("combobox", { name: "Orden original" }));
+    const reportDialog = screen.getByRole("dialog", { name: "Reportar reincidencia" });
+    await user.click(within(reportDialog).getByRole("combobox", { name: "Orden original" }));
     await user.click(await screen.findByRole("option", { name: /OT-100/ }));
-    await user.click(screen.getByRole("combobox", { name: "Orden correctiva" }));
+    await user.click(within(reportDialog).getByRole("combobox", { name: "Orden correctiva" }));
     await user.click(await screen.findByRole("option", { name: /OT-200/ }));
-    await user.type(screen.getByLabelText("Problema detectado"), "La falla reapareció");
-    await user.click(within(screen.getByRole("dialog", { name: "Reportar reincidencia" })).getByRole("button", { name: "Reportar reincidencia" }));
+    await user.type(within(reportDialog).getByLabelText("Problema detectado"), "La falla reapareció");
+    await user.click(within(reportDialog).getByRole("button", { name: "Reportar reincidencia" }));
 
     expect(current.reportRecurrence).toHaveBeenCalledWith({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "La falla reapareció" });
   });

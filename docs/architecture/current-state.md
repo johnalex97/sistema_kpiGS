@@ -1,14 +1,14 @@
 # Diagnóstico de arquitectura actual
 
-Fecha de actualización: 26 de agosto de 2026.
+Fecha de actualización: 11 de septiembre de 2026.
 
 ## Resumen
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express,
 persistencia PostgreSQL mediante Prisma y autenticación con sesiones opacas. La
-SPA ya integra sesión, KPI, el flujo completo de Actividades y la administración
-de Técnicos; Evidencias, Reincidencias y la actividad reciente del Dashboard
-continúan en migración gradual.
+SPA ya integra sesión, KPI y los flujos completos de Actividades, Técnicos y
+Reincidencias; la gestión global de Evidencias y la actividad reciente del
+Dashboard continúan en migración gradual.
 
 ## Estructura encontrada
 
@@ -26,6 +26,7 @@ src/
 ├── test/         # Configuración de pruebas
 ├── App.tsx       # Composición de sesión y shell
 ├── activities-flow.integration.test.tsx
+├── recurrences-flow.integration.test.tsx
 ├── main.tsx      # Punto de entrada de React
 └── styles.css    # Estilos visuales existentes
 
@@ -51,7 +52,7 @@ server/
 ```
 
 El frontend dispone de cliente HTTP con cookies, recuperación de sesión y
-fronteras API tipadas para KPI, Actividades y Técnicos. El backend consume persistencia
+fronteras API tipadas para KPI, Actividades, Técnicos y Reincidencias. El backend consume persistencia
 para autenticación, técnicos, clientes, sucursales, contactos, órdenes,
 actividades, evidencias, reincidencias y KPI.
 
@@ -65,6 +66,8 @@ actividades, evidencias, reincidencias y KPI.
 - Dashboard KPI real y administración según capacidades.
 - Técnicos persistentes: búsqueda, filtros y paginación en URL, detalle,
   ciclo laboral y selector de usuarios elegibles mediante API.
+- Reincidencias persistentes: resumen, filtros en URL, lista, detalle, flujo
+  revisado completo y evidencia privada inmediata con descarga binaria.
 - Menú lateral adaptable a teléfonos.
 - Tablas con desplazamiento horizontal en pantallas estrechas.
 - Compilación de producción con TypeScript estricto.
@@ -72,8 +75,8 @@ actividades, evidencias, reincidencias y KPI.
 ## Funcionalidades únicamente visuales
 
 - Línea de jornada.
-- Casos de reincidencia.
-- Filtros, reportes, configuración y notificaciones.
+- Gestión global de evidencias, órdenes y clientes.
+- Reportes, configuración y notificaciones no implementados.
 - Fechas, tiempos, costos y porcentajes mostrados.
 
 ## Datos mock identificados
@@ -84,17 +87,17 @@ Todos están declarados explícitamente en `src/mocks/data.ts`:
 | --- | --- | --- |
 | `technicians` | Jornada visual temporal | Sólo Dashboard |
 | `initialWorks` | Actividad reciente de ejemplo | Sólo Dashboard |
-| `recurrenceJobs` | Casos de reincidencia | Vista de reincidencias |
 | `navItems` | Navegación principal | Menú lateral |
 
-Los módulos de Actividades y Técnicos no importan estas colecciones como fuente
-de verdad. Sus escrituras se ejecutan contra PostgreSQL mediante la API.
+Los módulos de Actividades, Técnicos y Reincidencias no importan estas
+colecciones como fuente de verdad. Sus escrituras se ejecutan contra PostgreSQL
+mediante la API; `recurrenceJobs` y `RecurrenceJob` fueron retirados.
 
 ## Problemas técnicos
 
-1. Evidencias y Reincidencias todavía no consumen sus APIs en la SPA.
+1. La gestión global de Evidencias todavía no consume su API en la SPA.
 2. La jornada y actividad reciente del Dashboard aún usan datos locales.
-3. Las pantallas de órdenes todavía no están integradas.
+3. Las pantallas de Órdenes y Clientes todavía no están integradas.
 4. Los usuarios demo no pueden iniciar sesión; el administrador requiere
    variables privadas de seed.
 5. Algunos controles visuales fuera de Actividades todavía no ejecutan acciones.
@@ -107,7 +110,7 @@ de verdad. Sus escrituras se ejecutan contra PostgreSQL mediante la API.
 | `npm run build` | Correcto; TypeScript y Vite compilan |
 | `npm run dev -- --host 127.0.0.1 --port 5173` | Correcto; respuesta HTTP 200 |
 | `npm run lint` | Correcto; 0 advertencias |
-| `npm run test` | Correcto; 214 pruebas en 30 archivos (suite frontend vigente, incluido Técnicos) |
+| `npm test -- --pool=threads --maxWorkers=1` | Correcto; 419 pruebas en 46 archivos (suite frontend vigente, incluido el flujo integrado de Reincidencias) |
 | `npm audit --audit-level=moderate` | 0 vulnerabilidades |
 
 Backend, ejecutado desde `server/`:
@@ -118,8 +121,8 @@ Backend, ejecutado desde `server/`:
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 8 pruebas de reconciliación pura |
 | `npm run evidences:verify` | Correcto con una raíz preaprovisionada: `Matched 0`, `Orphan files 0`, `Missing files 0`; una raíz explícita ausente terminó con código `1`, mensaje operacional redactado y sin crearla |
-| Reincidencias unitarias | Correcto; 66 pruebas en 5 archivos |
-| Reincidencias PostgreSQL y HTTP | Correcto; 94 pruebas en 5 archivos |
+| `npm test -- tests/recurrences` | Correcto; 70 pruebas en 5 archivos |
+| Matriz focal PostgreSQL y HTTP de Reincidencias | Correcto; 19 pruebas en 2 archivos contra `schema=test` |
 | Regresión HTTP de evidencias | Correcto; 8 pruebas |
 | Seguridad, errores y servidor | Correcto; 12 pruebas |
 | `npm run typecheck`, `npm run lint`, `npm run build` | Correctos; lint sin advertencias |
@@ -214,13 +217,14 @@ bytes fuera de rutas públicas en un volumen privado; valida JPEG, PNG, WebP y
 PDF hasta 10 MiB y conserva físicamente los archivos archivados. El comando
 `npm run evidences:verify` sólo lee las claves finales y toda la metadata
 (incluidas archivadas y relaciones heredadas de reincidencia), informa claves
-relativas ordenadas y devuelve `2` ante diferencias. La SPA no consume todavía
-estas rutas.
+relativas ordenadas y devuelve `2` ante diferencias. Reincidencias consume la
+carga, listado y descarga dentro de su detalle; la gestión global de Evidencias
+continúa pendiente.
 
 El módulo `recurrences` sigue la frontera route → middleware → controller →
 service → repositorios de lectura, reporte y flujo → Prisma/PostgreSQL. Expone
-13 endpoints: catálogo, lista, reporte, detalle, análisis, corrección, visitas,
-notas, descarte, cierre, ajuste y dos de evidencia. La décima migración incorpora
+14 endpoints: catálogo, lista, resumen, reporte, detalle, análisis, corrección,
+visitas, notas, descarte, cierre, ajuste y dos de evidencia. La décima migración incorpora
 la numeración anual `RI-AAAA-NNNN`, estados `OPEN`, `ANALYSIS`, `CORRECTION`,
 `CLOSED` y `DISMISSED`, snapshots de participantes y auditoría. La undécima
 migración completa las restricciones de causa por estado y las longitudes de
@@ -231,6 +235,15 @@ cierre convierte decisiones de calidad en hechos para la futura fase KPI;
 `DISMISSED` no produce efecto. ADMIN y SUPERVISOR tienen alcance global;
 TECHNICIAN tiene alcance propio histórico y no puede revisar ni ver evidencia
 `INTERNAL`.
+
+La SPA consume esos 14 endpoints con cookies opacas, estados de carga/error y
+reintento, descarte de respuestas obsoletas y reconciliación por `version`. El
+periodo inicial y los filtros de detección respetan Honduras (`-06:00`); lista y
+resumen comparten búsqueda, estado, impacto, responsabilidad, orden, técnico,
+cliente y sucursal, pero el resumen omite paginación. Los selectores globales
+usan búsquedas auxiliares sólo cuando los permisos de cada recurso lo permiten.
+En escritorio se conserva tabla con panel lateral; en móvil las filas son
+tarjetas y el detalle y los formularios operan a pantalla completa.
 
 La separación será:
 
@@ -274,19 +287,20 @@ recalcular la semana original. `KPI_TIME_ZONE=America/Tegucigalpa` define los
 límites locales.
 
 La SPA consume resumen, ranking e historial KPI real y ofrece metas,
-ponderaciones, cierre y recálculo según capacidades del usuario. Actividades y
-Técnicos también son persistentes; los restantes paneles operativos conservan
-datos locales hasta completar la fase 12. El catálogo técnico permite
+ponderaciones, cierre y recálculo según capacidades del usuario. Actividades,
+Técnicos y Reincidencias también son persistentes; los restantes paneles
+operativos conservan datos locales hasta completar la fase 12. El catálogo técnico permite
 `TECHNICIANS_VIEW`; el ciclo laboral y `GET /api/v1/technicians/eligible-users`
 requieren `TECHNICIANS_MANAGE`, mientras las métricas semanales requieren
 `KPI_VIEW_ALL`.
 
 Verificación local: `npm run kpis:verify`, `npm run test:db`, `npm test`,
 `npm run typecheck`, `npm run lint` y `npm run build` desde `server/`; desde la
-raíz, `npm test`, `npm run lint` y `npm run build`. PostgreSQL puede emitir la
+raíz, `npm test -- --pool=threads --maxWorkers=1`, `npm run lint` y
+`npm run build`. PostgreSQL puede emitir la
 advertencia no bloqueante conocida de `pg` sobre `client.query()` concurrente.
-La matriz vigente de Técnicos distingue el alcance para no mezclar pruebas y
-archivos: frontend completo con 214 pruebas en 30 archivos; backend unitario
+La matriz vigente distingue el alcance para no mezclar pruebas y archivos:
+frontend completo con 419 pruebas en 46 archivos; backend unitario
 focal con 30 pruebas en 2 archivos; y persistencia/HTTP con 13 pruebas en 2
 archivos contra `schema=test`. Estas cifras son la verificación actual del
 módulo, no totales históricos globales de otras fases.

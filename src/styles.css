@@ -375,6 +375,19 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-filters input:focus-visible, .recurrence-filters select:focus-visible, .recurrence-filters button:focus-visible, .recurrence-table__open:focus-visible, .recurrence-detail button:focus-visible, .recurrence-pagination button:focus-visible { outline: 3px solid rgba(9, 174, 180, .24); outline-offset: 2px; border-color: #09aeb4; }
 .recurrence-filters input:disabled, .recurrence-filters select:disabled { color: #82949d; background: #f1f5f6; cursor: wait; }
 .recurrence-filters__scope { grid-column: 1 / -1; padding-top: 10px; display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)) auto; align-items: end; gap: 10px; border-top: 1px solid #e5ecef; }
+.recurrence-scope-combobox { position: relative; min-width: 0; display: grid; gap: 6px; }
+.recurrence-scope-combobox > label { color: #526d7c; font-size: 10px; font-weight: 700; }
+.recurrence-scope-combobox__control { position: relative; min-width: 0; }
+.recurrence-scope-combobox__control input { padding-right: 35px; }
+.recurrence-scope-combobox__control > svg, .recurrence-scope-combobox__control > button { position: absolute; top: 50%; right: 7px; transform: translateY(-50%); }
+.recurrence-scope-combobox__control > svg { color: #6d8491; pointer-events: none; }
+.recurrence-scope-combobox__control > button { width: 30px; min-height: 30px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 5px; color: #637d8b; background: transparent; cursor: pointer; }
+.recurrence-scope-combobox__popover { position: absolute; z-index: 12; top: calc(100% + 4px); right: 0; left: 0; max-height: 230px; padding: 4px; border: 1px solid #b9d3d8; border-radius: 7px; background: #fff; box-shadow: 0 12px 28px rgba(11, 35, 64, .16); overflow-y: auto; overscroll-behavior: contain; }
+.recurrence-scope-combobox__popover > [role="option"] { width: 100%; min-height: 44px; padding: 8px 9px; display: flex; align-items: center; border-radius: 5px; color: #29485d; background: transparent; font-family: "Segoe UI Variable", "Segoe UI", sans-serif; font-size: 11px; line-height: 1.35; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.recurrence-scope-combobox__popover > [role="option"]:hover, .recurrence-scope-combobox__popover > [role="option"][data-active="true"] { color: #0b4656; background: #edfafa; }
+.recurrence-scope-combobox__popover > p { margin: 0; padding: 10px 9px; color: #687f8c; font-size: 11px; line-height: 1.4; }
+.recurrence-scope-combobox__popover > p[role="alert"] { color: #913f32; background: #fff7f5; }
+.recurrence-scope-combobox__popover > .recurrence-scope-combobox__more { border-top: 1px solid #e1eaed; color: #087f88; font-weight: 700; text-align: center; }
 .recurrence-filters__clear, .recurrence-filters__apply { min-height: 40px; padding: 0 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #dbe5e9; border-radius: 6px; color: #496a7c; background: #f7fafb; cursor: pointer; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .recurrence-filters__apply { border-color: #a8d7da; color: #086f77; background: #eefafb; }
 .recurrence-filters__clear:hover, .recurrence-filters__apply:hover { border-color: #8dcfd2; background: #e8f7f8; }
@@ -453,7 +466,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-detail__head span { display: block; margin-top: 6px; color: #607887; font: 700 10px/1 "Consolas", monospace; }
 .recurrence-detail__signal { padding: 11px 17px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid #e4ecef; background: #f7fafb; }
 .recurrence-detail__signal > strong { color: #284b61; font: 700 10px/1 "Consolas", monospace; text-transform: uppercase; }
-.recurrence-detail__actions { padding: 11px 17px; display: flex; justify-content: flex-end; border-bottom: 1px solid #dbe5e9; background: #f7fafb; }
+.recurrence-detail__actions { padding: 11px 17px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; border-bottom: 1px solid #dbe5e9; background: #f7fafb; }
 .recurrence-detail__analyze { min-height: 44px; }
 .recurrence-detail__body { padding: 0 17px 18px; }
 .recurrence-detail__body > section { padding: 17px 0; border-bottom: 1px solid #e5edef; }
@@ -679,6 +692,8 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-register--with-detail { grid-template-columns: 1fr; }
   .recurrence-register__detail { position: static; }
   .recurrence-detail { max-height: none; }
+  .recurrence-workspace button, .recurrence-filters input, .recurrence-filters select { min-height: 44px; }
+  .recurrence-workspace .icon-button, .recurrence-table__open { width: 44px; min-width: 44px; }
 }
 
 @media (max-width: 640px) {
@@ -702,14 +717,18 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-register__list { border: 0; background: transparent; overflow: visible; }
   .recurrence-table-wrap { overflow: visible; }
   .recurrence-pagination { justify-content: center; flex-wrap: wrap; border: 1px solid #dbe5e9; border-radius: 8px; background: #fff; }
-  .recurrence-detail { border-radius: 8px; }
+  .recurrence-register__detail { position: fixed; z-index: 59; inset: 0; background: rgba(11, 35, 64, .54); }
+  .recurrence-detail { width: 100%; height: 100vh; height: 100dvh; max-height: none; display: flex; flex-direction: column; border-top: 0; border-right: 0; border-bottom: 0; border-radius: 0; box-shadow: none; overflow: hidden; }
+  .recurrence-detail__head { flex: 0 0 auto; }
+  .recurrence-detail__signal, .recurrence-detail__actions { flex: 0 0 auto; }
+  .recurrence-detail__body { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
   .recurrence-detail__facts { grid-template-columns: 1fr; }
   .recurrence-detail__technicians li { grid-template-columns: 30px minmax(0, 1fr); }
   .recurrence-detail__technicians b { grid-column: 2; justify-self: start; }
   .recurrence-workspace__actions { align-items: stretch; flex-direction: column; }
   .recurrence-workspace__actions > .button { width: 100%; }
-  .recurrence-action-backdrop { padding: 10px; align-items: end; }
-  .recurrence-report-form, .recurrence-evidence-panel, .recurrence-analysis-form, .recurrence-workflow-form, .recurrence-terminal-dialog, .recurrence-adjustment-form { max-height: 96vh; border-radius: 9px 9px 0 0; }
+  .recurrence-action-backdrop { padding: 0; align-items: stretch; overflow: hidden; }
+  .recurrence-report-form, .recurrence-evidence-panel, .recurrence-analysis-form, .recurrence-workflow-form, .recurrence-terminal-dialog, .recurrence-adjustment-form { width: 100%; height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; border-top: 0; border-right: 0; border-bottom: 0; border-radius: 0; overscroll-behavior: contain; }
   .recurrence-report-form__orders, .recurrence-evidence-panel__fields { grid-template-columns: 1fr; }
   .recurrence-report-form__head, .recurrence-evidence-panel__head { padding: 16px; }
   .recurrence-report-form__body, .recurrence-evidence-panel__upload fieldset { padding-right: 16px; padding-left: 16px; }

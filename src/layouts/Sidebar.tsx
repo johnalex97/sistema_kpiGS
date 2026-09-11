@@ -43,7 +43,6 @@ export function Sidebar({ page, visiblePages, onChange, open, onClose }: Sidebar
             >
               <Icon size={19} />
               <span>{label}</span>
-              {label === "Reincidencias" && <em>4</em>}
             </button>
           ))}
           <p className="nav-label nav-label--second">Administración</p>

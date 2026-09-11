@@ -1,5 +1,5 @@
 import { ArchiveX, ClipboardCheck, Clock3, FileText, LockKeyhole, MessageSquarePlus, Route, SlidersHorizontal, UserRound, Wrench, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { RecurrenceCapabilities } from "../../hooks/useRecurrencesWorkspace";
 import type {
   RecurrenceDetail as RecurrenceDetailModel,
@@ -23,6 +23,22 @@ const participationLabel: Record<RecurrenceParticipation, string> = {
 const standardFlow: RecurrenceStatus[] = ["OPEN", "ANALYSIS", "CORRECTION", "CLOSED"];
 const dismissedFlow: RecurrenceStatus[] = ["OPEN", "ANALYSIS", "CORRECTION", "DISMISSED"];
 
+function useMobileDetail(): boolean {
+  const query = "(max-width: 640px)";
+  const [mobile, setMobile] = useState(() => typeof window.matchMedia === "function" && window.matchMedia(query).matches);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia(query);
+    const update = () => setMobile(media.matches);
+    media.addEventListener("change", update);
+    update();
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return mobile;
+}
+
 export interface RecurrenceDetailProps {
   recurrence: RecurrenceDetailModel;
   capabilities: RecurrenceCapabilities;
@@ -39,6 +55,7 @@ export interface RecurrenceDetailProps {
 
 export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze, onCorrect, onAddVisit, onAddNote, onManageEvidence, onDismiss, onCloseCase, onAdjust }: RecurrenceDetailProps) {
   const panelRef = useRef<HTMLElement>(null);
+  const mobile = useMobileDetail();
   const titleId = `recurrence-detail-title-${recurrence.id}`;
   const flowTitleId = `recurrence-progress-title-${recurrence.id}`;
   const flow = recurrence.status === "DISMISSED" ? dismissedFlow : standardFlow;
@@ -60,7 +77,28 @@ export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze,
     return () => window.removeEventListener("keydown", handleEscape);
   }, [onClose]);
 
-  return <aside className={`recurrence-detail recurrence-detail--${recurrence.impact.toLowerCase()}`} role="dialog" aria-labelledby={titleId} aria-modal="false" tabIndex={-1} ref={panelRef}>
+  const trapMobileFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!mobile || event.key !== "Tab" || !panelRef.current) return;
+    const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])'))
+      .filter((element) => !element.matches(":disabled"));
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) {
+      event.preventDefault();
+      panelRef.current.focus();
+    } else if (document.activeElement === panelRef.current) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  return <aside className={`recurrence-detail recurrence-detail--${recurrence.impact.toLowerCase()}`} role="dialog" aria-labelledby={titleId} aria-modal={mobile} tabIndex={-1} ref={panelRef} onKeyDown={trapMobileFocus}>
     <header className="recurrence-detail__head"><div><p className="eyebrow">Registro operativo · v{recurrence.version}</p><h2 id={titleId}>Detalle de {recurrence.recurrenceNumber}</h2><span>{recurrence.originalOrder.orderNumber}</span></div><button className="icon-button" type="button" aria-label="Cerrar detalle" onClick={onClose}><X size={18} aria-hidden="true" /></button></header>
     <div className="recurrence-detail__signal"><span className={`recurrence-impact recurrence-impact--${recurrence.impact.toLowerCase()}`}><i aria-hidden="true" />{impactLabel[recurrence.impact]}</span><strong>{statusLabel[recurrence.status]}</strong></div>
     {hasActions && <div className="recurrence-detail__actions">

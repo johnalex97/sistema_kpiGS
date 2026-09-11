@@ -6,7 +6,6 @@ import {
 } from "lucide-react";
 import type {
   NavigationItem,
-  RecurrenceJob,
   Work,
 } from "../models/app";
 
@@ -25,13 +24,6 @@ export const initialWorks: Work[] = [
   { id: "OT-1846", title: "Entrega y prueba de impresora", client: "Bufete Mendoza", type: "Entrega", tech: "María Santos", time: "10:10", status: "Finalizado", duration: "45m" },
   { id: "OT-1831", title: "Pérdida intermitente de conexión", client: "Café Central", type: "Soporte", tech: "Luis Romero", time: "11:35", status: "Pendiente", duration: "—", repeated: true },
   { id: "OT-1849", title: "Mantenimiento de punto de venta", client: "Supermercado La Colonia", type: "Soporte", tech: "Carlos Méndez", time: "13:15", status: "En curso", duration: "55m" },
-];
-
-export const recurrenceJobs: RecurrenceJob[] = [
-  { id: "OT-1831", issue: "Pérdida intermitente de conexión", client: "Café Central", visits: 3, techs: ["LR", "CM"], opened: "22 jul", impact: "Alto", state: "En revisión" },
-  { id: "OT-1798", issue: "Cámara 03 sin señal", client: "Bodega Norte", visits: 2, techs: ["AL"], opened: "18 jul", impact: "Medio", state: "Resuelto" },
-  { id: "OT-1762", issue: "Impresora no reconoce papel", client: "Bufete Mendoza", visits: 2, techs: ["MS", "LR"], opened: "14 jul", impact: "Medio", state: "Resuelto" },
-  { id: "OT-1714", issue: "POS pierde sincronización", client: "Market Express", visits: 4, techs: ["CM", "AL", "LR"], opened: "07 jul", impact: "Alto", state: "Escalado" },
 ];
 
 export const navItems: NavigationItem[] = [

@@ -8,9 +8,10 @@ cumplimiento, eficiencia y calidad.
 
 El repositorio contiene un frontend modular conectado gradualmente a una API
 Express independiente, persistencia PostgreSQL administrada mediante Prisma y
-autenticación con sesiones revocables. La sesión, el dashboard KPI y el módulo
-de Actividades y Técnicos ya consumen la API real. La jornada visual del resumen
-y Reincidencias todavía usan datos de demostración mientras avanza la fase 12.
+autenticación con sesiones revocables. La sesión, el dashboard KPI y los módulos
+de Actividades, Técnicos y Reincidencias ya consumen la API real. La jornada
+visual del resumen general todavía usa datos de demostración mientras avanza la
+fase 12.
 
 Consulta:
 
@@ -186,6 +187,7 @@ PATCH /api/v1/evidences/:evidenceId
 POST /api/v1/evidences/:evidenceId/archive
 GET /api/v1/recurrences/catalog
 GET /api/v1/recurrences
+GET /api/v1/recurrences/summary
 POST /api/v1/recurrences
 GET /api/v1/recurrences/:recurrenceId
 POST /api/v1/recurrences/:recurrenceId/analysis
@@ -305,11 +307,12 @@ la entrada del usuario y recarga el detalle vigente sin repetir la mutación.
 
 ## Reincidencias revisadas
 
-La API dispone de 13 endpoints protegidos para registrar y revisar un caso:
+La API dispone de 14 endpoints protegidos para registrar y revisar un caso:
 
 ```text
 GET    /api/v1/recurrences/catalog
 GET    /api/v1/recurrences
+GET    /api/v1/recurrences/summary
 POST   /api/v1/recurrences
 GET    /api/v1/recurrences/:recurrenceId
 POST   /api/v1/recurrences/:recurrenceId/analysis
@@ -385,6 +388,42 @@ queda auditado.
 El listado admite paginación, búsqueda, estado, tipo, cliente, sucursal, orden,
 técnico y rango de inicio; se ordena por `createdAt DESC, id DESC`. No se
 expone OpenAPI/Swagger en esta fase.
+
+La ruta `/reincidencias` consume catálogo, lista, resumen, detalle y todo el
+flujo de escritura desde la API: reportar, subir y descargar evidencia,
+analizar, iniciar corrección, registrar visitas y notas, cerrar, descartar y
+ajustar. Los filtros de estado, impacto, responsabilidad, orden original,
+técnico, cliente, sucursal y detección se conservan en la URL; el resumen usa
+el mismo alcance sin paginación. Orden, técnico, cliente y sucursal se eligen
+por texto legible mediante búsquedas auxiliares autorizadas, nunca escribiendo
+UUID manualmente. Las fechas se envían con límites de día de Honduras
+(`-06:00`) y el mes actual es el periodo inicial.
+
+Las acciones aparecen según `RECURRENCES_VIEW_OWN`, `RECURRENCES_VIEW_ALL`,
+`RECURRENCES_REPORT_OWN` y `RECURRENCES_REVIEW`, junto con los permisos de
+órdenes, técnicos, clientes y evidencias necesarios para cada selector o
+archivo. Una evidencia recién cargada se publica de inmediato en el detalle y
+puede descargarse como binario sin esperar un refresco general. Las mutaciones
+con cambio de estado usan control optimista por `version`; notas y evidencias no
+inventan versiones que su respuesta no publique.
+
+Verificación exacta del frontend:
+
+```powershell
+npm test -- --pool=threads --maxWorkers=1
+npm run lint
+npm run build
+```
+
+Verificación focal de backend y PostgreSQL, desde `server/`:
+
+```powershell
+npm test -- tests/recurrences
+npm run test:db -- tests/database/recurrences-read-persistence.test.ts tests/recurrences/recurrences-http.test.ts
+npm run typecheck
+npm run lint
+npm run build
+```
 
 Respuesta:
 
@@ -488,16 +527,16 @@ el análisis se exige una justificación temporal.
 | `npm run preview` | Sirve localmente el build |
 
 Las pruebas del frontend cubren sesión, navegación, KPI, el ciclo persistente
-de Actividades y la administración integrada de Técnicos: crear, editar,
-cambiar estado, desactivar, reactivar y recuperar conflictos. También verifican
-permisos, teclado, errores y validaciones.
+de Actividades, la administración integrada de Técnicos y el recorrido completo
+de Reincidencias hasta el ajuste de versión 6. También verifican filtros en URL,
+permisos, evidencia binaria, teclado, errores, responsive y validaciones.
 
 ## Datos de demostración
 
-La colección `technicians` queda limitada a la jornada visual del Dashboard;
-`initialWorks` también queda sólo en Dashboard y `recurrenceJobs` en
-Reincidencias. Técnicos, Actividades y KPIs no usan esas colecciones como fuente
-de verdad.
+La colección `technicians` queda limitada a la jornada visual del Dashboard e
+`initialWorks` también queda sólo en Dashboard. Técnicos, Actividades,
+Reincidencias y KPIs no usan esas colecciones como fuente de verdad; el mock y
+el tipo legado de reincidencias fueron retirados.
 
 PostgreSQL posee además un seed independiente con:
 
@@ -535,11 +574,11 @@ sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 La SPA restaura sesiones con `GET /api/v1/auth/me`, usa la cookie opaca
 `gs_session` y obliga el cambio de contraseña provisional. Dashboard KPI,
-Actividades y Técnicos aplican permisos y alcance desde la API; Evidencias y
-Reincidencias siguen pendientes de integración frontend. También faltan
-reportes, exportaciones y reemplazar los mocks restantes. No utilices el
-sistema para información sensible o datos personales reales hasta completar las
-fases funcionales y el despliegue HTTPS.
+Actividades, Técnicos y Reincidencias aplican permisos y alcance desde la API.
+La gestión global de Evidencias, las pantallas de Órdenes y Clientes, los
+reportes/exportaciones y el despliegue HTTPS siguen pendientes; también quedan
+los mocks del Dashboard indicados arriba. No utilices el sistema para
+información sensible o datos personales reales hasta completar esas fases.
 
 Los secretos, archivos `.env`, cliente Prisma generado, logs y builds están
 excluidos mediante `.gitignore`.

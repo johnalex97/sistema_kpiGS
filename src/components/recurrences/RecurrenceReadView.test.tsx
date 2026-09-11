@@ -1,6 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { RecurrenceLookupApi } from "../../api/recurrence-lookups";
 import type { RecurrenceCapabilities } from "../../hooks/useRecurrencesWorkspace";
 import type {
   RecurrenceCatalog,
@@ -102,6 +103,27 @@ const capabilities: RecurrenceCapabilities = {
   lookupCapabilities: { orders: false, technicians: false, clients: false, branches: false },
 };
 
+function filterLookups(): RecurrenceLookupApi {
+  return {
+    orders: vi.fn().mockResolvedValue({
+      items: [{ id: "order-1", orderNumber: "OT-1831", clientName: "Cliente Demo", branchName: "Centro", status: "COMPLETED" }],
+      pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+    }),
+    technicians: vi.fn().mockResolvedValue({
+      items: [{ id: "tech-1", code: "TEC-004", fullName: "Luis Romero", specialty: null, workPhone: null, workEmail: null, status: "AVAILABLE", hiredOn: "2025-01-01", leftOn: null, user: null, createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", version: 1 }],
+      pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+    }),
+    clients: vi.fn().mockResolvedValue({
+      items: [{ id: "client-1", code: "CLI-001", name: "Cliente Demo" }],
+      pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+    }),
+    branches: vi.fn().mockResolvedValue({
+      items: [{ id: "branch-1", code: "SUC-001", name: "Centro" }],
+      pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+    }),
+  };
+}
+
 describe("lectura de reincidencias", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -120,7 +142,8 @@ describe("lectura de reincidencias", () => {
   it("mantiene los controles accesibles y emite parches que reinician la página", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn<(patch: Partial<RecurrenceListFilters>) => void>();
-    render(<RecurrenceFilters filters={{ page: 3, pageSize: 20 }} catalog={catalog} catalogState="ready" canViewAll onChange={onChange} onRetryCatalog={vi.fn()} now={() => new Date("2026-09-02T12:00:00-06:00")} />);
+    const lookups = filterLookups();
+    render(<RecurrenceFilters filters={{ page: 3, pageSize: 20 }} catalog={catalog} catalogState="ready" canViewAll lookupApi={lookups} lookupCapabilities={{ orders: true, technicians: true, clients: true, branches: true }} onChange={onChange} onRetryCatalog={vi.fn()} now={() => new Date("2026-09-02T12:00:00-06:00")} />);
 
     await user.selectOptions(screen.getByLabelText("Estado"), "ANALYSIS");
     expect(onChange).toHaveBeenCalledWith({ status: ["ANALYSIS"], page: 1 });
@@ -132,18 +155,17 @@ describe("lectura de reincidencias", () => {
     expect(onChange).toHaveBeenCalledWith({ detectedFrom: "2026-08-03T00:00:00-06:00", page: 1 });
     await user.type(screen.getByLabelText("Hasta"), "2026-08-31");
     expect(onChange).toHaveBeenCalledWith({ detectedTo: "2026-08-31T23:59:59.999-06:00", page: 1 });
-    expect(screen.getByLabelText("Técnico")).toBeInTheDocument();
+    expect(screen.getByLabelText("Técnico")).toHaveAttribute("role", "combobox");
     expect(screen.getByLabelText("Cliente")).toBeInTheDocument();
     expect(screen.getByLabelText("Estado")).toHaveAttribute("name", "recurrenceStatus");
     expect(screen.getByLabelText("Orden original")).toHaveAttribute("autocomplete", "off");
-    expect(screen.getByLabelText("Orden original")).toHaveAttribute("spellcheck", "false");
-    expect(screen.getByLabelText("Orden original")).toHaveAttribute("placeholder", "Ej. 123e4567-e89b-12d3-a456-426614174000…");
-    for (const name of ["Orden original", "Técnico", "Cliente", "Sucursal"]) {
-      expect(screen.getByLabelText(name).getAttribute("placeholder")).toMatch(/^[^…]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}…$/u);
-    }
+    expect(screen.getByLabelText("Orden original")).toHaveAttribute("aria-autocomplete", "list");
 
     onChange.mockClear();
-    await user.type(screen.getByLabelText("Orden original"), "order-1");
+    await user.type(screen.getByRole("combobox", { name: "Orden original" }), "OT-1831");
+    // JSDOM's CSS engine throws while computing styles for role queries in this
+    // stylesheet-heavy suite; the integration test asserts the option role.
+    await user.click(await screen.findByText("OT-1831 · Cliente Demo · Centro"));
     expect(onChange).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Aplicar alcance" }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ originalOrderId: "order-1", page: 1 }));
@@ -217,6 +239,29 @@ describe("lectura de reincidencias", () => {
     expect(within(card).getByText("Impacto alto")).toBeInTheDocument();
     await user.click(within(card).getByRole("button", { name: "Ver RI-2026-0001" }));
     expect(onSelect).toHaveBeenCalledWith("rec-1", expect.any(HTMLButtonElement));
+  });
+
+  it("presenta el detalle como diálogo modal con foco contenido en móvil", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({
+      matches: true,
+      media: "(max-width: 640px)",
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    const user = userEvent.setup();
+    render(<RecurrenceDetail recurrence={detail} capabilities={capabilities} onClose={vi.fn()} />);
+
+    const dialog = screen.getByRole("dialog", { name: "Detalle de RI-2026-0001" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    const close = within(dialog).getByRole("button", { name: "Cerrar detalle" });
+    close.focus();
+    await user.keyboard("{Tab}");
+    expect(close).toHaveFocus();
   });
 
   it("enfoca el detalle, expone historia autorizada y cierra con Escape", async () => {
