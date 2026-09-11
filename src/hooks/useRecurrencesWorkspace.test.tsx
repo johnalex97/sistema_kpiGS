@@ -1449,4 +1449,24 @@ describe("operaciones terminales y ajuste auditado", () => {
     await act(async () => expect(await result.current.closeRecurrence()).toBe(false));
     expect(api.close).toHaveBeenCalledTimes(1);
   });
+
+  it("revoca localmente revisión tras 403, conserva el mensaje y no permite reabrir", async () => {
+    const current = { ...detail, status: "CORRECTION" as const, version: 5 };
+    const api = recurrenceApi({ detail: vi.fn().mockResolvedValue(current), close: vi.fn().mockRejectedValue(new ApiClientError(403, "FORBIDDEN", "interno")) });
+    const stable = options({ api });
+    const { result, rerender } = renderHook(({ permissions }) => useRecurrencesWorkspace({ ...stable, permissions }), { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] } });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("close"));
+    await act(async () => expect(await result.current.closeRecurrence()).toBe(false));
+    expect(result.current.capabilities.canReview).toBe(false);
+    expect(result.current.actionMode).toBeNull();
+    expect(result.current.mutation).toMatchObject({ name: "close", error: expect.stringContaining("permiso") });
+    act(() => result.current.setActionMode("close"));
+    expect(result.current.actionMode).toBeNull();
+
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL"] });
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    await waitFor(() => expect(result.current.capabilities.canReview).toBe(true));
+  });
 });

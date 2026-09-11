@@ -5,9 +5,21 @@ import type { AdjustRecurrenceInput, QualityDecisionInput, RecurrenceCatalog, Re
 type AdjustmentInput = Omit<AdjustRecurrenceInput, "version">;
 type Responsibility = Exclude<RecurrenceDetail["responsibility"], "UNDETERMINED">;
 type DecisionDraft = { affectsQuality: boolean; justification: string };
+type TouchedField = "causeId" | "impact" | "responsibility" | "analysis" | "correctiveAction" | "preventiveAction" | "observations" | "estimatedCost" | "quality";
 const costPattern = /^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/;
 const impactLabels: Record<RecurrenceImpact, string> = { LOW: "Bajo", MEDIUM: "Medio", HIGH: "Alto" };
 const responsibilityLabels: Record<Responsibility, string> = { TECHNICAL_WORK: "Trabajo técnico", EQUIPMENT: "Equipo", CLIENT: "Cliente", THIRD_PARTY: "Tercero" };
+
+function normalizedDecimal(value: string): string {
+  const [integer, fraction = ""] = value.trim().split(".");
+  return `${integer}.${fraction.padEnd(2, "0")}`;
+}
+
+function decisionDrafts(recurrence: RecurrenceDetail): Record<string, DecisionDraft> {
+  return Object.fromEntries(recurrence.technicians
+    .filter((entry) => entry.participation !== "CORRECTION_PARTICIPANT")
+    .map((entry) => [entry.technician.id, { affectsQuality: entry.affectsQuality, justification: entry.justification ?? "" }]));
+}
 
 export interface RecurrenceAdjustmentFormProps {
   recurrence: RecurrenceDetail;
@@ -35,16 +47,28 @@ export function RecurrenceAdjustmentForm({ recurrence, catalog, apiError = null,
   const [observations, setObservations] = useState(recurrence.observations ?? "");
   const [estimatedCost, setEstimatedCost] = useState(recurrence.estimatedCost);
   const [costReason, setCostReason] = useState("");
-  const [decisions, setDecisions] = useState<Record<string, DecisionDraft>>(() => Object.fromEntries(originals.map((entry) => [entry.technician.id, { affectsQuality: entry.affectsQuality, justification: entry.justification ?? "" }])));
-  const [qualityTouched, setQualityTouched] = useState(false);
+  const [decisions, setDecisions] = useState<Record<string, DecisionDraft>>(() => decisionDrafts(recurrence));
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const pendingRef = useRef(false);
   const cancelRef = useRef(onCancel);
+  const touchedRef = useRef(new Set<TouchedField>());
 
   useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
+  useEffect(() => {
+    const touched = touchedRef.current;
+    if (!touched.has("causeId")) setCauseId(recurrence.cause?.id ?? "");
+    if (!touched.has("impact")) setImpact(recurrence.impact);
+    if (!touched.has("responsibility")) setResponsibility(recurrence.responsibility as Responsibility);
+    if (!touched.has("analysis")) setAnalysis(recurrence.analysis ?? "");
+    if (!touched.has("correctiveAction")) setCorrectiveAction(recurrence.correctiveAction ?? "");
+    if (!touched.has("preventiveAction")) setPreventiveAction(recurrence.preventiveAction ?? "");
+    if (!touched.has("observations")) setObservations(recurrence.observations ?? "");
+    if (!touched.has("estimatedCost")) { setEstimatedCost(recurrence.estimatedCost); setCostReason(""); }
+    if (!touched.has("quality")) setDecisions(decisionDrafts(recurrence));
+  }, [recurrence]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     reasonRef.current?.focus();
@@ -62,6 +86,15 @@ export function RecurrenceAdjustmentForm({ recurrence, catalog, apiError = null,
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   };
   const reject = (message: string, target?: HTMLElement | null) => { setError(message); target?.focus(); };
+  const markTouched = (field: TouchedField, changed: boolean) => {
+    if (changed) touchedRef.current.add(field); else touchedRef.current.delete(field);
+  };
+  const qualitySignature = (drafts: Record<string, DecisionDraft>, selectedResponsibility: Responsibility) => JSON.stringify(originals.map((entry) => {
+    const draft = drafts[entry.technician.id] ?? { affectsQuality: false, justification: "" };
+    return selectedResponsibility === "TECHNICAL_WORK" && draft.affectsQuality
+      ? [entry.technician.id, true, draft.justification.trim()]
+      : [entry.technician.id, false, ""];
+  }));
   const completeDecisions = (): QualityDecisionInput[] => originals.map((entry) => {
     const draft = decisions[entry.technician.id] ?? { affectsQuality: false, justification: "" };
     if (responsibility !== "TECHNICAL_WORK" || !draft.affectsQuality) return { technicianId: entry.technician.id, affectsQuality: false };
@@ -82,23 +115,26 @@ export function RecurrenceAdjustmentForm({ recurrence, catalog, apiError = null,
     if (!causeId) return reject("Selecciona una causa disponible.");
     if (normalizedAnalysis.length < 3 || normalizedCorrection.length < 3) return reject("El análisis y la acción correctiva deben tener al menos 3 caracteres.");
     if (!costPattern.test(normalizedCost)) return reject("Ingresa un costo válido con hasta dos decimales.");
-    if (normalizedCost !== recurrence.estimatedCost && !normalizedCostReason) return reject("Explica la razón del cambio de costo.");
-    const qualityChanged = qualityTouched || responsibility !== initialResponsibility;
+    const costChanged = touchedRef.current.has("estimatedCost") && normalizedDecimal(normalizedCost) !== normalizedDecimal(recurrence.estimatedCost);
+    if (costChanged && !normalizedCostReason) return reject("Explica la razón del cambio de costo.");
+    const responsibilityChanged = touchedRef.current.has("responsibility") && responsibility !== initialResponsibility;
+    const qualityChanged = touchedRef.current.has("quality")
+      && qualitySignature(decisions, responsibility) !== qualitySignature(decisionDrafts(recurrence), initialResponsibility);
     const qualityDecisions = completeDecisions();
     if (responsibility === "TECHNICAL_WORK") {
       if (!qualityDecisions.some((decision) => decision.affectsQuality)) return reject("Marca al menos un técnico cuya calidad resulte afectada.");
       if (qualityDecisions.some((decision) => decision.affectsQuality && !decision.justification)) return reject("Justifica cada afectación de calidad.");
     }
     const input: AdjustmentInput = { reason: normalizedReason };
-    if (causeId !== recurrence.cause?.id) input.causeId = causeId;
-    if (impact !== recurrence.impact) input.impact = impact;
-    if (responsibility !== initialResponsibility) input.responsibility = responsibility;
-    if (normalizedAnalysis !== recurrence.analysis) input.analysis = normalizedAnalysis;
-    if (normalizedCorrection !== recurrence.correctiveAction) input.correctiveAction = normalizedCorrection;
-    if (normalizedPreventive !== (recurrence.preventiveAction ?? "")) input.preventiveAction = normalizedPreventive || null;
-    if (normalizedObservations !== (recurrence.observations ?? "")) input.observations = normalizedObservations || null;
-    if (normalizedCost !== recurrence.estimatedCost) { input.estimatedCost = normalizedCost; input.costReason = normalizedCostReason; }
-    if (qualityChanged) input.qualityDecisions = qualityDecisions;
+    if (touchedRef.current.has("causeId") && causeId !== recurrence.cause?.id) input.causeId = causeId;
+    if (touchedRef.current.has("impact") && impact !== recurrence.impact) input.impact = impact;
+    if (responsibilityChanged) input.responsibility = responsibility;
+    if (touchedRef.current.has("analysis") && normalizedAnalysis !== recurrence.analysis) input.analysis = normalizedAnalysis;
+    if (touchedRef.current.has("correctiveAction") && normalizedCorrection !== recurrence.correctiveAction) input.correctiveAction = normalizedCorrection;
+    if (touchedRef.current.has("preventiveAction") && normalizedPreventive !== (recurrence.preventiveAction ?? "")) input.preventiveAction = normalizedPreventive || null;
+    if (touchedRef.current.has("observations") && normalizedObservations !== (recurrence.observations ?? "")) input.observations = normalizedObservations || null;
+    if (costChanged) { input.estimatedCost = normalizedCost; input.costReason = normalizedCostReason; }
+    if (responsibilityChanged || qualityChanged) input.qualityDecisions = qualityDecisions;
     if (Object.keys(input).length === 1) return reject("Modifica al menos un campo antes de guardar el ajuste.");
     setError(null); pendingRef.current = true; setPending(true); formRef.current?.focus();
     try { await onSubmit(input); } finally { pendingRef.current = false; setPending(false); }
@@ -109,12 +145,12 @@ export function RecurrenceAdjustmentForm({ recurrence, catalog, apiError = null,
     <header className="recurrence-adjustment-form__head"><div><p className="eyebrow">Ajuste auditado · v{recurrence.version}</p><h2 id="recurrence-adjustment-title">Ajustar caso cerrado</h2><span>Registra únicamente correcciones verificadas para {recurrence.recurrenceNumber}.</span></div><button className="icon-button" type="button" aria-label="Cerrar ajuste" disabled={pending} onClick={onCancel}><X size={18} aria-hidden="true" /></button></header>
     <fieldset className="recurrence-adjustment-form__body" disabled={pending}><legend className="sr-only">Datos ajustables del caso</legend>
       <label className="recurrence-adjustment-form__reason"><span>Motivo del ajuste</span><textarea ref={reasonRef} rows={3} maxLength={500} value={reason} onChange={(event) => { setReason(event.target.value); setError(null); }} /></label>
-      <div className="recurrence-adjustment-form__grid"><label><span>Causa</span><select value={causeId} onChange={(event) => { setCauseId(event.target.value); setError(null); }}>{catalog.causes.map((cause) => <option key={cause.id} value={cause.id}>{cause.name}</option>)}</select></label><label><span>Impacto</span><select value={impact} onChange={(event) => { setImpact(event.target.value as RecurrenceImpact); setError(null); }}>{catalog.impacts.map((value) => <option key={value} value={value}>{impactLabels[value]}</option>)}</select></label><label><span>Responsabilidad</span><select value={responsibility} onChange={(event) => { setResponsibility(event.target.value as Responsibility); setError(null); }}>{catalog.responsibilities.filter((value): value is Responsibility => value !== "UNDETERMINED").map((value) => <option key={value} value={value}>{responsibilityLabels[value]}</option>)}</select></label></div>
-      <label><span>Análisis técnico</span><textarea rows={4} maxLength={10_000} value={analysis} onChange={(event) => { setAnalysis(event.target.value); setError(null); }} /></label>
-      <label><span>Acción correctiva</span><textarea rows={4} maxLength={10_000} value={correctiveAction} onChange={(event) => { setCorrectiveAction(event.target.value); setError(null); }} /></label>
-      <div className="recurrence-adjustment-form__grid"><label><span>Acción preventiva</span><textarea rows={3} maxLength={10_000} value={preventiveAction} onChange={(event) => { setPreventiveAction(event.target.value); setError(null); }} /></label><label><span>Observaciones</span><textarea rows={3} maxLength={10_000} value={observations} onChange={(event) => { setObservations(event.target.value); setError(null); }} /></label></div>
-      <section className="recurrence-adjustment-form__quality" aria-labelledby="recurrence-adjustment-quality"><h3 id="recurrence-adjustment-quality">Decisiones de calidad</h3>{originals.map((entry) => { const draft = decisions[entry.technician.id]; return <div key={entry.technician.id}><label><input type="checkbox" aria-label={`Afecta calidad de ${entry.technician.fullName}`} disabled={!technical} checked={technical && draft.affectsQuality} onChange={(event) => { const checked = event.target.checked; setDecisions((current) => ({ ...current, [entry.technician.id]: { affectsQuality: checked, justification: checked ? current[entry.technician.id].justification : "" } })); setQualityTouched(true); setError(null); }} /><span>{entry.technician.fullName}</span></label>{technical && draft.affectsQuality && <label><span>Justificación para {entry.technician.fullName}</span><textarea rows={2} maxLength={1_000} value={draft.justification} onChange={(event) => { setDecisions((current) => ({ ...current, [entry.technician.id]: { ...current[entry.technician.id], justification: event.target.value } })); setQualityTouched(true); setError(null); }} /></label>}</div>; })}</section>
-      <div className="recurrence-adjustment-form__grid"><label><span>Costo estimado</span><input type="text" inputMode="decimal" value={estimatedCost} onChange={(event) => { setEstimatedCost(event.target.value); setError(null); }} /></label><label><span>Razón del cambio de costo</span><textarea rows={2} maxLength={500} value={costReason} onChange={(event) => { setCostReason(event.target.value); setError(null); }} /></label></div>
+      <div className="recurrence-adjustment-form__grid"><label><span>Causa</span><select value={causeId} onChange={(event) => { const value = event.target.value; setCauseId(value); markTouched("causeId", value !== recurrence.cause?.id); setError(null); }}>{catalog.causes.map((cause) => <option key={cause.id} value={cause.id}>{cause.name}</option>)}</select></label><label><span>Impacto</span><select value={impact} onChange={(event) => { const value = event.target.value as RecurrenceImpact; setImpact(value); markTouched("impact", value !== recurrence.impact); setError(null); }}>{catalog.impacts.map((value) => <option key={value} value={value}>{impactLabels[value]}</option>)}</select></label><label><span>Responsabilidad</span><select value={responsibility} onChange={(event) => { const value = event.target.value as Responsibility; setResponsibility(value); markTouched("responsibility", value !== initialResponsibility); setError(null); }}>{catalog.responsibilities.filter((value): value is Responsibility => value !== "UNDETERMINED").map((value) => <option key={value} value={value}>{responsibilityLabels[value]}</option>)}</select></label></div>
+      <label><span>Análisis técnico</span><textarea rows={4} maxLength={10_000} value={analysis} onChange={(event) => { const value = event.target.value; setAnalysis(value); markTouched("analysis", value.trim() !== recurrence.analysis); setError(null); }} /></label>
+      <label><span>Acción correctiva</span><textarea rows={4} maxLength={10_000} value={correctiveAction} onChange={(event) => { const value = event.target.value; setCorrectiveAction(value); markTouched("correctiveAction", value.trim() !== recurrence.correctiveAction); setError(null); }} /></label>
+      <div className="recurrence-adjustment-form__grid"><label><span>Acción preventiva</span><textarea rows={3} maxLength={10_000} value={preventiveAction} onChange={(event) => { const value = event.target.value; setPreventiveAction(value); markTouched("preventiveAction", value.trim() !== (recurrence.preventiveAction ?? "")); setError(null); }} /></label><label><span>Observaciones</span><textarea rows={3} maxLength={10_000} value={observations} onChange={(event) => { const value = event.target.value; setObservations(value); markTouched("observations", value.trim() !== (recurrence.observations ?? "")); setError(null); }} /></label></div>
+      <section className="recurrence-adjustment-form__quality" aria-labelledby="recurrence-adjustment-quality"><h3 id="recurrence-adjustment-quality">Decisiones de calidad</h3>{originals.map((entry) => { const draft = decisions[entry.technician.id]; return <div key={entry.technician.id}><label><input type="checkbox" aria-label={`Afecta calidad de ${entry.technician.fullName}`} disabled={!technical} checked={technical && draft.affectsQuality} onChange={(event) => { const checked = event.target.checked; const next = { ...decisions, [entry.technician.id]: { affectsQuality: checked, justification: checked ? decisions[entry.technician.id].justification : "" } }; setDecisions(next); markTouched("quality", qualitySignature(next, responsibility) !== qualitySignature(decisionDrafts(recurrence), initialResponsibility)); setError(null); }} /><span>{entry.technician.fullName}</span></label>{technical && draft.affectsQuality && <label><span>Justificación para {entry.technician.fullName}</span><textarea rows={2} maxLength={1_000} value={draft.justification} onChange={(event) => { const next = { ...decisions, [entry.technician.id]: { ...decisions[entry.technician.id], justification: event.target.value } }; setDecisions(next); markTouched("quality", qualitySignature(next, responsibility) !== qualitySignature(decisionDrafts(recurrence), initialResponsibility)); setError(null); }} /></label>}</div>; })}</section>
+      <div className="recurrence-adjustment-form__grid"><label><span>Costo estimado</span><input type="text" inputMode="decimal" value={estimatedCost} onChange={(event) => { const value = event.target.value; setEstimatedCost(value); markTouched("estimatedCost", costPattern.test(value.trim()) && normalizedDecimal(value) !== normalizedDecimal(recurrence.estimatedCost)); setError(null); }} /></label><label><span>Razón del cambio de costo</span><textarea rows={2} maxLength={500} value={costReason} onChange={(event) => { setCostReason(event.target.value); setError(null); }} /></label></div>
       {error && <p className="recurrence-adjustment-form__error" role="alert"><AlertTriangle size={16} aria-hidden="true" />{error}</p>}{apiError && <p className="recurrence-adjustment-form__error" role="alert"><AlertTriangle size={16} aria-hidden="true" />{apiError}</p>}
     </fieldset>
     <footer className="recurrence-adjustment-form__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onCancel}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submissionBlocked}><SlidersHorizontal size={16} aria-hidden="true" />{pending ? "Guardando…" : "Guardar ajuste"}</button></footer>

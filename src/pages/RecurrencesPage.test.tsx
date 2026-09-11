@@ -567,4 +567,17 @@ describe("ciclo terminal de RecurrencesPage", () => {
     rendered.rerender(view({ ...review, selected: closed, detailState: "ready", actionMode: "adjust" }));
     expect(screen.getByRole("dialog", { name: "Ajustar caso cerrado" })).toBeInTheDocument();
   });
+
+  it("muestra globalmente la revocación del servidor y oculta las acciones de revisión", () => {
+    const correction = { ...selected, status: "CORRECTION" as const };
+    const current = workspace({
+      selected: correction,
+      detailState: "ready",
+      capabilities: { ...workspace().capabilities, canReview: false },
+      mutation: { name: "close", pending: false, conflict: false, error: "Ya no tienes permiso para revisar reincidencias." },
+    });
+    render(view(current));
+    expect(screen.getByRole("alert")).toHaveTextContent("Ya no tienes permiso");
+    expect(screen.queryByRole("button", { name: "Cerrar caso" })).not.toBeInTheDocument();
+  });
 });

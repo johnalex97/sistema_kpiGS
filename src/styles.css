@@ -629,6 +629,11 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-workflow-form__actions .button { min-height: 44px; }
 .recurrence-workflow-form button:focus-visible, .recurrence-workflow-form input:focus-visible, .recurrence-workflow-form textarea:focus-visible { outline: 3px solid rgba(9, 174, 180, .25); outline-offset: 2px; border-color: #09aeb4; }
 .recurrence-action-backdrop--terminal { z-index: 64; background: rgba(11, 35, 64, .7); }
+.recurrence-mutation-feedback { margin: 0 0 14px; padding: 10px 12px; display: flex; align-items: center; gap: 9px; border-left: 4px solid #e36d5a; border-radius: 6px; color: #8f4034; background: #fff5f2; font-size: 11px; line-height: 1.4; }
+.recurrence-mutation-feedback svg { flex: 0 0 auto; }
+.recurrence-mutation-feedback span { flex: 1; }
+.recurrence-mutation-feedback button { min-height: 44px; border: 0; color: inherit; background: transparent; cursor: pointer; font-weight: 700; text-decoration: underline; }
+.recurrence-mutation-feedback button:focus-visible { outline: 3px solid rgba(9, 174, 180, .25); outline-offset: 2px; }
 .recurrence-action-backdrop--adjustment { z-index: 64; background: rgba(11, 35, 64, .7); }
 .recurrence-terminal-dialog, .recurrence-adjustment-form { width: 620px; max-width: 100%; max-height: 94vh; scroll-padding-block: 96px 76px; border: 1px solid #cbdde2; border-left: 5px solid #d99426; border-radius: 10px; color: #29485d; background: #fff; box-shadow: 0 24px 64px rgba(6, 32, 52, .3); overflow-y: auto; }
 .recurrence-adjustment-form { width: 860px; border-left-color: #09aeb4; }

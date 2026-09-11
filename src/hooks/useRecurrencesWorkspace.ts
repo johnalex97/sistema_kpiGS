@@ -332,6 +332,7 @@ export function useRecurrencesWorkspace({
   const [mutation, setMutation] = useState<RecurrenceMutationState | null>(null);
   const [evidencePrompt, setEvidencePrompt] = useState<{ id: string; permissionsKey: string } | null>(null);
   const [actionMode, setActionModeState] = useState<RecurrenceActionMode | null>(null);
+  const [reviewRevoked, setReviewRevoked] = useState(false);
 
   const permissionsKey = permissionKey(permissions);
   const listRequestKey = listKey(query.filters);
@@ -344,7 +345,10 @@ export function useRecurrencesWorkspace({
     () => createListSnapshot(JSON.parse(listRequestKey) as RecurrenceListFilters, summarySnapshot),
     [listRequestKey, summarySnapshot],
   );
-  const capabilities = useMemo(() => deriveCapabilities(permissions), [permissions]);
+  const capabilities = useMemo(() => {
+    const derived = deriveCapabilities(permissions);
+    return reviewRevoked ? { ...derived, canReview: false } : derived;
+  }, [permissions, reviewRevoked]);
   const capabilitiesRef = useRef(capabilities);
 
   const queryRef = useRef(query);
@@ -617,6 +621,7 @@ export function useRecurrencesWorkspace({
     capabilitiesRef.current = capabilities;
     if (previousPermissionsKeyRef.current === permissionsKey) return;
     previousPermissionsKeyRef.current = permissionsKey;
+    setReviewRevoked(false);
     auxiliaryGenerationRef.current += 1;
     auxiliaryRequestsRef.current.forEach((request) => {
       request.cleanup();
@@ -1128,9 +1133,11 @@ export function useRecurrencesWorkspace({
         return false;
       }
       if (error instanceof ApiClientError && error.status === 403) {
+        setReviewRevoked(true);
         actionModeRef.current = null;
         setActionModeState(null);
         invalidateWorkflowOperation();
+        setMutation({ name: mode, pending: false, error: failure.message, conflict: false });
         return false;
       }
       if (error instanceof ApiClientError && error.code === "RECURRENCE_CAUSE_NOT_FOUND") {

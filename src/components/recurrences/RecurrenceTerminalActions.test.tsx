@@ -91,6 +91,52 @@ describe("acciones terminales de reincidencias", () => {
     });
   });
 
+  it("conserva sólo campos tocados cuando un conflicto refresca valores remotos", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(false);
+    const rendered = render(<RecurrenceAdjustmentForm recurrence={recurrence} catalog={catalog} onSubmit={onSubmit} onCancel={vi.fn()} />);
+    const reason = "Corrección posterior autorizada";
+    await user.type(screen.getByLabelText("Motivo del ajuste"), reason);
+    await user.clear(screen.getByLabelText("Observaciones"));
+    await user.type(screen.getByLabelText("Observaciones"), "Borrador local del supervisor");
+    await user.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({ reason, observations: "Borrador local del supervisor" });
+
+    const refreshed = { ...recurrence, version: 8, cause: catalog.causes[1], impact: "LOW" as const, observations: "Cambio remoto" };
+    rendered.rerender(<RecurrenceAdjustmentForm recurrence={refreshed} catalog={catalog} apiError="El caso cambió en el servidor." onSubmit={onSubmit} onCancel={vi.fn()} />);
+    expect(screen.getByLabelText("Causa")).toHaveValue("cause-2");
+    expect(screen.getByLabelText("Impacto")).toHaveValue("LOW");
+    expect(screen.getByLabelText("Observaciones")).toHaveValue("Borrador local del supervisor");
+    await user.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({ reason, observations: "Borrador local del supervisor" });
+  });
+
+  it("rechaza un ajuste cuya decisión de calidad fue editada y revertida", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    render(<RecurrenceAdjustmentForm recurrence={recurrence} catalog={catalog} onSubmit={onSubmit} onCancel={vi.fn()} />);
+    await user.type(screen.getByLabelText("Motivo del ajuste"), "Revisión sin cambio efectivo");
+    const luis = screen.getByLabelText("Afecta calidad de Luis Pérez");
+    await user.click(luis);
+    await user.click(luis);
+    await user.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Modifica al menos un campo");
+  });
+
+  it("trata costos decimales equivalentes como un ajuste vacío", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    render(<RecurrenceAdjustmentForm recurrence={recurrence} catalog={catalog} onSubmit={onSubmit} onCancel={vi.fn()} />);
+    await user.type(screen.getByLabelText("Motivo del ajuste"), "Revisión sin cambio monetario");
+    await user.clear(screen.getByLabelText("Costo estimado"));
+    await user.type(screen.getByLabelText("Costo estimado"), "1500");
+    await user.type(screen.getByLabelText("Razón del cambio de costo"), "Mismo valor expresado sin centavos");
+    await user.click(screen.getByRole("button", { name: "Guardar ajuste" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Modifica al menos un campo");
+  });
+
   it("oculta por completo descarte, cierre y ajuste sin permiso de revisión", () => {
     render(<RecurrenceDetailPanel recurrence={recurrence} capabilities={{ canReport: false, canReview: false, canAddNote: false, canViewAll: false, canUploadEvidence: false, canViewEvidence: false, canManageEvidence: false, lookupCapabilities: { orders: false, technicians: false, clients: false, branches: false } }} onClose={vi.fn()} onDismiss={vi.fn()} onCloseCase={vi.fn()} onAdjust={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Descartar caso" })).not.toBeInTheDocument();

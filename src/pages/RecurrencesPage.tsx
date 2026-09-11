@@ -236,6 +236,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     </header>
 
     <RecurrenceSummaryCards metrics={workspace.summary} state={workspace.summaryState} onRetry={workspace.retrySummary} />
+    {workspace.mutation?.error && workspace.actionMode === null && <div className="recurrence-mutation-feedback" role="alert"><AlertTriangle size={16} aria-hidden="true" /><span>{workspace.mutation.error}</span><button type="button" onClick={workspace.clearMutationError}>Cerrar aviso</button></div>}
     <RecurrenceFilters filters={workspace.query.filters} catalog={workspace.catalog} catalogState={workspace.catalogState} canViewAll={workspace.capabilities.canViewAll} onChange={workspace.setFilters} onRetryCatalog={workspace.retryCatalog} />
 
     {workspace.listStale && <div className="recurrence-stale" role="status">
