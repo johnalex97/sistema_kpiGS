@@ -1373,3 +1373,80 @@ describe("operaciones de corrección y seguimiento", () => {
     expect(result.current.mutation).toBeNull();
   });
 });
+
+describe("operaciones terminales y ajuste auditado", () => {
+  it("descarta OPEN una sola vez con el motivo y la versión seleccionada", async () => {
+    const pending = deferred<RecurrenceDetail>();
+    const dismissed = { ...detail, status: "DISMISSED" as const, version: 2, dismissalReason: "No corresponde a reincidencia" };
+    const api = recurrenceApi({ dismiss: vi.fn(() => pending.promise) });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+    act(() => result.current.setActionMode("dismiss"));
+    let first!: Promise<boolean>; let duplicate!: Promise<boolean>;
+    act(() => { first = result.current.dismissRecurrence("No corresponde a reincidencia"); duplicate = result.current.dismissRecurrence("Intento duplicado"); });
+    expect(api.dismiss).toHaveBeenCalledTimes(1);
+    expect(api.dismiss).toHaveBeenCalledWith(recurrenceId, { version: 1, reason: "No corresponde a reincidencia" });
+    await expect(duplicate).resolves.toBe(false);
+    pending.resolve(dismissed);
+    await act(async () => expect(await first).toBe(true));
+    expect(result.current.selected).toEqual(dismissed);
+    expect(result.current.actionMode).toBeNull();
+  });
+
+  it("cierra CORRECTION con la versión vigente y traduce los prerrequisitos del dominio", async () => {
+    const current = { ...detail, status: "CORRECTION" as const, version: 5, analysis: "Diagnóstico", correctiveAction: "Solución" };
+    const close = vi.fn()
+      .mockRejectedValueOnce(new ApiClientError(422, "RECURRENCE_EVIDENCE_REQUIRED", "interno"))
+      .mockRejectedValueOnce(new ApiClientError(422, "RECURRENCE_DOCUMENTATION_INCOMPLETE", "interno"));
+    const api = recurrenceApi({ detail: vi.fn().mockResolvedValue(current), close });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("close"));
+    await act(async () => expect(await result.current.closeRecurrence()).toBe(false));
+    expect(api.close).toHaveBeenLastCalledWith(recurrenceId, { version: 5 });
+    expect(result.current.mutation).toMatchObject({ name: "close", error: expect.stringContaining("evidencia activa") });
+    await act(async () => expect(await result.current.closeRecurrence()).toBe(false));
+    expect(result.current.mutation).toMatchObject({ name: "close", error: expect.stringContaining("documentación") });
+  });
+
+  it("ajusta CLOSED, añade la versión y descarta una respuesta tardía tras revocar revisión", async () => {
+    const current = { ...detail, status: "CLOSED" as const, version: 7, analysis: "Diagnóstico", correctiveAction: "Solución", cause: catalog.causes[0] };
+    const pending = deferred<RecurrenceDetail>();
+    const api = recurrenceApi({ detail: vi.fn().mockResolvedValue(current), adjust: vi.fn(() => pending.promise) });
+    const stable = options({ api });
+    const { result, rerender } = renderHook(({ permissions }) => useRecurrencesWorkspace({ ...stable, permissions }), { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] } });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("adjust"));
+    let operation!: Promise<boolean>;
+    act(() => { operation = result.current.adjustRecurrence({ reason: "Auditoría posterior autorizada", observations: "Lectura corregida" }); });
+    expect(api.adjust).toHaveBeenCalledWith(recurrenceId, { version: 7, reason: "Auditoría posterior autorizada", observations: "Lectura corregida" });
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL"] });
+    await waitFor(() => expect(result.current.actionMode).toBeNull());
+    pending.resolve({ ...current, version: 8, observations: "Lectura corregida" });
+    await act(async () => expect(await operation).toBe(false));
+    expect(result.current.selected).toEqual(current);
+    expect(result.current.mutation).toBeNull();
+  });
+
+  it("recarga el detalle y bloquea la repetición tras transición inválida", async () => {
+    const current = { ...detail, status: "CORRECTION" as const, version: 5 };
+    const closed = { ...current, status: "CLOSED" as const, version: 6 };
+    const api = recurrenceApi({
+      detail: vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(closed),
+      close: vi.fn().mockRejectedValue(new ApiClientError(409, "INVALID_RECURRENCE_TRANSITION", "interno")),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("close"));
+    await act(async () => expect(await result.current.closeRecurrence()).toBe(false));
+    expect(result.current.selected).toEqual(closed);
+    expect(result.current.actionMode).toBeNull();
+    expect(result.current.mutation).toMatchObject({ name: "close", error: expect.stringContaining("estado actual") });
+    await act(async () => expect(await result.current.closeRecurrence()).toBe(false));
+    expect(api.close).toHaveBeenCalledTimes(1);
+  });
+});

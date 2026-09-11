@@ -5,6 +5,7 @@ import { createRecurrenceLookupApi, type RecurrenceLookupApi } from "../api/recu
 import { createRecurrenceApi, type RecurrenceApi } from "../api/recurrences";
 import { useAuth } from "../auth/useAuth";
 import { RecurrenceAnalysisForm } from "../components/recurrences/RecurrenceAnalysisForm";
+import { RecurrenceAdjustmentForm } from "../components/recurrences/RecurrenceAdjustmentForm";
 import { RecurrenceCorrectionForm } from "../components/recurrences/RecurrenceCorrectionForm";
 import { RecurrenceDetail } from "../components/recurrences/RecurrenceDetail";
 import { RecurrenceEvidencePanel } from "../components/recurrences/RecurrenceEvidencePanel";
@@ -13,6 +14,7 @@ import { RecurrenceReportForm } from "../components/recurrences/RecurrenceReport
 import { RecurrenceNoteForm } from "../components/recurrences/RecurrenceNoteForm";
 import { RecurrenceSummaryCards } from "../components/recurrences/RecurrenceSummaryCards";
 import { RecurrenceTable } from "../components/recurrences/RecurrenceTable";
+import { RecurrenceTerminalDialog } from "../components/recurrences/RecurrenceTerminalDialog";
 import { RecurrenceVisitForm } from "../components/recurrences/RecurrenceVisitForm";
 import { useRecurrencesWorkspace, type RecurrencesWorkspace } from "../hooks/useRecurrencesWorkspace";
 import { hasEffectiveRecurrenceFilters } from "../hooks/recurrence-workspace.helpers";
@@ -110,6 +112,9 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
   const correctionConflict = workspace.mutation?.name === "correct" && workspace.mutation.conflict;
   const visitConflict = workspace.mutation?.name === "visit" && workspace.mutation.conflict;
   const noteConflict = workspace.mutation?.name === "note" && workspace.mutation.conflict;
+  const dismissConflict = workspace.mutation?.name === "dismiss" && workspace.mutation.conflict;
+  const closeConflict = workspace.mutation?.name === "close" && workspace.mutation.conflict;
+  const adjustConflict = workspace.mutation?.name === "adjust" && workspace.mutation.conflict;
   const showCorrection = Boolean(
     workspace.actionMode === "correct"
     && workspace.capabilities.canReview
@@ -129,7 +134,13 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     && workspace.selected
     && (mutableSelected || noteConflict),
   );
-  const workflowVisible = showCorrection || showVisit || showNote;
+  const showDismiss = Boolean(workspace.actionMode === "dismiss" && workspace.capabilities.canReview && workspace.selected
+    && (workspace.selected.status === "OPEN" || workspace.selected.status === "ANALYSIS" || dismissConflict));
+  const showCloseCase = Boolean(workspace.actionMode === "close" && workspace.capabilities.canReview && workspace.selected
+    && (workspace.selected.status === "CORRECTION" || closeConflict));
+  const showAdjustment = Boolean(workspace.actionMode === "adjust" && workspace.capabilities.canReview && workspace.selected
+    && workspace.catalog && (workspace.selected.status === "CLOSED" || adjustConflict));
+  const workflowVisible = showCorrection || showVisit || showNote || showDismiss || showCloseCase || showAdjustment;
   const promptedRecurrence = workspace.evidencePromptForId
     ? workspace.selected?.id === workspace.evidencePromptForId
       ? workspace.selected
@@ -170,7 +181,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     restoreAnalysisFocus();
   };
 
-  const openWorkflow = (mode: "correct" | "visit" | "note", trigger: HTMLButtonElement) => {
+  const openWorkflow = (mode: "correct" | "visit" | "note" | "dismiss" | "close" | "adjust", trigger: HTMLButtonElement) => {
     workflowTriggerRef.current = trigger;
     workspace.clearMutationError();
     workspace.setActionMode(mode);
@@ -251,7 +262,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
       {hasDetailRegion && <div className="recurrence-register__detail">
         {workspace.detailState === "loading" && !workspace.selected && <div className="recurrence-detail-state" role="status" aria-label="Cargando detalle"><span aria-hidden="true" />Cargando detalle del caso…</div>}
         {workspace.detailState === "error" && !workspace.selected && <div className="recurrence-detail-state recurrence-detail-state--error" role="alert"><AlertTriangle size={22} aria-hidden="true" /><strong>No fue posible cargar el detalle</strong><p>El registro de casos sigue disponible.</p><button className="button button--ghost" type="button" onClick={workspace.retryDetail}>Reintentar detalle</button><button type="button" onClick={closeDetail}>Cerrar</button></div>}
-        {workspace.selected && <RecurrenceDetail recurrence={workspace.selected} capabilities={workspace.capabilities} onClose={closeDetail} onAnalyze={openAnalysis} onCorrect={(trigger) => openWorkflow("correct", trigger)} onAddVisit={(trigger) => openWorkflow("visit", trigger)} onAddNote={(trigger) => openWorkflow("note", trigger)} onManageEvidence={openEvidence} />}
+        {workspace.selected && <RecurrenceDetail recurrence={workspace.selected} capabilities={workspace.capabilities} onClose={closeDetail} onAnalyze={openAnalysis} onCorrect={(trigger) => openWorkflow("correct", trigger)} onAddVisit={(trigger) => openWorkflow("visit", trigger)} onAddNote={(trigger) => openWorkflow("note", trigger)} onManageEvidence={openEvidence} onDismiss={(trigger) => openWorkflow("dismiss", trigger)} onCloseCase={(trigger) => openWorkflow("close", trigger)} onAdjust={(trigger) => openWorkflow("adjust", trigger)} />}
       </div>}
     </div>
     {showReport && <div className="recurrence-action-backdrop"><RecurrenceReportForm lookupApi={workspace.lookupApi} apiError={workspace.mutation?.name === "report" ? workspace.mutation.error : null} onCancel={closeReport} onSubmit={workspace.reportRecurrence} /></div>}
@@ -259,6 +270,9 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     {showCorrection && workspace.selected && <div className="recurrence-action-backdrop recurrence-action-backdrop--workflow"><RecurrenceCorrectionForm initialValue={{ correctiveAction: workspace.selected.correctiveAction ?? "", preventiveAction: workspace.selected.preventiveAction ?? "", observations: workspace.selected.observations ?? "" }} updating={workspace.selected.status === "CORRECTION"} apiError={workspace.mutation?.name === "correct" ? workspace.mutation.error : null} submissionBlocked={workspace.selected.status !== "ANALYSIS" && workspace.selected.status !== "CORRECTION"} onCancel={closeWorkflow} onSubmit={workspace.correctRecurrence} /></div>}
     {showVisit && workspace.selected && <div className="recurrence-action-backdrop recurrence-action-backdrop--workflow"><RecurrenceVisitForm lookupApi={workspace.lookupApi} excludedOrderIds={[workspace.selected.originalOrder.id, ...workspace.selected.visits.map((visit) => visit.order.id)]} apiError={workspace.mutation?.name === "visit" ? workspace.mutation.error : null} submissionBlocked={!mutableSelected} onCancel={closeWorkflow} onSubmit={workspace.addVisit} /></div>}
     {showNote && workspace.selected && <div className="recurrence-action-backdrop recurrence-action-backdrop--workflow"><RecurrenceNoteForm apiError={workspace.mutation?.name === "note" ? workspace.mutation.error : null} submissionBlocked={!mutableSelected} onCancel={closeWorkflow} onSubmit={workspace.addNote} /></div>}
+    {showDismiss && workspace.selected && <div className="recurrence-action-backdrop recurrence-action-backdrop--terminal"><RecurrenceTerminalDialog action="dismiss" recurrenceNumber={workspace.selected.recurrenceNumber} apiError={workspace.mutation?.name === "dismiss" ? workspace.mutation.error : null} submissionBlocked={workspace.selected.status !== "OPEN" && workspace.selected.status !== "ANALYSIS"} onCancel={closeWorkflow} onConfirm={(reason) => workspace.dismissRecurrence(reason ?? "")} /></div>}
+    {showCloseCase && workspace.selected && <div className="recurrence-action-backdrop recurrence-action-backdrop--terminal"><RecurrenceTerminalDialog action="close" recurrenceNumber={workspace.selected.recurrenceNumber} apiError={workspace.mutation?.name === "close" ? workspace.mutation.error : null} submissionBlocked={workspace.selected.status !== "CORRECTION"} onCancel={closeWorkflow} onConfirm={() => workspace.closeRecurrence()} /></div>}
+    {showAdjustment && workspace.selected && workspace.catalog && <div className="recurrence-action-backdrop recurrence-action-backdrop--adjustment"><RecurrenceAdjustmentForm recurrence={workspace.selected} catalog={workspace.catalog} apiError={workspace.mutation?.name === "adjust" ? workspace.mutation.error : null} submissionBlocked={workspace.selected.status !== "CLOSED"} onCancel={closeWorkflow} onSubmit={workspace.adjustRecurrence} /></div>}
     {activeEvidenceCase && <div className="recurrence-action-backdrop recurrence-action-backdrop--evidence"><RecurrenceEvidencePanel recurrenceId={activeEvidenceCase.id} recurrenceNumber={activeEvidenceCase.number} evidenceApi={workspace.evidenceApi} canView={workspace.capabilities.canViewEvidence} canUpload={workspace.capabilities.canUploadEvidence} canManage={workspace.capabilities.canManageEvidence} mode={evidenceCase ? "manage" : "prompt"} error={workspace.mutation?.name === "evidence" ? workspace.mutation.error : null} onUpload={workspace.uploadEvidence} onDownload={workspace.downloadEvidence} onArchive={workspace.archiveEvidence} onClose={closeEvidence} /></div>}
   </section>;
 }

@@ -628,6 +628,39 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-workflow-form__actions { position: sticky; z-index: 3; bottom: 0; padding: 13px 20px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; border-top: 1px solid #dbe5e9; background: rgba(247, 250, 251, .98); }
 .recurrence-workflow-form__actions .button { min-height: 44px; }
 .recurrence-workflow-form button:focus-visible, .recurrence-workflow-form input:focus-visible, .recurrence-workflow-form textarea:focus-visible { outline: 3px solid rgba(9, 174, 180, .25); outline-offset: 2px; border-color: #09aeb4; }
+.recurrence-action-backdrop--terminal { z-index: 64; background: rgba(11, 35, 64, .7); }
+.recurrence-action-backdrop--adjustment { z-index: 64; background: rgba(11, 35, 64, .7); }
+.recurrence-terminal-dialog, .recurrence-adjustment-form { width: 620px; max-width: 100%; max-height: 94vh; scroll-padding-block: 96px 76px; border: 1px solid #cbdde2; border-left: 5px solid #d99426; border-radius: 10px; color: #29485d; background: #fff; box-shadow: 0 24px 64px rgba(6, 32, 52, .3); overflow-y: auto; }
+.recurrence-adjustment-form { width: 860px; border-left-color: #09aeb4; }
+.recurrence-terminal-dialog__head, .recurrence-adjustment-form__head { position: sticky; z-index: 4; top: 0; padding: 18px 20px 15px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid #dbe5e9; background: rgba(255, 255, 255, .98); }
+.recurrence-terminal-dialog__head h2, .recurrence-adjustment-form__head h2 { margin: 4px 0 0; color: #0b2340; font: 700 20px/1.15 "Bahnschrift", "Arial Narrow", sans-serif; letter-spacing: -.015em; }
+.recurrence-terminal-dialog__head span, .recurrence-adjustment-form__head span { display: block; margin-top: 6px; color: #647c89; font-size: 11px; line-height: 1.4; }
+.recurrence-terminal-dialog__head .icon-button, .recurrence-adjustment-form__head .icon-button { width: 44px; min-width: 44px; min-height: 44px; }
+.recurrence-terminal-dialog__body, .recurrence-adjustment-form__body { margin: 0; padding: 20px; display: grid; gap: 16px; border: 0; }
+.recurrence-terminal-dialog__notice { padding: 14px; display: flex; align-items: flex-start; gap: 11px; border-left: 4px solid #d99426; border-radius: 6px; background: #fff8eb; }
+.recurrence-terminal-dialog__notice--dismiss { border-left-color: #e36d5a; background: #fff5f2; }
+.recurrence-terminal-dialog__notice svg { flex: 0 0 auto; color: #8b641e; }
+.recurrence-terminal-dialog__notice--dismiss svg { color: #a44d40; }
+.recurrence-terminal-dialog__notice p { margin: 0; display: grid; gap: 4px; }
+.recurrence-terminal-dialog__notice strong { color: #183b55; font-size: 12px; }
+.recurrence-terminal-dialog__notice span { color: #617a88; font-size: 11px; line-height: 1.45; }
+.recurrence-terminal-dialog label, .recurrence-adjustment-form label { min-width: 0; display: grid; gap: 7px; }
+.recurrence-terminal-dialog label > span, .recurrence-adjustment-form label > span { color: #526d7c; font-size: 11px; font-weight: 700; }
+.recurrence-terminal-dialog textarea, .recurrence-adjustment-form input, .recurrence-adjustment-form select, .recurrence-adjustment-form textarea { width: 100%; min-height: 44px; padding: 9px 10px; border: 1px solid #cbdce2; border-radius: 7px; color: #29485d; background: #fff; font: 12px/1.5 "Segoe UI Variable", "Segoe UI", sans-serif; }
+.recurrence-terminal-dialog textarea, .recurrence-adjustment-form textarea { resize: vertical; }
+.recurrence-adjustment-form__reason { padding: 13px; border-left: 4px solid #09aeb4; border-radius: 6px; background: #f0fafb; }
+.recurrence-adjustment-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.recurrence-adjustment-form__grid:first-of-type { grid-template-columns: 1.2fr .65fr 1fr; }
+.recurrence-adjustment-form__quality { padding-top: 16px; display: grid; gap: 9px; border-top: 1px solid #dbe5e9; }
+.recurrence-adjustment-form__quality h3 { margin: 0; color: #183b55; font: 700 13px/1.3 "Bahnschrift", sans-serif; }
+.recurrence-adjustment-form__quality > div { padding: 10px; display: grid; gap: 8px; border: 1px solid #dce7ea; border-radius: 7px; background: #fbfdfe; }
+.recurrence-adjustment-form__quality > div > label:first-child { min-height: 44px; display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.recurrence-adjustment-form__quality input[type="checkbox"] { width: 20px; min-height: 20px; height: 20px; accent-color: #09aeb4; }
+.recurrence-terminal-dialog [aria-invalid="true"], .recurrence-adjustment-form [aria-invalid="true"] { border-color: #d97565; background: #fffafa; }
+.recurrence-terminal-dialog__error, .recurrence-adjustment-form__error { margin: 0; padding: 10px 11px; display: flex; align-items: flex-start; gap: 8px; border-left: 4px solid #e36d5a; border-radius: 5px; color: #8f4034; background: #fff5f2; font-size: 11px; line-height: 1.4; }
+.recurrence-terminal-dialog__actions, .recurrence-adjustment-form__actions { position: sticky; z-index: 3; bottom: 0; padding: 13px 20px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; border-top: 1px solid #dbe5e9; background: rgba(247, 250, 251, .98); }
+.recurrence-terminal-dialog__actions .button, .recurrence-adjustment-form__actions .button { min-height: 44px; }
+.recurrence-terminal-dialog button:focus-visible, .recurrence-terminal-dialog textarea:focus-visible, .recurrence-adjustment-form button:focus-visible, .recurrence-adjustment-form input:focus-visible, .recurrence-adjustment-form select:focus-visible, .recurrence-adjustment-form textarea:focus-visible { outline: 3px solid rgba(9, 174, 180, .25); outline-offset: 2px; border-color: #09aeb4; }
 
 @media (max-width: 1180px) {
   .recurrence-summary { grid-template-columns: 1fr 1fr; }
@@ -671,7 +704,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-workspace__actions { align-items: stretch; flex-direction: column; }
   .recurrence-workspace__actions > .button { width: 100%; }
   .recurrence-action-backdrop { padding: 10px; align-items: end; }
-  .recurrence-report-form, .recurrence-evidence-panel, .recurrence-analysis-form, .recurrence-workflow-form { max-height: 96vh; border-radius: 9px 9px 0 0; }
+  .recurrence-report-form, .recurrence-evidence-panel, .recurrence-analysis-form, .recurrence-workflow-form, .recurrence-terminal-dialog, .recurrence-adjustment-form { max-height: 96vh; border-radius: 9px 9px 0 0; }
   .recurrence-report-form__orders, .recurrence-evidence-panel__fields { grid-template-columns: 1fr; }
   .recurrence-report-form__head, .recurrence-evidence-panel__head { padding: 16px; }
   .recurrence-report-form__body, .recurrence-evidence-panel__upload fieldset { padding-right: 16px; padding-left: 16px; }
@@ -687,6 +720,10 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-workflow-form__cost { grid-template-columns: 1fr; }
   .recurrence-workflow-form__actions { align-items: stretch; flex-direction: column-reverse; }
   .recurrence-workflow-form__actions .button { width: 100%; }
+  .recurrence-terminal-dialog__head, .recurrence-terminal-dialog__body, .recurrence-terminal-dialog__actions, .recurrence-adjustment-form__head, .recurrence-adjustment-form__body, .recurrence-adjustment-form__actions { padding-right: 16px; padding-left: 16px; }
+  .recurrence-adjustment-form__grid, .recurrence-adjustment-form__grid:first-of-type { grid-template-columns: 1fr; }
+  .recurrence-terminal-dialog__actions, .recurrence-adjustment-form__actions { align-items: stretch; flex-direction: column-reverse; }
+  .recurrence-terminal-dialog__actions .button, .recurrence-adjustment-form__actions .button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

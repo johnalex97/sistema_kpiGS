@@ -122,6 +122,9 @@ function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWo
     correctRecurrence: vi.fn(async () => true),
     addVisit: vi.fn(async () => true),
     addNote: vi.fn(async () => true),
+    dismissRecurrence: vi.fn(async () => true),
+    closeRecurrence: vi.fn(async () => true),
+    adjustRecurrence: vi.fn(async () => true),
     uploadEvidence: vi.fn(async () => true),
     downloadEvidence: vi.fn(async () => true),
     archiveEvidence: vi.fn(async () => true),
@@ -532,5 +535,36 @@ describe("RecurrencesPage", () => {
     expect(screen.queryByRole("button", { name: "Iniciar corrección" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Agregar visita" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Agregar nota" })).toBeInTheDocument();
+  });
+});
+
+describe("ciclo terminal de RecurrencesPage", () => {
+  it("conecta descarte, cierre y ajuste con sus diálogos según el estado", async () => {
+    const user = userEvent.setup();
+    const review = { ...workspace(), capabilities: { ...workspace().capabilities, canReview: true } };
+    const open = { ...selected, status: "OPEN" as const };
+    const correction = { ...selected, status: "CORRECTION" as const, correctiveAction: "Reemplazar conector" };
+    const closed = { ...selected, status: "CLOSED" as const, cause: { id: "cause-1", code: "REWORK", name: "Retrabajo" }, analysis: "Diagnóstico validado", correctiveAction: "Reemplazar conector", closedAt: "2026-09-10T15:00:00.000Z" };
+    const rendered = render(view({ ...review, selected: open, detailState: "ready" }));
+
+    await user.click(screen.getByRole("button", { name: "Descartar caso" }));
+    expect(review.setActionMode).toHaveBeenCalledWith("dismiss");
+    rendered.rerender(view({ ...review, selected: open, detailState: "ready", actionMode: "dismiss" }));
+    await user.type(screen.getByLabelText("Motivo del descarte"), "No corresponde a reincidencia técnica");
+    await user.click(screen.getByRole("button", { name: "Confirmar descarte" }));
+    expect(review.dismissRecurrence).toHaveBeenCalledWith("No corresponde a reincidencia técnica");
+
+    rendered.rerender(view({ ...review, selected: correction, detailState: "ready" }));
+    await user.click(screen.getByRole("button", { name: "Cerrar caso" }));
+    expect(review.setActionMode).toHaveBeenCalledWith("close");
+    rendered.rerender(view({ ...review, selected: correction, detailState: "ready", actionMode: "close" }));
+    await user.click(screen.getByRole("button", { name: "Confirmar cierre" }));
+    expect(review.closeRecurrence).toHaveBeenCalledTimes(1);
+
+    rendered.rerender(view({ ...review, selected: closed, detailState: "ready" }));
+    await user.click(screen.getByRole("button", { name: "Ajustar caso" }));
+    expect(review.setActionMode).toHaveBeenCalledWith("adjust");
+    rendered.rerender(view({ ...review, selected: closed, detailState: "ready", actionMode: "adjust" }));
+    expect(screen.getByRole("dialog", { name: "Ajustar caso cerrado" })).toBeInTheDocument();
   });
 });

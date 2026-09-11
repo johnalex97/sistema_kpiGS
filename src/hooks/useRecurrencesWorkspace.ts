@@ -11,8 +11,11 @@ import type { Evidence, EvidenceUploadInput } from "../models/evidence";
 import type {
   AddRecurrenceNoteInput,
   AddRecurrenceVisitInput,
+  AdjustRecurrenceInput,
   AnalyzeRecurrenceInput,
+  CloseRecurrenceInput,
   CorrectRecurrenceInput,
+  DismissRecurrenceInput,
   RecurrenceCatalog,
   RecurrenceDetail,
   RecurrenceListFilters,
@@ -79,6 +82,9 @@ export interface RecurrencesWorkspace {
   correctRecurrence(input: Omit<CorrectRecurrenceInput, "version">): Promise<boolean>;
   addVisit(input: Omit<AddRecurrenceVisitInput, "version">): Promise<boolean>;
   addNote(input: AddRecurrenceNoteInput): Promise<boolean>;
+  dismissRecurrence(reason: string): Promise<boolean>;
+  closeRecurrence(): Promise<boolean>;
+  adjustRecurrence(input: Omit<AdjustRecurrenceInput, "version">): Promise<boolean>;
   uploadEvidence(input: EvidenceUploadInput): Promise<boolean>;
   downloadEvidence(evidence: Evidence): Promise<boolean>;
   archiveEvidence(evidence: Evidence, reason: string): Promise<boolean>;
@@ -199,6 +205,9 @@ function statusAllowsAction(mode: RecurrenceActionMode, status: RecurrenceDetail
   if (mode === "analyze") return status === "OPEN";
   if (mode === "correct") return status === "ANALYSIS" || status === "CORRECTION";
   if (mode === "visit" || mode === "note") return status === "OPEN" || status === "ANALYSIS" || status === "CORRECTION";
+  if (mode === "dismiss") return status === "OPEN" || status === "ANALYSIS";
+  if (mode === "close") return status === "CORRECTION";
+  if (mode === "adjust") return status === "CLOSED";
   return true;
 }
 
@@ -252,6 +261,23 @@ function workflowMutationError(
     message: messages[error.code] ?? fallback,
     conflict: error.status === 409 && error.code === "VERSION_CONFLICT",
   };
+}
+
+function terminalMutationError(mode: "dismiss" | "close" | "adjust", error: unknown): { message: string; conflict: boolean } {
+  const fallback = mode === "dismiss" ? "No fue posible descartar el caso."
+    : mode === "close" ? "No fue posible cerrar el caso." : "No fue posible guardar el ajuste.";
+  if (!(error instanceof ApiClientError)) return { message: fallback, conflict: false };
+  if (error.status === 403) return { message: "Ya no tienes permiso para revisar reincidencias.", conflict: false };
+  const messages: Record<string, string> = {
+    VERSION_CONFLICT: "El caso cambió en el servidor. Revisa la versión actual antes de guardar de nuevo.",
+    RECURRENCE_EVIDENCE_REQUIRED: "Agrega al menos una evidencia activa antes de cerrar el caso.",
+    RECURRENCE_DOCUMENTATION_INCOMPLETE: "Completa la documentación requerida antes de continuar.",
+    INVALID_RECURRENCE_TRANSITION: "El estado actual del caso ya no permite esta acción.",
+    RECURRENCE_CAUSE_NOT_FOUND: "La causa registrada ya no está disponible. Actualiza el catálogo antes de ajustar.",
+    RECURRENCE_QUALITY_INVALID: "Completa las decisiones de calidad de todos los técnicos originales.",
+    RECURRENCE_NOT_FOUND: "El caso ya no está disponible.",
+  };
+  return { message: messages[error.code] ?? fallback, conflict: error.status === 409 && error.code === "VERSION_CONFLICT" };
 }
 
 function evidenceMutationError(error: unknown, action: "upload" | "download" | "archive"): { message: string; conflict: boolean } {
@@ -357,7 +383,7 @@ export function useRecurrencesWorkspace({
       workflowPendingGenerationRef.current = null;
       mutationPendingRef.current = false;
     }
-    setMutation((current) => current && ["analyze", "correct", "visit", "note"].includes(current.name) ? null : current);
+    setMutation((current) => current && ["analyze", "correct", "visit", "note", "dismiss", "close", "adjust"].includes(current.name) ? null : current);
   }, []);
 
   const invalidateList = useCallback(() => {
@@ -599,7 +625,7 @@ export function useRecurrencesWorkspace({
     auxiliaryRequestsRef.current.clear();
     const currentAction = actionModeRef.current;
     const nextAction = currentAction && !actionAllowed(currentAction, capabilities) ? null : currentAction;
-    if (currentAction && ["analyze", "correct", "visit", "note"].includes(currentAction) && nextAction !== currentAction) invalidateWorkflowOperation();
+    if (currentAction && ["analyze", "correct", "visit", "note", "dismiss", "close", "adjust"].includes(currentAction) && nextAction !== currentAction) invalidateWorkflowOperation();
     actionModeRef.current = nextAction;
     setActionModeState(nextAction);
     if (!capabilities.canUploadEvidence) revokeEvidencePrompt();
@@ -1039,6 +1065,113 @@ export function useRecurrencesWorkspace({
     (target, value) => api.addNote(target.id, value),
   ), [api, runWorkflowMutation]);
 
+  const runTerminalMutation = useCallback(async <T,>(
+    mode: "dismiss" | "close" | "adjust",
+    input: T,
+    operation: (target: RecurrenceDetail, input: T) => Promise<RecurrenceDetail>,
+  ): Promise<boolean> => {
+    if (mutationPendingRef.current) return false;
+    const target = selectedRef.current;
+    if (!capabilitiesRef.current.canReview) {
+      setMutation({ name: mode, pending: false, error: "No tienes permiso para revisar reincidencias.", conflict: false });
+      return false;
+    }
+    if (!target) {
+      setMutation({ name: mode, pending: false, error: "Selecciona un caso antes de continuar.", conflict: false });
+      return false;
+    }
+    if (!statusAllowsAction(mode, target.status)) {
+      setMutation((current) => current?.name === mode && current.conflict ? current : {
+        name: mode, pending: false, error: "El estado actual del caso ya no permite esta acción.", conflict: false,
+      });
+      return false;
+    }
+
+    const generation = ++workflowGenerationRef.current;
+    const mutationIsCurrent = () => workflowGenerationRef.current === generation
+      && workflowPendingGenerationRef.current === generation
+      && capabilitiesRef.current.canReview
+      && selectedIdRef.current === target.id
+      && actionModeRef.current === mode;
+    const refreshIsCurrent = () => workflowGenerationRef.current === generation
+      && capabilitiesRef.current.canReview
+      && selectedIdRef.current === target.id;
+    mutationPendingRef.current = true;
+    workflowPendingGenerationRef.current = generation;
+    setMutation({ name: mode, pending: true, error: null, conflict: false });
+    try {
+      const incoming = await operation(target, input);
+      if (!mutationIsCurrent()) return false;
+      invalidateDetail();
+      const next = reconcileRecurrence(selectedRef.current, incoming);
+      selectedRef.current = next;
+      setSelected(next);
+      setDetailState("ready");
+      actionModeRef.current = null;
+      setActionModeState(null);
+      setMutation({ name: mode, pending: false, error: null, conflict: false });
+      const requestedQuery = queryRef.current;
+      const requestedSummary = createSummarySnapshot(summaryFilters(requestedQuery.filters));
+      const requestedList = createListSnapshot(requestedQuery.filters, requestedSummary);
+      setListState("loading");
+      setListStale(false);
+      setSummaryState("loading");
+      void loadList(listKey(requestedQuery.filters), requestedList);
+      void loadSummary(requestedSummary);
+      void loadDetail(target.id, true, { canPublish: refreshIsCurrent });
+      return true;
+    } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
+      const failure = terminalMutationError(mode, error);
+      if (error instanceof ApiClientError && error.code === "RECURRENCE_NOT_FOUND") {
+        removeSelection();
+        return false;
+      }
+      if (error instanceof ApiClientError && error.status === 403) {
+        actionModeRef.current = null;
+        setActionModeState(null);
+        invalidateWorkflowOperation();
+        return false;
+      }
+      if (error instanceof ApiClientError && error.code === "RECURRENCE_CAUSE_NOT_FOUND") {
+        await loadCatalog();
+        if (!mutationIsCurrent()) return false;
+      }
+      if (error instanceof ApiClientError && error.code === "INVALID_RECURRENCE_TRANSITION") {
+        await loadDetail(target.id, true, { preserveAction: mode, canPublish: mutationIsCurrent });
+        if (!mutationIsCurrent()) return false;
+        actionModeRef.current = null;
+        setActionModeState(null);
+      }
+      if (failure.conflict) {
+        await loadDetail(target.id, true, { preserveAction: mode, canPublish: mutationIsCurrent });
+        if (!mutationIsCurrent()) return false;
+      }
+      setMutation({ name: mode, pending: false, error: failure.message, conflict: failure.conflict });
+      return false;
+    } finally {
+      if (workflowPendingGenerationRef.current === generation) {
+        workflowPendingGenerationRef.current = null;
+        mutationPendingRef.current = false;
+      }
+    }
+  }, [invalidateDetail, invalidateWorkflowOperation, loadCatalog, loadDetail, loadList, loadSummary, removeSelection]);
+
+  const dismissRecurrence = useCallback((reason: string) => runTerminalMutation(
+    "dismiss", { reason } satisfies Omit<DismissRecurrenceInput, "version">,
+    (target, value) => api.dismiss(target.id, { ...value, version: target.version }),
+  ), [api, runTerminalMutation]);
+
+  const closeRecurrence = useCallback(() => runTerminalMutation(
+    "close", {} satisfies Omit<CloseRecurrenceInput, "version">,
+    (target) => api.close(target.id, { version: target.version }),
+  ), [api, runTerminalMutation]);
+
+  const adjustRecurrence = useCallback((input: Omit<AdjustRecurrenceInput, "version">) => runTerminalMutation(
+    "adjust", input,
+    (target, value) => api.adjust(target.id, { ...value, version: target.version }),
+  ), [api, runTerminalMutation]);
+
   const uploadEvidence = useCallback(async (input: EvidenceUploadInput): Promise<boolean> => {
     if (mutationPendingRef.current) return false;
     const targetId = evidencePromptRef.current ?? selectedIdRef.current;
@@ -1176,6 +1309,9 @@ export function useRecurrencesWorkspace({
     correctRecurrence,
     addVisit,
     addNote,
+    dismissRecurrence,
+    closeRecurrence,
+    adjustRecurrence,
     uploadEvidence,
     downloadEvidence,
     archiveEvidence,

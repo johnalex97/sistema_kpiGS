@@ -1,4 +1,4 @@
-import { ClipboardCheck, Clock3, FileText, MessageSquarePlus, Route, UserRound, Wrench, X } from "lucide-react";
+import { ArchiveX, ClipboardCheck, Clock3, FileText, LockKeyhole, MessageSquarePlus, Route, SlidersHorizontal, UserRound, Wrench, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { RecurrenceCapabilities } from "../../hooks/useRecurrencesWorkspace";
 import type {
@@ -32,9 +32,12 @@ export interface RecurrenceDetailProps {
   onAddVisit?(trigger: HTMLButtonElement): void;
   onAddNote?(trigger: HTMLButtonElement): void;
   onManageEvidence?(trigger: HTMLButtonElement): void;
+  onDismiss?(trigger: HTMLButtonElement): void;
+  onCloseCase?(trigger: HTMLButtonElement): void;
+  onAdjust?(trigger: HTMLButtonElement): void;
 }
 
-export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze, onCorrect, onAddVisit, onAddNote, onManageEvidence }: RecurrenceDetailProps) {
+export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze, onCorrect, onAddVisit, onAddNote, onManageEvidence, onDismiss, onCloseCase, onAdjust }: RecurrenceDetailProps) {
   const panelRef = useRef<HTMLElement>(null);
   const titleId = `recurrence-detail-title-${recurrence.id}`;
   const flowTitleId = `recurrence-progress-title-${recurrence.id}`;
@@ -44,8 +47,11 @@ export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze,
   const canCorrect = (recurrence.status === "ANALYSIS" || recurrence.status === "CORRECTION") && capabilities.canReview && onCorrect;
   const canAddVisit = mutable && capabilities.canReview && capabilities.lookupCapabilities.orders && onAddVisit;
   const canAddNote = mutable && capabilities.canAddNote && onAddNote;
+  const canDismiss = (recurrence.status === "OPEN" || recurrence.status === "ANALYSIS") && capabilities.canReview && onDismiss;
+  const canCloseCase = recurrence.status === "CORRECTION" && capabilities.canReview && onCloseCase;
+  const canAdjust = recurrence.status === "CLOSED" && capabilities.canReview && onAdjust;
   const hasActions = recurrence.status === "OPEN" && capabilities.canReview && onAnalyze
-    || canCorrect || canAddVisit || canAddNote || capabilities.canViewEvidence && onManageEvidence;
+    || canCorrect || canAddVisit || canAddNote || canDismiss || canCloseCase || canAdjust || capabilities.canViewEvidence && onManageEvidence;
 
   useEffect(() => {
     panelRef.current?.focus();
@@ -62,6 +68,9 @@ export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze,
       {canCorrect && <button className="button button--primary" type="button" onClick={(event) => onCorrect(event.currentTarget)}><Wrench size={16} aria-hidden="true" />{recurrence.status === "ANALYSIS" ? "Iniciar corrección" : "Actualizar corrección"}</button>}
       {canAddVisit && <button className="button button--ghost" type="button" onClick={(event) => onAddVisit(event.currentTarget)}><Route size={16} aria-hidden="true" />Agregar visita</button>}
       {canAddNote && <button className="button button--ghost" type="button" onClick={(event) => onAddNote(event.currentTarget)}><MessageSquarePlus size={16} aria-hidden="true" />Agregar nota</button>}
+      {canDismiss && <button className="button button--ghost" type="button" onClick={(event) => onDismiss(event.currentTarget)}><ArchiveX size={16} aria-hidden="true" />Descartar caso</button>}
+      {canCloseCase && <button className="button button--primary" type="button" onClick={(event) => onCloseCase(event.currentTarget)}><LockKeyhole size={16} aria-hidden="true" />Cerrar caso</button>}
+      {canAdjust && <button className="button button--primary" type="button" onClick={(event) => onAdjust(event.currentTarget)}><SlidersHorizontal size={16} aria-hidden="true" />Ajustar caso</button>}
       {capabilities.canViewEvidence && onManageEvidence && <button className="button button--ghost" type="button" onClick={(event) => onManageEvidence(event.currentTarget)}><FileText size={16} aria-hidden="true" />Gestionar evidencia</button>}
     </div>}
     <div className="recurrence-detail__body">
