@@ -608,6 +608,26 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
 .recurrence-analysis-form__actions { position: sticky; z-index: 3; bottom: 0; padding: 13px 20px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; border-top: 1px solid #dbe5e9; background: rgba(247, 250, 251, .98); }
 .recurrence-analysis-form__actions .button { min-height: 44px; }
 .recurrence-analysis-form button:focus-visible, .recurrence-analysis-form input:focus-visible, .recurrence-analysis-form select:focus-visible, .recurrence-analysis-form textarea:focus-visible { outline: 3px solid rgba(9, 174, 180, .25); outline-offset: 2px; border-color: #09aeb4; }
+.recurrence-action-backdrop--workflow { z-index: 63; background: rgba(11, 35, 64, .66); }
+.recurrence-workflow-form { width: 720px; max-width: 100%; max-height: 94vh; scroll-padding-block: 96px 76px; border: 1px solid #cbdde2; border-left: 5px solid #09aeb4; border-radius: 10px; color: #29485d; background: #fff; box-shadow: 0 24px 64px rgba(6, 32, 52, .28); overflow-y: auto; }
+.recurrence-workflow-form--visit { width: 660px; border-left-color: #d99426; }
+.recurrence-workflow-form--note { width: 620px; border-left-color: #0b2340; }
+.recurrence-workflow-form__head { position: sticky; z-index: 4; top: 0; padding: 18px 20px 15px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid #dbe5e9; background: rgba(255, 255, 255, .98); }
+.recurrence-workflow-form__head h2 { margin: 4px 0 0; color: #0b2340; font: 700 20px/1.15 "Bahnschrift", "Arial Narrow", sans-serif; letter-spacing: -.015em; }
+.recurrence-workflow-form__head span { display: block; margin-top: 6px; color: #647c89; font-size: 11px; line-height: 1.4; }
+.recurrence-workflow-form__head .icon-button { width: 44px; min-width: 44px; min-height: 44px; }
+.recurrence-workflow-form__body { margin: 0; padding: 20px; display: grid; gap: 16px; border: 0; }
+.recurrence-workflow-form__body > label, .recurrence-workflow-form__cost label { min-width: 0; display: grid; gap: 7px; }
+.recurrence-workflow-form__body label > span { color: #526d7c; font-size: 11px; font-weight: 700; }
+.recurrence-workflow-form__body input, .recurrence-workflow-form__body textarea { width: 100%; min-height: 44px; padding: 9px 10px; border: 1px solid #cbdce2; border-radius: 7px; color: #29485d; background: #fff; font: 12px/1.5 "Segoe UI Variable", "Segoe UI", sans-serif; }
+.recurrence-workflow-form__body textarea { resize: vertical; }
+.recurrence-workflow-form__cost { padding-top: 16px; display: grid; grid-template-columns: .55fr 1fr; gap: 12px; border-top: 1px solid #dbe5e9; }
+.recurrence-workflow-form [aria-invalid="true"] { border-color: #d97565; background: #fffafa; }
+.recurrence-workflow-form__error { margin: 0; padding: 10px 11px; display: flex; align-items: flex-start; gap: 8px; border-left: 4px solid #e36d5a; border-radius: 5px; color: #8f4034; background: #fff5f2; font-size: 11px; line-height: 1.4; }
+.recurrence-workflow-form__error svg { flex: 0 0 auto; margin-top: 1px; }
+.recurrence-workflow-form__actions { position: sticky; z-index: 3; bottom: 0; padding: 13px 20px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; border-top: 1px solid #dbe5e9; background: rgba(247, 250, 251, .98); }
+.recurrence-workflow-form__actions .button { min-height: 44px; }
+.recurrence-workflow-form button:focus-visible, .recurrence-workflow-form input:focus-visible, .recurrence-workflow-form textarea:focus-visible { outline: 3px solid rgba(9, 174, 180, .25); outline-offset: 2px; border-color: #09aeb4; }
 
 @media (max-width: 1180px) {
   .recurrence-summary { grid-template-columns: 1fr 1fr; }
@@ -651,7 +671,7 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-workspace__actions { align-items: stretch; flex-direction: column; }
   .recurrence-workspace__actions > .button { width: 100%; }
   .recurrence-action-backdrop { padding: 10px; align-items: end; }
-  .recurrence-report-form, .recurrence-evidence-panel, .recurrence-analysis-form { max-height: 96vh; border-radius: 9px 9px 0 0; }
+  .recurrence-report-form, .recurrence-evidence-panel, .recurrence-analysis-form, .recurrence-workflow-form { max-height: 96vh; border-radius: 9px 9px 0 0; }
   .recurrence-report-form__orders, .recurrence-evidence-panel__fields { grid-template-columns: 1fr; }
   .recurrence-report-form__head, .recurrence-evidence-panel__head { padding: 16px; }
   .recurrence-report-form__body, .recurrence-evidence-panel__upload fieldset { padding-right: 16px; padding-left: 16px; }
@@ -663,6 +683,10 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-analysis-form__classification, .recurrence-analysis-form__quality ul, .recurrence-analysis-form__cost { grid-template-columns: 1fr; }
   .recurrence-analysis-form__actions { align-items: stretch; flex-direction: column-reverse; }
   .recurrence-analysis-form__actions .button { width: 100%; }
+  .recurrence-workflow-form__head, .recurrence-workflow-form__body, .recurrence-workflow-form__actions { padding-right: 16px; padding-left: 16px; }
+  .recurrence-workflow-form__cost { grid-template-columns: 1fr; }
+  .recurrence-workflow-form__actions { align-items: stretch; flex-direction: column-reverse; }
+  .recurrence-workflow-form__actions .button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

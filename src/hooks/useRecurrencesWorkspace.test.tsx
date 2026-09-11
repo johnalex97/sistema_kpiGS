@@ -607,6 +607,7 @@ describe("useRecurrencesWorkspace", () => {
     expect(result.current.capabilities).toEqual({
       canReport: true,
       canReview: true,
+      canAddNote: true,
       canViewAll: true,
       canUploadEvidence: true,
       canViewEvidence: false,
@@ -1224,5 +1225,151 @@ describe("historial explícito de reincidencias", () => {
     expect(push).not.toHaveBeenCalled();
     expect(replace).toHaveBeenCalledTimes(1);
     expect(window.location.search).toContain("recurrenceFrom=");
+  });
+});
+
+describe("operaciones de corrección y seguimiento", () => {
+  it("inicia corrección una sola vez con la versión seleccionada y publica el resultado", async () => {
+    const current = { ...detail, status: "ANALYSIS" as const, version: 3, analysis: "Conector defectuoso" };
+    const corrected = { ...current, status: "CORRECTION" as const, version: 4, correctiveAction: "Reemplazar conector" };
+    const pending = deferred<RecurrenceDetail>();
+    const api = recurrenceApi({
+      detail: vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(corrected),
+      correct: vi.fn(() => pending.promise),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("correct"));
+
+    let first!: Promise<boolean>;
+    let duplicate!: Promise<boolean>;
+    act(() => {
+      first = result.current.correctRecurrence({ correctiveAction: "Reemplazar conector" });
+      duplicate = result.current.correctRecurrence({ correctiveAction: "Duplicada" });
+    });
+
+    expect(api.correct).toHaveBeenCalledTimes(1);
+    expect(api.correct).toHaveBeenCalledWith(recurrenceId, { correctiveAction: "Reemplazar conector", version: 3 });
+    await expect(duplicate).resolves.toBe(false);
+    pending.resolve(corrected);
+    await act(async () => expect(await first).toBe(true));
+    expect(result.current.selected).toEqual(corrected);
+    expect(result.current.actionMode).toBeNull();
+  });
+
+  it("agrega una visita con la versión vigente y refresca el caso", async () => {
+    const current = { ...detail, status: "CORRECTION" as const, version: 4 };
+    const visited = {
+      ...current,
+      version: 5,
+      visitCount: 1,
+      visits: [{ id: "visit-1", visitNumber: 2, additionalMinutes: 45, observation: null, order: { id: "order-2", orderNumber: "OT-200" } }],
+    };
+    const api = recurrenceApi({
+      detail: vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(visited),
+      addVisit: vi.fn().mockResolvedValue(visited),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW", "ORDERS_VIEW_ALL"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("visit"));
+
+    await act(async () => expect(await result.current.addVisit({ orderId: "order-2" })).toBe(true));
+
+    expect(api.addVisit).toHaveBeenCalledWith(recurrenceId, { orderId: "order-2", version: 4 });
+    expect(result.current.selected).toEqual(visited);
+    expect(result.current.actionMode).toBeNull();
+  });
+
+  it("permite al técnico propio agregar una nota sin enviar versión", async () => {
+    const current = { ...detail, status: "ANALYSIS" as const, version: 3 };
+    const noted = {
+      ...current,
+      noteCount: 1,
+      notes: [{ id: "note-1", content: "Cliente confirma estabilidad", authorDisplayName: "Ana López", createdAt: "2026-09-10T15:00:00.000Z" }],
+    };
+    const addNote = vi.fn().mockResolvedValue(noted);
+    const api = recurrenceApi({ detail: vi.fn().mockResolvedValue(current), addNote });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_OWN"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("note"));
+
+    await act(async () => expect(await result.current.addNote({ content: "Cliente confirma estabilidad" })).toBe(true));
+
+    expect(api.addNote).toHaveBeenCalledWith(recurrenceId, { content: "Cliente confirma estabilidad" });
+    expect(addNote.mock.calls[0]?.[1]).not.toHaveProperty("version");
+    expect(result.current.capabilities.canAddNote).toBe(true);
+    expect(result.current.selected).toEqual(noted);
+  });
+
+  it("conserva el formulario tras conflicto de corrección pero bloquea reenvío si el caso ya cerró", async () => {
+    const current = { ...detail, status: "ANALYSIS" as const, version: 3 };
+    const closed = { ...current, status: "CLOSED" as const, version: 4, closedAt: "2026-09-10T15:00:00.000Z" };
+    const api = recurrenceApi({
+      detail: vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(closed),
+      correct: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("correct"));
+
+    await act(async () => expect(await result.current.correctRecurrence({ correctiveAction: "Reemplazar conector" })).toBe(false));
+
+    expect(result.current.selected).toEqual(closed);
+    expect(result.current.actionMode).toBe("correct");
+    expect(result.current.mutation).toMatchObject({ name: "correct", conflict: true });
+    await act(async () => expect(await result.current.correctRecurrence({ correctiveAction: "Reintento imposible" })).toBe(false));
+    expect(api.correct).toHaveBeenCalledTimes(1);
+  });
+
+  it("descarta una respuesta tardía de visita cuando cambia la selección", async () => {
+    const current = { ...detail, status: "CORRECTION" as const, version: 4 };
+    const other = { ...current, id: anotherRecurrenceId, recurrenceNumber: "RI-2026-0002" };
+    const pending = deferred<RecurrenceDetail>();
+    const api = recurrenceApi({
+      detail: vi.fn((id: string) => Promise.resolve(id === anotherRecurrenceId ? other : current)),
+      addVisit: vi.fn(() => pending.promise),
+    });
+    const { result } = renderWorkspace({ api, permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW", "ORDERS_VIEW_ALL"] });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("visit"));
+    let operation!: Promise<boolean>;
+    act(() => { operation = result.current.addVisit({ orderId: "order-2" }); });
+
+    act(() => result.current.select(anotherRecurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(other));
+    pending.resolve({ ...current, version: 5 });
+    await act(async () => expect(await operation).toBe(false));
+
+    expect(result.current.selected).toEqual(other);
+    expect(result.current.actionMode).toBeNull();
+  });
+
+  it("cierra nota y descarta su respuesta tardía al revocar el alcance propio", async () => {
+    const current = { ...detail, status: "ANALYSIS" as const, version: 3 };
+    const pending = deferred<RecurrenceDetail>();
+    const api = recurrenceApi({ detail: vi.fn().mockResolvedValue(current), addNote: vi.fn(() => pending.promise) });
+    const stableOptions = options({ api });
+    const { result, rerender } = renderHook(
+      ({ permissions }) => useRecurrencesWorkspace({ ...stableOptions, permissions }),
+      { initialProps: { permissions: ["RECURRENCES_VIEW_OWN"] } },
+    );
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("note"));
+    let operation!: Promise<boolean>;
+    act(() => { operation = result.current.addNote({ content: "Seguimiento pendiente" }); });
+
+    rerender({ permissions: [] });
+    await waitFor(() => expect(result.current.actionMode).toBeNull());
+    pending.resolve({ ...current, noteCount: 1 });
+    await act(async () => expect(await operation).toBe(false));
+
+    expect(result.current.selected).toEqual(current);
+    expect(result.current.mutation).toBeNull();
   });
 });

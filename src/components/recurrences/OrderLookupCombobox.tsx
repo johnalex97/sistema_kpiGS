@@ -1,5 +1,5 @@
 import { ChevronDown, LoaderCircle, Search, X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type Ref } from "react";
 import type { RecurrenceLookupApi } from "../../api/recurrence-lookups";
 import type { OrderLookup, OrderStatus } from "../../models/order-lookup";
 
@@ -7,7 +7,7 @@ interface OrderRequest {
   search: string;
   page: number;
   statuses: OrderStatus[];
-  excludeId?: string;
+  excludedIds: Set<string>;
   scopeKey: string;
   revision: number;
 }
@@ -18,6 +18,8 @@ interface PendingSearch {
   revision: number;
 }
 
+const noExcludedOrderIds: readonly string[] = [];
+
 export interface OrderLookupComboboxProps {
   label: string;
   name: string;
@@ -25,6 +27,7 @@ export interface OrderLookupComboboxProps {
   statuses: readonly OrderStatus[];
   value: OrderLookup | null;
   excludeId?: string;
+  excludeIds?: readonly string[];
   disabled?: boolean;
   invalid?: boolean;
   describedBy?: string;
@@ -46,6 +49,7 @@ export function OrderLookupCombobox({
   statuses,
   value,
   excludeId,
+  excludeIds = noExcludedOrderIds,
   disabled = false,
   invalid = false,
   describedBy,
@@ -54,7 +58,11 @@ export function OrderLookupCombobox({
 }: OrderLookupComboboxProps) {
   const inputId = useId();
   const listId = `${inputId}-orders`;
-  const scopeKey = `${statuses.join(",")}|${excludeId ?? ""}`;
+  const normalizedExcludedIds = useMemo(
+    () => [...new Set([...(excludeId ? [excludeId] : []), ...excludeIds])].sort(),
+    [excludeId, excludeIds],
+  );
+  const scopeKey = `${statuses.join(",")}|${normalizedExcludedIds.join(",")}`;
   const [query, setQuery] = useState("");
   const [request, setRequest] = useState<OrderRequest | null>(null);
   const [pendingSearch, setPendingSearch] = useState<PendingSearch | null>(null);
@@ -67,7 +75,7 @@ export function OrderLookupCombobox({
   const [loadError, setLoadError] = useState(false);
   const apiRef = useRef(api);
   const statusesRef = useRef(statuses);
-  const excludeIdRef = useRef(excludeId);
+  const excludedIdsRef = useRef(new Set(normalizedExcludedIds));
   const scopeKeyRef = useRef(scopeKey);
   const desiredSearchRef = useRef("");
   const controllerRef = useRef<AbortController | null>(null);
@@ -81,14 +89,14 @@ export function OrderLookupCombobox({
   useEffect(() => { apiRef.current = api; }, [api]);
   useEffect(() => { statusesRef.current = statuses; }, [statuses]);
   useEffect(() => { selectedRef.current = value; }, [value]);
-  useEffect(() => { excludeIdRef.current = excludeId; }, [excludeId]);
+  useEffect(() => { excludedIdsRef.current = new Set(normalizedExcludedIds); }, [normalizedExcludedIds]);
   useEffect(() => { scopeKeyRef.current = scopeKey; }, [scopeKey]);
 
   const createRequest = (search: string, page: number): OrderRequest => ({
     search,
     page,
     statuses: [...statusesRef.current],
-    excludeId: excludeIdRef.current,
+    excludedIds: new Set(excludedIdsRef.current),
     scopeKey: scopeKeyRef.current,
     revision: ++revisionRef.current,
   });
@@ -137,7 +145,7 @@ export function OrderLookupCombobox({
         search: pendingSearch.search,
         page: 1,
         statuses: [...statusesRef.current],
-        excludeId: excludeIdRef.current,
+        excludedIds: new Set(excludedIdsRef.current),
         scopeKey: scopeKeyRef.current,
         revision: pendingSearch.revision,
       });
@@ -160,7 +168,7 @@ export function OrderLookupCombobox({
         || scopeKeyRef.current !== request.scopeKey
       ) return;
       const allowedStatuses = new Set(request.statuses);
-      const visible = result.items.filter((order) => order.id !== request.excludeId && allowedStatuses.has(order.status));
+      const visible = result.items.filter((order) => !request.excludedIds.has(order.id) && allowedStatuses.has(order.status));
       setItems((current) => {
         const incoming = request.page === 1 ? visible : [...current, ...visible];
         const unique = [...new Map(incoming.map((order) => [order.id, order])).values()];

@@ -1,4 +1,4 @@
-import { ClipboardCheck, Clock3, FileText, Route, UserRound, X } from "lucide-react";
+import { ClipboardCheck, Clock3, FileText, MessageSquarePlus, Route, UserRound, Wrench, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { RecurrenceCapabilities } from "../../hooks/useRecurrencesWorkspace";
 import type {
@@ -28,15 +28,24 @@ export interface RecurrenceDetailProps {
   capabilities: RecurrenceCapabilities;
   onClose(): void;
   onAnalyze?(trigger: HTMLButtonElement): void;
+  onCorrect?(trigger: HTMLButtonElement): void;
+  onAddVisit?(trigger: HTMLButtonElement): void;
+  onAddNote?(trigger: HTMLButtonElement): void;
   onManageEvidence?(trigger: HTMLButtonElement): void;
 }
 
-export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze, onManageEvidence }: RecurrenceDetailProps) {
+export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze, onCorrect, onAddVisit, onAddNote, onManageEvidence }: RecurrenceDetailProps) {
   const panelRef = useRef<HTMLElement>(null);
   const titleId = `recurrence-detail-title-${recurrence.id}`;
   const flowTitleId = `recurrence-progress-title-${recurrence.id}`;
   const flow = recurrence.status === "DISMISSED" ? dismissedFlow : standardFlow;
   const currentIndex = flow.indexOf(recurrence.status);
+  const mutable = recurrence.status === "OPEN" || recurrence.status === "ANALYSIS" || recurrence.status === "CORRECTION";
+  const canCorrect = (recurrence.status === "ANALYSIS" || recurrence.status === "CORRECTION") && capabilities.canReview && onCorrect;
+  const canAddVisit = mutable && capabilities.canReview && capabilities.lookupCapabilities.orders && onAddVisit;
+  const canAddNote = mutable && capabilities.canAddNote && onAddNote;
+  const hasActions = recurrence.status === "OPEN" && capabilities.canReview && onAnalyze
+    || canCorrect || canAddVisit || canAddNote || capabilities.canViewEvidence && onManageEvidence;
 
   useEffect(() => {
     panelRef.current?.focus();
@@ -48,7 +57,13 @@ export function RecurrenceDetail({ recurrence, capabilities, onClose, onAnalyze,
   return <aside className={`recurrence-detail recurrence-detail--${recurrence.impact.toLowerCase()}`} role="dialog" aria-labelledby={titleId} aria-modal="false" tabIndex={-1} ref={panelRef}>
     <header className="recurrence-detail__head"><div><p className="eyebrow">Registro operativo · v{recurrence.version}</p><h2 id={titleId}>Detalle de {recurrence.recurrenceNumber}</h2><span>{recurrence.originalOrder.orderNumber}</span></div><button className="icon-button" type="button" aria-label="Cerrar detalle" onClick={onClose}><X size={18} aria-hidden="true" /></button></header>
     <div className="recurrence-detail__signal"><span className={`recurrence-impact recurrence-impact--${recurrence.impact.toLowerCase()}`}><i aria-hidden="true" />{impactLabel[recurrence.impact]}</span><strong>{statusLabel[recurrence.status]}</strong></div>
-    {(recurrence.status === "OPEN" && capabilities.canReview && onAnalyze || capabilities.canViewEvidence && onManageEvidence) && <div className="recurrence-detail__actions">{recurrence.status === "OPEN" && capabilities.canReview && onAnalyze && <button className="button button--primary recurrence-detail__analyze" type="button" onClick={(event) => onAnalyze(event.currentTarget)}><ClipboardCheck size={16} aria-hidden="true" />Analizar caso</button>}{capabilities.canViewEvidence && onManageEvidence && <button className="button button--ghost" type="button" onClick={(event) => onManageEvidence(event.currentTarget)}><FileText size={16} aria-hidden="true" />Gestionar evidencia</button>}</div>}
+    {hasActions && <div className="recurrence-detail__actions">
+      {recurrence.status === "OPEN" && capabilities.canReview && onAnalyze && <button className="button button--primary recurrence-detail__analyze" type="button" onClick={(event) => onAnalyze(event.currentTarget)}><ClipboardCheck size={16} aria-hidden="true" />Analizar caso</button>}
+      {canCorrect && <button className="button button--primary" type="button" onClick={(event) => onCorrect(event.currentTarget)}><Wrench size={16} aria-hidden="true" />{recurrence.status === "ANALYSIS" ? "Iniciar corrección" : "Actualizar corrección"}</button>}
+      {canAddVisit && <button className="button button--ghost" type="button" onClick={(event) => onAddVisit(event.currentTarget)}><Route size={16} aria-hidden="true" />Agregar visita</button>}
+      {canAddNote && <button className="button button--ghost" type="button" onClick={(event) => onAddNote(event.currentTarget)}><MessageSquarePlus size={16} aria-hidden="true" />Agregar nota</button>}
+      {capabilities.canViewEvidence && onManageEvidence && <button className="button button--ghost" type="button" onClick={(event) => onManageEvidence(event.currentTarget)}><FileText size={16} aria-hidden="true" />Gestionar evidencia</button>}
+    </div>}
     <div className="recurrence-detail__body">
       <section className="recurrence-detail__flow" aria-labelledby={flowTitleId}><span className="recurrence-detail__label">Estado</span><h3 id={flowTitleId}>Progreso del caso</h3><ol>{flow.map((status, index) => <li key={status} aria-current={recurrence.status === status ? "step" : undefined} data-step={recurrence.status === status ? "current" : currentIndex > index ? "complete" : "pending"}><i aria-hidden="true" /><span>{statusLabel[status]}</span></li>)}</ol></section>
       <section aria-labelledby="recurrence-diagnosis-title"><span className="recurrence-detail__label">Diagnóstico</span><h3 id="recurrence-diagnosis-title">{recurrence.detectedProblem}</h3><dl className="recurrence-detail__facts"><div><dt>Causa</dt><dd>{recurrence.cause?.name ?? "Sin causa determinada"}</dd></div><div><dt>Responsabilidad</dt><dd>{responsibilityLabel[recurrence.responsibility]}</dd></div><div><dt>Detectado</dt><dd><time dateTime={recurrence.detectedAt}>{formatRecurrenceDateTime(recurrence.detectedAt)}</time></dd></div><div><dt>Costo estimado</dt><dd>{formatCurrency(recurrence.estimatedCost)}</dd></div>{recurrence.ageOverrideReason && <div><dt>Motivo de antigüedad</dt><dd>{recurrence.ageOverrideReason}</dd></div>}{recurrence.dismissalReason && <div><dt>Motivo de descarte</dt><dd>{recurrence.dismissalReason}</dd></div>}{recurrence.dismissedAt && <div><dt>Fecha de descarte</dt><dd><time dateTime={recurrence.dismissedAt}>{formatRecurrenceDateTime(recurrence.dismissedAt)}</time></dd></div>}{recurrence.closedAt && <div><dt>Fecha de cierre</dt><dd><time dateTime={recurrence.closedAt}>{formatRecurrenceDateTime(recurrence.closedAt)}</time></dd></div>}</dl>{recurrence.analysis && <div className="recurrence-detail__narrative"><strong>Análisis</strong><p>{recurrence.analysis}</p></div>}</section>

@@ -94,6 +94,7 @@ const catalog: RecurrenceCatalog = {
 const capabilities: RecurrenceCapabilities = {
   canReport: false,
   canReview: false,
+  canAddNote: false,
   canViewAll: true,
   canUploadEvidence: false,
   canViewEvidence: true,

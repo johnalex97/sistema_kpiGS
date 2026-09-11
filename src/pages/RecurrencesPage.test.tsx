@@ -93,6 +93,7 @@ function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWo
     capabilities: {
       canReport: false,
       canReview: false,
+      canAddNote: false,
       canViewAll: true,
       canUploadEvidence: false,
       canViewEvidence: false,
@@ -118,6 +119,9 @@ function workspace(overrides: Partial<RecurrencesWorkspace> = {}): RecurrencesWo
     retryDetail: vi.fn(),
     reportRecurrence: vi.fn(async () => true),
     analyzeRecurrence: vi.fn(async () => true),
+    correctRecurrence: vi.fn(async () => true),
+    addVisit: vi.fn(async () => true),
+    addNote: vi.fn(async () => true),
     uploadEvidence: vi.fn(async () => true),
     downloadEvidence: vi.fn(async () => true),
     archiveEvidence: vi.fn(async () => true),
@@ -467,5 +471,66 @@ describe("RecurrencesPage", () => {
     render(view(current));
 
     expect(screen.queryByRole("dialog", { name: "Analizar caso" })).not.toBeInTheDocument();
+  });
+
+  it("abre corrección, visita y nota según estado y permisos, y conecta sus envíos", async () => {
+    const user = userEvent.setup();
+    const availableOrder: OrderLookup = {
+      id: "order-visit",
+      orderNumber: "OT-300",
+      clientName: "Hospital Norte",
+      branchName: "Central",
+      status: "COMPLETED",
+    };
+    const current = workspace({
+      selected,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: selected.id },
+      capabilities: {
+        ...workspace().capabilities,
+        canReview: true,
+        canAddNote: true,
+        lookupCapabilities: { ...workspace().capabilities.lookupCapabilities, orders: true },
+      },
+      lookupApi: {
+        ...workspace().lookupApi,
+        orders: vi.fn().mockResolvedValue({ items: [availableOrder], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }),
+      },
+    });
+    const rendered = render(view(current));
+
+    await user.click(screen.getByRole("button", { name: "Iniciar corrección" }));
+    expect(current.setActionMode).toHaveBeenCalledWith("correct");
+    rendered.rerender(view({ ...current, actionMode: "correct" }));
+    await user.type(screen.getByLabelText("Acción correctiva"), "Reemplazar conector");
+    await user.click(within(screen.getByRole("dialog", { name: "Iniciar corrección" })).getByRole("button", { name: "Iniciar corrección" }));
+    expect(current.correctRecurrence).toHaveBeenCalledWith({ correctiveAction: "Reemplazar conector" });
+
+    rendered.rerender(view(current));
+    await user.click(screen.getByRole("button", { name: "Agregar visita" }));
+    rendered.rerender(view({ ...current, actionMode: "visit" }));
+    await user.click(screen.getByRole("combobox", { name: "Orden de la visita" }));
+    await user.click(await screen.findByRole("option", { name: /OT-300/ }));
+    await user.click(within(screen.getByRole("dialog", { name: "Agregar visita" })).getByRole("button", { name: "Agregar visita" }));
+    expect(current.addVisit).toHaveBeenCalledWith({ orderId: availableOrder.id });
+
+    rendered.rerender(view(current));
+    await user.click(screen.getByRole("button", { name: "Agregar nota" }));
+    rendered.rerender(view({ ...current, actionMode: "note" }));
+    await user.type(screen.getByLabelText("Nota"), "Cliente confirma estabilidad");
+    await user.click(within(screen.getByRole("dialog", { name: "Agregar nota" })).getByRole("button", { name: "Agregar nota" }));
+    expect(current.addNote).toHaveBeenCalledWith({ content: "Cliente confirma estabilidad" });
+  });
+
+  it("oculta corrección y visita al lector propio, pero conserva notas en estados mutables", () => {
+    render(view(workspace({
+      selected,
+      detailState: "ready",
+      capabilities: { ...workspace().capabilities, canAddNote: true },
+    }), ["RECURRENCES_VIEW_OWN"]));
+
+    expect(screen.queryByRole("button", { name: "Iniciar corrección" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Agregar visita" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agregar nota" })).toBeInTheDocument();
   });
 });

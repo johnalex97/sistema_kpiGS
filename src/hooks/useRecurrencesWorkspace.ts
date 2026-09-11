@@ -9,7 +9,10 @@ import {
 import type { RecurrenceApi } from "../api/recurrences";
 import type { Evidence, EvidenceUploadInput } from "../models/evidence";
 import type {
+  AddRecurrenceNoteInput,
+  AddRecurrenceVisitInput,
   AnalyzeRecurrenceInput,
+  CorrectRecurrenceInput,
   RecurrenceCatalog,
   RecurrenceDetail,
   RecurrenceListFilters,
@@ -39,6 +42,7 @@ export type RecurrenceActionMode = RecurrenceMutationState["name"];
 export interface RecurrenceCapabilities {
   canReport: boolean;
   canReview: boolean;
+  canAddNote: boolean;
   canViewAll: boolean;
   canUploadEvidence: boolean;
   canViewEvidence: boolean;
@@ -72,6 +76,9 @@ export interface RecurrencesWorkspace {
   retryDetail(): void;
   reportRecurrence(input: ReportRecurrenceInput): Promise<boolean>;
   analyzeRecurrence(input: Omit<AnalyzeRecurrenceInput, "version">): Promise<boolean>;
+  correctRecurrence(input: Omit<CorrectRecurrenceInput, "version">): Promise<boolean>;
+  addVisit(input: Omit<AddRecurrenceVisitInput, "version">): Promise<boolean>;
+  addNote(input: AddRecurrenceNoteInput): Promise<boolean>;
   uploadEvidence(input: EvidenceUploadInput): Promise<boolean>;
   downloadEvidence(evidence: Evidence): Promise<boolean>;
   archiveEvidence(evidence: Evidence, reason: string): Promise<boolean>;
@@ -166,6 +173,7 @@ function deriveCapabilities(permissions: readonly string[]): RecurrenceCapabilit
   return {
     canReport: has("RECURRENCES_REPORT_OWN") || has("RECURRENCES_REVIEW"),
     canReview: has("RECURRENCES_REVIEW"),
+    canAddNote: has("RECURRENCES_VIEW_OWN") || has("RECURRENCES_REVIEW"),
     canViewAll: has("RECURRENCES_VIEW_ALL") || has("RECURRENCES_REVIEW"),
     canUploadEvidence: has("EVIDENCES_UPLOAD"),
     canViewEvidence: has("EVIDENCES_VIEW"),
@@ -182,7 +190,16 @@ function deriveCapabilities(permissions: readonly string[]): RecurrenceCapabilit
 function actionAllowed(mode: RecurrenceActionMode, capabilities: RecurrenceCapabilities): boolean {
   if (mode === "report") return capabilities.canReport && capabilities.lookupCapabilities.orders;
   if (mode === "evidence") return capabilities.canUploadEvidence;
+  if (mode === "note") return capabilities.canAddNote;
+  if (mode === "visit") return capabilities.canReview && capabilities.lookupCapabilities.orders;
   return capabilities.canReview;
+}
+
+function statusAllowsAction(mode: RecurrenceActionMode, status: RecurrenceDetail["status"]): boolean {
+  if (mode === "analyze") return status === "OPEN";
+  if (mode === "correct") return status === "ANALYSIS" || status === "CORRECTION";
+  if (mode === "visit" || mode === "note") return status === "OPEN" || status === "ANALYSIS" || status === "CORRECTION";
+  return true;
 }
 
 function reportMutationError(error: unknown): { message: string; conflict: boolean } {
@@ -209,6 +226,30 @@ function analysisMutationError(error: unknown): { message: string; conflict: boo
   };
   return {
     message: messages[error.code] ?? "No fue posible guardar el análisis.",
+    conflict: error.status === 409 && error.code === "VERSION_CONFLICT",
+  };
+}
+
+function workflowMutationError(
+  mode: "correct" | "visit" | "note",
+  error: unknown,
+): { message: string; conflict: boolean } {
+  const fallback = mode === "correct"
+    ? "No fue posible guardar la corrección."
+    : mode === "visit" ? "No fue posible agregar la visita." : "No fue posible agregar la nota.";
+  if (!(error instanceof ApiClientError)) return { message: fallback, conflict: false };
+  if (error.status === 403) return { message: "Ya no tienes permiso para realizar esta acción.", conflict: false };
+  const messages: Record<string, string> = {
+    VERSION_CONFLICT: "El caso cambió en el servidor. Revisa la versión actual antes de guardar de nuevo.",
+    RECURRENCE_DOCUMENTATION_INCOMPLETE: "Completa la documentación requerida antes de guardar.",
+    INVALID_RECURRENCE_TRANSITION: "El estado actual del caso ya no permite esta acción.",
+    RECURRENCE_NOT_FOUND: "El caso ya no está disponible.",
+    RECURRENCE_DUPLICATE: "La orden seleccionada ya está registrada en este caso.",
+    ORDER_NOT_FOUND: "La orden seleccionada ya no está disponible.",
+    RECURRENCE_ORDER_MISMATCH: "La orden debe pertenecer a la misma sucursal y no estar cancelada.",
+  };
+  return {
+    message: messages[error.code] ?? fallback,
     conflict: error.status === 409 && error.code === "VERSION_CONFLICT",
   };
 }
@@ -297,8 +338,8 @@ export function useRecurrencesWorkspace({
   const auxiliaryRequestsRef = useRef(new Map<string, AuxiliaryRequest>());
   const previousPermissionsKeyRef = useRef(permissionsKey);
   const mutationPendingRef = useRef(false);
-  const analysisGenerationRef = useRef(0);
-  const analysisPendingGenerationRef = useRef<number | null>(null);
+  const workflowGenerationRef = useRef(0);
+  const workflowPendingGenerationRef = useRef<number | null>(null);
   const actionModeRef = useRef<RecurrenceActionMode | null>(null);
   const evidencePromptRef = useRef<string | null>(null);
   const historyModeRef = useRef<"push" | "replace">("replace");
@@ -310,13 +351,13 @@ export function useRecurrencesWorkspace({
     scheduleEvidencePromptClear();
   }, [scheduleEvidencePromptClear]);
 
-  const invalidateAnalysisOperation = useCallback(() => {
-    analysisGenerationRef.current += 1;
-    if (analysisPendingGenerationRef.current !== null) {
-      analysisPendingGenerationRef.current = null;
+  const invalidateWorkflowOperation = useCallback(() => {
+    workflowGenerationRef.current += 1;
+    if (workflowPendingGenerationRef.current !== null) {
+      workflowPendingGenerationRef.current = null;
       mutationPendingRef.current = false;
     }
-    setMutation((current) => current?.name === "analyze" ? null : current);
+    setMutation((current) => current && ["analyze", "correct", "visit", "note"].includes(current.name) ? null : current);
   }, []);
 
   const invalidateList = useCallback(() => {
@@ -409,7 +450,7 @@ export function useRecurrencesWorkspace({
   }, [api]);
 
   const removeSelection = useCallback(() => {
-    invalidateAnalysisOperation();
+    invalidateWorkflowOperation();
     selectedIdRef.current = null;
     invalidateDetail();
     selectedRef.current = null;
@@ -421,12 +462,12 @@ export function useRecurrencesWorkspace({
     const next = current.selectedId === null ? current : { ...current, selectedId: null };
     queryRef.current = next;
     setQuery(next);
-  }, [invalidateAnalysisOperation, invalidateDetail]);
+  }, [invalidateWorkflowOperation, invalidateDetail]);
 
   const loadDetail = useCallback(async (
     id: string,
     silent = false,
-    options?: { preserveAnalysisAction?: boolean; canPublish?: () => boolean },
+    options?: { preserveAction?: RecurrenceActionMode; canPublish?: () => boolean },
   ): Promise<void> => {
     detailControllerRef.current?.abort();
     const controller = new AbortController();
@@ -439,10 +480,11 @@ export function useRecurrencesWorkspace({
       selectedRef.current = next;
       setSelected(next);
       setDetailState("ready");
-      if (next.status !== "OPEN" && actionModeRef.current === "analyze" && !options?.preserveAnalysisAction) {
+      const activeAction = actionModeRef.current;
+      if (activeAction && !statusAllowsAction(activeAction, next.status) && options?.preserveAction !== activeAction) {
         actionModeRef.current = null;
         setActionModeState(null);
-        invalidateAnalysisOperation();
+        invalidateWorkflowOperation();
       }
     } catch (error: unknown) {
       if (controller.signal.aborted || generation !== detailGenerationRef.current || selectedIdRef.current !== id || options?.canPublish?.() === false || isAbortError(error)) return;
@@ -452,7 +494,7 @@ export function useRecurrencesWorkspace({
       }
       if (!silent || !selectedRef.current) setDetailState("error");
     }
-  }, [api, invalidateAnalysisOperation, removeSelection]);
+  }, [api, invalidateWorkflowOperation, removeSelection]);
 
   const runAuxiliary = useCallback(async <T,>(
     key: string,
@@ -557,11 +599,11 @@ export function useRecurrencesWorkspace({
     auxiliaryRequestsRef.current.clear();
     const currentAction = actionModeRef.current;
     const nextAction = currentAction && !actionAllowed(currentAction, capabilities) ? null : currentAction;
-    if (currentAction === "analyze" && nextAction !== "analyze") invalidateAnalysisOperation();
+    if (currentAction && ["analyze", "correct", "visit", "note"].includes(currentAction) && nextAction !== currentAction) invalidateWorkflowOperation();
     actionModeRef.current = nextAction;
     setActionModeState(nextAction);
     if (!capabilities.canUploadEvidence) revokeEvidencePrompt();
-  }, [capabilities, invalidateAnalysisOperation, permissionsKey, revokeEvidencePrompt]);
+  }, [capabilities, invalidateWorkflowOperation, permissionsKey, revokeEvidencePrompt]);
 
   useEffect(() => {
     let active = true;
@@ -592,7 +634,7 @@ export function useRecurrencesWorkspace({
       detailControllerRef.current?.abort();
       selectedRef.current = null;
       setSelected(null);
-      invalidateAnalysisOperation();
+      invalidateWorkflowOperation();
       actionModeRef.current = null;
       setActionModeState(null);
       if (!selectedId) {
@@ -603,7 +645,7 @@ export function useRecurrencesWorkspace({
       void loadDetail(selectedId);
     });
     return () => { active = false; };
-  }, [invalidateAnalysisOperation, loadDetail, query.selectedId]);
+  }, [invalidateWorkflowOperation, loadDetail, query.selectedId]);
 
   useEffect(() => {
     const serialized = serializeRecurrenceSearch(window.location.search, query, clock());
@@ -661,7 +703,7 @@ export function useRecurrencesWorkspace({
       }
       if (current.selectedId !== next.selectedId) {
         invalidateDetail();
-        invalidateAnalysisOperation();
+        invalidateWorkflowOperation();
         selectedIdRef.current = next.selectedId;
         selectedRef.current = null;
         setSelected(null);
@@ -675,7 +717,7 @@ export function useRecurrencesWorkspace({
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [clock, invalidateAnalysisOperation, invalidateDetail, invalidateList, invalidateSummary, loadDetail]);
+  }, [clock, invalidateWorkflowOperation, invalidateDetail, invalidateList, invalidateSummary, loadDetail]);
 
   useEffect(() => () => {
     catalogGenerationRef.current += 1;
@@ -683,8 +725,8 @@ export function useRecurrencesWorkspace({
     summaryGenerationRef.current += 1;
     detailGenerationRef.current += 1;
     auxiliaryGenerationRef.current += 1;
-    analysisGenerationRef.current += 1;
-    analysisPendingGenerationRef.current = null;
+    workflowGenerationRef.current += 1;
+    workflowPendingGenerationRef.current = null;
     mutationPendingRef.current = false;
     catalogControllerRef.current?.abort();
     listControllerRef.current?.abort();
@@ -718,7 +760,7 @@ export function useRecurrencesWorkspace({
   }, [invalidateList, invalidateSummary]);
 
   const select = useCallback((id: string) => {
-    invalidateAnalysisOperation();
+    invalidateWorkflowOperation();
     selectedIdRef.current = id;
     selectedRef.current = null;
     setSelected(null);
@@ -731,7 +773,7 @@ export function useRecurrencesWorkspace({
     historyModeRef.current = "push";
     setQuery(next);
     void loadDetail(id);
-  }, [invalidateAnalysisOperation, loadDetail]);
+  }, [invalidateWorkflowOperation, loadDetail]);
 
   const closeDetail = useCallback(() => {
     historyModeRef.current = "push";
@@ -829,17 +871,17 @@ export function useRecurrencesWorkspace({
       return false;
     }
 
-    const generation = ++analysisGenerationRef.current;
-    const mutationIsCurrent = () => analysisGenerationRef.current === generation
-      && analysisPendingGenerationRef.current === generation
+    const generation = ++workflowGenerationRef.current;
+    const mutationIsCurrent = () => workflowGenerationRef.current === generation
+      && workflowPendingGenerationRef.current === generation
       && capabilitiesRef.current.canReview
       && selectedIdRef.current === target.id
       && actionModeRef.current === "analyze";
-    const refreshIsCurrent = () => analysisGenerationRef.current === generation
+    const refreshIsCurrent = () => workflowGenerationRef.current === generation
       && capabilitiesRef.current.canReview
       && selectedIdRef.current === target.id;
     mutationPendingRef.current = true;
-    analysisPendingGenerationRef.current = generation;
+    workflowPendingGenerationRef.current = generation;
     setMutation({ name: "analyze", pending: true, error: null, conflict: false });
     try {
       const incoming = await api.analyze(target.id, { ...input, version: target.version });
@@ -879,18 +921,123 @@ export function useRecurrencesWorkspace({
         if (!mutationIsCurrent()) return false;
       }
       if (failure.conflict) {
-        await loadDetail(target.id, true, { preserveAnalysisAction: true, canPublish: mutationIsCurrent });
+        await loadDetail(target.id, true, { preserveAction: "analyze", canPublish: mutationIsCurrent });
         if (!mutationIsCurrent()) return false;
       }
       setMutation({ name: "analyze", pending: false, error: failure.message, conflict: failure.conflict });
       return false;
     } finally {
-      if (analysisPendingGenerationRef.current === generation) {
-        analysisPendingGenerationRef.current = null;
+      if (workflowPendingGenerationRef.current === generation) {
+        workflowPendingGenerationRef.current = null;
         mutationPendingRef.current = false;
       }
     }
   }, [api, invalidateDetail, loadCatalog, loadDetail, loadList, loadSummary, removeSelection]);
+
+  const runWorkflowMutation = useCallback(async <T,>(
+    mode: "correct" | "visit" | "note",
+    input: T,
+    operation: (target: RecurrenceDetail, input: T) => Promise<RecurrenceDetail>,
+  ): Promise<boolean> => {
+    if (mutationPendingRef.current) return false;
+    const target = selectedRef.current;
+    if (!actionAllowed(mode, capabilitiesRef.current)) {
+      setMutation({ name: mode, pending: false, error: "No tienes permiso para realizar esta acción.", conflict: false });
+      return false;
+    }
+    if (!target) {
+      setMutation({ name: mode, pending: false, error: "Selecciona un caso antes de continuar.", conflict: false });
+      return false;
+    }
+    if (!statusAllowsAction(mode, target.status)) {
+      setMutation((current) => current?.name === mode && current.conflict
+        ? current
+        : { name: mode, pending: false, error: "El estado actual del caso ya no permite esta acción.", conflict: false });
+      return false;
+    }
+
+    const generation = ++workflowGenerationRef.current;
+    const mutationIsCurrent = () => workflowGenerationRef.current === generation
+      && workflowPendingGenerationRef.current === generation
+      && actionAllowed(mode, capabilitiesRef.current)
+      && selectedIdRef.current === target.id
+      && actionModeRef.current === mode;
+    const refreshIsCurrent = () => workflowGenerationRef.current === generation
+      && actionAllowed(mode, capabilitiesRef.current)
+      && selectedIdRef.current === target.id;
+    mutationPendingRef.current = true;
+    workflowPendingGenerationRef.current = generation;
+    setMutation({ name: mode, pending: true, error: null, conflict: false });
+    try {
+      const incoming = await operation(target, input);
+      if (!mutationIsCurrent()) return false;
+      invalidateDetail();
+      const next = reconcileRecurrence(selectedRef.current, incoming);
+      selectedRef.current = next;
+      setSelected(next);
+      setDetailState("ready");
+      actionModeRef.current = null;
+      setActionModeState(null);
+      setMutation({ name: mode, pending: false, error: null, conflict: false });
+
+      const requestedQuery = queryRef.current;
+      const requestedSummary = createSummarySnapshot(summaryFilters(requestedQuery.filters));
+      const requestedList = createListSnapshot(requestedQuery.filters, requestedSummary);
+      setListState("loading");
+      setListStale(false);
+      setSummaryState("loading");
+      void loadList(listKey(requestedQuery.filters), requestedList);
+      void loadSummary(requestedSummary);
+      if (mode !== "note") void loadDetail(target.id, true, { canPublish: refreshIsCurrent });
+      return true;
+    } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
+      const failure = workflowMutationError(mode, error);
+      if (error instanceof ApiClientError && error.code === "RECURRENCE_NOT_FOUND") {
+        removeSelection();
+        return false;
+      }
+      if (error instanceof ApiClientError && error.status === 403) {
+        actionModeRef.current = null;
+        setActionModeState(null);
+        invalidateWorkflowOperation();
+        return false;
+      }
+      if (error instanceof ApiClientError && error.code === "INVALID_RECURRENCE_TRANSITION") {
+        await loadDetail(target.id, true, { canPublish: mutationIsCurrent });
+        if (!mutationIsCurrent()) return false;
+      }
+      if (failure.conflict || error instanceof ApiClientError && mode === "visit" && error.code === "RECURRENCE_DUPLICATE") {
+        await loadDetail(target.id, true, { preserveAction: mode, canPublish: mutationIsCurrent });
+        if (!mutationIsCurrent()) return false;
+      }
+      setMutation({ name: mode, pending: false, error: failure.message, conflict: failure.conflict });
+      return false;
+    } finally {
+      if (workflowPendingGenerationRef.current === generation) {
+        workflowPendingGenerationRef.current = null;
+        mutationPendingRef.current = false;
+      }
+    }
+  }, [invalidateDetail, invalidateWorkflowOperation, loadDetail, loadList, loadSummary, removeSelection]);
+
+  const correctRecurrence = useCallback((input: Omit<CorrectRecurrenceInput, "version">) => runWorkflowMutation(
+    "correct",
+    input,
+    (target, value) => api.correct(target.id, { ...value, version: target.version }),
+  ), [api, runWorkflowMutation]);
+
+  const addVisit = useCallback((input: Omit<AddRecurrenceVisitInput, "version">) => runWorkflowMutation(
+    "visit",
+    input,
+    (target, value) => api.addVisit(target.id, { ...value, version: target.version }),
+  ), [api, runWorkflowMutation]);
+
+  const addNote = useCallback((input: AddRecurrenceNoteInput) => runWorkflowMutation(
+    "note",
+    input,
+    (target, value) => api.addNote(target.id, value),
+  ), [api, runWorkflowMutation]);
 
   const uploadEvidence = useCallback(async (input: EvidenceUploadInput): Promise<boolean> => {
     if (mutationPendingRef.current) return false;
@@ -990,10 +1137,10 @@ export function useRecurrencesWorkspace({
 
   const setActionMode = useCallback((mode: RecurrenceActionMode | null) => {
     const next = mode && actionAllowed(mode, capabilitiesRef.current) ? mode : null;
-    if (actionModeRef.current !== next) invalidateAnalysisOperation();
+    if (actionModeRef.current !== next) invalidateWorkflowOperation();
     actionModeRef.current = next;
     setActionModeState(next);
-  }, [invalidateAnalysisOperation]);
+  }, [invalidateWorkflowOperation]);
 
   const clearMutationError = useCallback(() => setMutation(null), []);
 
@@ -1026,6 +1173,9 @@ export function useRecurrencesWorkspace({
     retryDetail,
     reportRecurrence,
     analyzeRecurrence,
+    correctRecurrence,
+    addVisit,
+    addNote,
     uploadEvidence,
     downloadEvidence,
     archiveEvidence,
