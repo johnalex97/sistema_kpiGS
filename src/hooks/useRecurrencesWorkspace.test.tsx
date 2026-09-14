@@ -146,6 +146,7 @@ function options(overrides: Partial<Parameters<typeof useRecurrencesWorkspace>[0
     evidenceApi: evidenceApi(),
     lookupApi: lookupApi(),
     permissions: ["RECURRENCES_VIEW_ALL", "ORDERS_VIEW_ALL", "TECHNICIANS_VIEW", "CLIENTS_VIEW", "EVIDENCES_VIEW"],
+    authorizationIdentity: "user-1",
     search: "",
     now: () => new Date("2026-09-10T12:00:00.000Z"),
     ...overrides,
@@ -304,6 +305,99 @@ describe("useRecurrencesWorkspace", () => {
     unmount();
 
     expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it("retira datos globales, invalida respuestas pendientes y recarga todo al degradar a alcance propio", async () => {
+    const oldCatalog = deferred<RecurrenceCatalog>();
+    const oldPage = deferred<RecurrencePage>();
+    const oldSummary = deferred<RecurrenceSummaryMetrics>();
+    const oldDetail = deferred<RecurrenceDetail>();
+    const ownCatalog = deferred<RecurrenceCatalog>();
+    const ownPage = deferred<RecurrencePage>();
+    const ownSummary = deferred<RecurrenceSummaryMetrics>();
+    const ownDetail = deferred<RecurrenceDetail>();
+    const api = recurrenceApi({
+      catalog: vi.fn().mockResolvedValueOnce(catalog).mockImplementationOnce(() => oldCatalog.promise).mockImplementationOnce(() => ownCatalog.promise),
+      list: vi.fn().mockResolvedValueOnce(page).mockImplementationOnce(() => oldPage.promise).mockImplementationOnce(() => ownPage.promise),
+      summary: vi.fn().mockResolvedValueOnce(summary).mockImplementationOnce(() => oldSummary.promise).mockImplementationOnce(() => ownSummary.promise),
+      detail: vi.fn().mockResolvedValueOnce(detail).mockImplementationOnce(() => oldDetail.promise).mockImplementationOnce(() => ownDetail.promise),
+    });
+    const stable = options({ api });
+    const { result, rerender } = renderHook(
+      ({ permissions }) => useRecurrencesWorkspace({ ...stable, permissions }),
+      { initialProps: { permissions: ["RECURRENCES_VIEW_ALL"] } },
+    );
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+
+    act(() => {
+      result.current.retryCatalog();
+      result.current.retryList();
+      result.current.retrySummary();
+      result.current.retryDetail();
+    });
+    await waitFor(() => expect(api.detail).toHaveBeenCalledTimes(2));
+    const oldSignals = [
+      vi.mocked(api.catalog).mock.calls[1]?.[0],
+      vi.mocked(api.list).mock.calls[1]?.[1],
+      vi.mocked(api.summary).mock.calls[1]?.[1],
+      vi.mocked(api.detail).mock.calls[1]?.[1],
+    ] as AbortSignal[];
+
+    rerender({ permissions: ["RECURRENCES_VIEW_OWN"] });
+
+    expect(oldSignals.every((signal) => signal.aborted)).toBe(true);
+    expect(result.current).toMatchObject({ catalog: null, page: null, summary: null, selected: null });
+    await waitFor(() => expect(api.detail).toHaveBeenCalledTimes(3));
+    expect(api.catalog).toHaveBeenCalledTimes(3);
+    expect(api.list).toHaveBeenCalledTimes(3);
+    expect(api.summary).toHaveBeenCalledTimes(3);
+
+    oldCatalog.resolve({ ...catalog, causes: [{ id: "old", code: "OLD", name: "Global obsoleto" }] });
+    oldPage.resolve({ ...page, items: [{ ...detail, detectedProblem: "Global obsoleto" }] });
+    oldSummary.resolve({ ...summary, totalCases: 99 });
+    oldDetail.resolve({ ...detail, detectedProblem: "Global obsoleto" });
+    await flushPromises();
+    expect(result.current).toMatchObject({ catalog: null, page: null, summary: null, selected: null });
+
+    ownCatalog.resolve(catalog);
+    ownPage.resolve({ ...page, items: [{ ...detail, detectedProblem: "Caso propio" }] });
+    ownSummary.resolve({ ...summary, totalCases: 1 });
+    ownDetail.resolve({ ...detail, detectedProblem: "Caso propio" });
+    await waitFor(() => expect(result.current.selected?.detectedProblem).toBe("Caso propio"));
+    expect(result.current.page?.items[0]?.detectedProblem).toBe("Caso propio");
+    expect(result.current.summary?.totalCases).toBe(1);
+  });
+
+  it("invalida lecturas al cambiar la identidad de sesión aunque conserve los mismos permisos", async () => {
+    const oldCatalog = deferred<RecurrenceCatalog>();
+    const oldPage = deferred<RecurrencePage>();
+    const oldSummary = deferred<RecurrenceSummaryMetrics>();
+    const api = recurrenceApi({
+      catalog: vi.fn().mockImplementationOnce(() => oldCatalog.promise).mockResolvedValueOnce(catalog),
+      list: vi.fn().mockImplementationOnce(() => oldPage.promise).mockResolvedValueOnce({ ...page, items: [] }),
+      summary: vi.fn().mockImplementationOnce(() => oldSummary.promise).mockResolvedValueOnce({ ...summary, totalCases: 0 }),
+    });
+    const stable = options({ api });
+    const permissions = ["RECURRENCES_VIEW_ALL"];
+    const { result, rerender } = renderHook(
+      ({ authorizationIdentity }) => useRecurrencesWorkspace({ ...stable, permissions, authorizationIdentity }),
+      { initialProps: { authorizationIdentity: "user-a" } },
+    );
+    await waitFor(() => expect(api.summary).toHaveBeenCalledTimes(1));
+    const oldSignals = [
+      vi.mocked(api.catalog).mock.calls[0]?.[0],
+      vi.mocked(api.list).mock.calls[0]?.[1],
+      vi.mocked(api.summary).mock.calls[0]?.[1],
+    ] as AbortSignal[];
+
+    rerender({ authorizationIdentity: "user-b" });
+
+    expect(oldSignals.every((signal) => signal.aborted)).toBe(true);
+    await waitFor(() => expect(api.summary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.listState).toBe("empty"));
+    expect(result.current.summary?.totalCases).toBe(0);
   });
 
   it("no inicia lecturas diferidas si se desmonta antes del microtask inicial", async () => {
@@ -780,6 +874,30 @@ describe("useRecurrencesWorkspace", () => {
     expect(api.summary).toHaveBeenCalledTimes(2);
   });
 
+  it("descarta la respuesta tardía de reporte después de revocar su autorización", async () => {
+    const pending = deferred<RecurrenceDetail>();
+    const api = recurrenceApi({ report: vi.fn(() => pending.promise) });
+    const stable = options({ api });
+    const { result, rerender } = renderHook(
+      ({ permissions }) => useRecurrencesWorkspace({ ...stable, permissions }),
+      { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REPORT_OWN", "ORDERS_VIEW_OWN", "EVIDENCES_UPLOAD"] } },
+    );
+    await waitFor(() => expect(result.current.listState).toBe("ready"));
+    act(() => result.current.setActionMode("report"));
+    let operation!: Promise<boolean>;
+    act(() => { operation = result.current.reportRecurrence({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "Falla" }); });
+    await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
+
+    rerender({ permissions: ["RECURRENCES_VIEW_ALL", "ORDERS_VIEW_OWN", "EVIDENCES_UPLOAD"] });
+    pending.resolve({ ...detail, id: anotherRecurrenceId, recurrenceNumber: "RI-2026-0002" });
+    await act(async () => expect(await operation).toBe(false));
+
+    expect(result.current.selected).toBeNull();
+    expect(result.current.query.selectedId).toBeNull();
+    expect(result.current.evidencePromptForId).toBeNull();
+    expect(result.current.actionMode).toBeNull();
+  });
+
   it.each([
     ["RECURRENCE_DUPLICATE", "Ya existe una reincidencia para estas órdenes."],
     ["RECURRENCE_ORDER_MISMATCH", "Las órdenes no corresponden al mismo cliente y sucursal."],
@@ -797,6 +915,26 @@ describe("useRecurrencesWorkspace", () => {
 
     expect(result.current.actionMode).toBe("report");
     expect(result.current.mutation).toMatchObject({ name: "report", pending: false, error: message });
+  });
+
+  it("cierra e invalida reporte tras 403 y solicita actualizar las capacidades", async () => {
+    const refreshAuthorization = vi.fn(async () => undefined);
+    const api = recurrenceApi({ report: vi.fn().mockRejectedValue(new ApiClientError(403, "FORBIDDEN", "interno")) });
+    const { result } = renderWorkspace({
+      api,
+      onAuthorizationStale: refreshAuthorization,
+      permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REPORT_OWN", "ORDERS_VIEW_OWN"],
+    });
+    act(() => result.current.setActionMode("report"));
+
+    await act(async () => expect(await result.current.reportRecurrence({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "Falla" })).toBe(false));
+
+    expect(result.current.actionMode).toBeNull();
+    expect(result.current.capabilities.canReport).toBe(false);
+    expect(result.current.mutation).toMatchObject({ name: "report", pending: false, error: expect.stringContaining("permiso") });
+    expect(refreshAuthorization).toHaveBeenCalledTimes(1);
+    act(() => result.current.setActionMode("report"));
+    expect(result.current.actionMode).toBeNull();
   });
 
   it("prevents report and evidence mutations after their permissions are revoked", async () => {
@@ -864,6 +1002,27 @@ describe("useRecurrencesWorkspace", () => {
     await act(async () => expect(await result.current.uploadEvidence({ ...technicianInput, accessLevel: "INTERNAL" })).toBe(false));
     expect(rawEvidence.uploadRecurrence).toHaveBeenCalledTimes(2);
     expect(result.current.mutation?.error).toBe("No tienes permiso para subir evidencia interna.");
+  });
+
+  it("cierra el prompt e invalida carga de evidencia tras 403 solicitando capacidades vigentes", async () => {
+    const refreshAuthorization = vi.fn(async () => undefined);
+    const rawEvidence = evidenceApi({ uploadRecurrence: vi.fn().mockRejectedValue(new ApiClientError(403, "FORBIDDEN", "interno")) });
+    const api = recurrenceApi({ report: vi.fn().mockResolvedValue(detail) });
+    const { result } = renderWorkspace({
+      api,
+      evidenceApi: rawEvidence,
+      onAuthorizationStale: refreshAuthorization,
+      permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REPORT_OWN", "ORDERS_VIEW_ALL", "EVIDENCES_UPLOAD"],
+    });
+    await act(async () => { await result.current.reportRecurrence({ originalOrderId: "order-1", correctionOrderId: "order-2", detectedProblem: "Falla" }); });
+    expect(result.current.evidencePromptForId).toBe(recurrenceId);
+
+    await act(async () => expect(await result.current.uploadEvidence({ file: new File(["x"], "router.png", { type: "image/png" }), accessLevel: "TECHNICIAN" })).toBe(false));
+
+    expect(result.current.evidencePromptForId).toBeNull();
+    expect(result.current.capabilities.canUploadEvidence).toBe(false);
+    expect(result.current.mutation).toMatchObject({ name: "evidence", error: expect.stringContaining("permiso"), conflict: false });
+    expect(refreshAuthorization).toHaveBeenCalledTimes(1);
   });
 
   it("downloads with a safe filename and always revokes the object URL", async () => {
@@ -1041,9 +1200,35 @@ describe("useRecurrencesWorkspace", () => {
     await act(async () => expect(await operation).toBe(false));
 
     expect(result.current.selected).toEqual(detail);
-    expect(api.list).toHaveBeenCalledTimes(1);
-    expect(api.summary).toHaveBeenCalledTimes(1);
+    expect(api.list).toHaveBeenCalledTimes(2);
+    expect(api.summary).toHaveBeenCalledTimes(2);
     expect(result.current.mutation).toBeNull();
+  });
+
+  it("centraliza el 403 de análisis, cierra el borrador no reenviable y refresca autorización", async () => {
+    const refreshAuthorization = vi.fn(async () => undefined);
+    const api = recurrenceApi({ analyze: vi.fn().mockRejectedValue(new ApiClientError(403, "FORBIDDEN", "interno")) });
+    const { result } = renderWorkspace({
+      api,
+      onAuthorizationStale: refreshAuthorization,
+      permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"],
+    });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(detail));
+    act(() => result.current.setActionMode("analyze"));
+
+    await act(async () => expect(await result.current.analyzeRecurrence({
+      causeId: catalog.causes[0].id,
+      impact: "MEDIUM",
+      responsibility: "CLIENT",
+      analysis: "Revisión revocada",
+      qualityDecisions: [],
+    })).toBe(false));
+
+    expect(result.current.capabilities.canReview).toBe(false);
+    expect(result.current.actionMode).toBeNull();
+    expect(result.current.mutation).toMatchObject({ name: "analyze", error: expect.stringContaining("permiso"), conflict: false });
+    expect(refreshAuthorization).toHaveBeenCalledTimes(1);
   });
 
   it("lets a new selected case analysis supersede a pending one without late publication", async () => {
@@ -1229,6 +1414,27 @@ describe("historial explícito de reincidencias", () => {
 });
 
 describe("operaciones de corrección y seguimiento", () => {
+  it("aplica el mismo cierre y refresco de autorización ante 403 de un flujo", async () => {
+    const current = { ...detail, status: "ANALYSIS" as const, version: 3 };
+    const refreshAuthorization = vi.fn(async () => undefined);
+    const api = recurrenceApi({ detail: vi.fn().mockResolvedValue(current), correct: vi.fn().mockRejectedValue(new ApiClientError(403, "FORBIDDEN", "interno")) });
+    const { result } = renderWorkspace({
+      api,
+      onAuthorizationStale: refreshAuthorization,
+      permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"],
+    });
+    act(() => result.current.select(recurrenceId));
+    await waitFor(() => expect(result.current.selected).toEqual(current));
+    act(() => result.current.setActionMode("correct"));
+
+    await act(async () => expect(await result.current.correctRecurrence({ correctiveAction: "No debe reenviarse" })).toBe(false));
+
+    expect(result.current.capabilities.canReview).toBe(false);
+    expect(result.current.actionMode).toBeNull();
+    expect(result.current.mutation).toMatchObject({ name: "correct", error: expect.stringContaining("permiso"), conflict: false });
+    expect(refreshAuthorization).toHaveBeenCalledTimes(1);
+  });
+
   it("inicia corrección una sola vez con la versión seleccionada y publica el resultado", async () => {
     const current = { ...detail, status: "ANALYSIS" as const, version: 3, analysis: "Conector defectuoso" };
     const corrected = { ...current, status: "CORRECTION" as const, version: 4, correctiveAction: "Reemplazar conector" };
@@ -1369,7 +1575,7 @@ describe("operaciones de corrección y seguimiento", () => {
     pending.resolve({ ...current, noteCount: 1 });
     await act(async () => expect(await operation).toBe(false));
 
-    expect(result.current.selected).toEqual(current);
+    expect(result.current.selected).toBeNull();
     expect(result.current.mutation).toBeNull();
   });
 });
@@ -1452,8 +1658,9 @@ describe("operaciones terminales y ajuste auditado", () => {
 
   it("revoca localmente revisión tras 403, conserva el mensaje y no permite reabrir", async () => {
     const current = { ...detail, status: "CORRECTION" as const, version: 5 };
+    const refreshAuthorization = vi.fn(async () => undefined);
     const api = recurrenceApi({ detail: vi.fn().mockResolvedValue(current), close: vi.fn().mockRejectedValue(new ApiClientError(403, "FORBIDDEN", "interno")) });
-    const stable = options({ api });
+    const stable = options({ api, onAuthorizationStale: refreshAuthorization });
     const { result, rerender } = renderHook(({ permissions }) => useRecurrencesWorkspace({ ...stable, permissions }), { initialProps: { permissions: ["RECURRENCES_VIEW_ALL", "RECURRENCES_REVIEW"] } });
     act(() => result.current.select(recurrenceId));
     await waitFor(() => expect(result.current.selected).toEqual(current));
@@ -1462,6 +1669,7 @@ describe("operaciones terminales y ajuste auditado", () => {
     expect(result.current.capabilities.canReview).toBe(false);
     expect(result.current.actionMode).toBeNull();
     expect(result.current.mutation).toMatchObject({ name: "close", error: expect.stringContaining("permiso") });
+    expect(refreshAuthorization).toHaveBeenCalledTimes(1);
     act(() => result.current.setActionMode("close"));
     expect(result.current.actionMode).toBeNull();
 

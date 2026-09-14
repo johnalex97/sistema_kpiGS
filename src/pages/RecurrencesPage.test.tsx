@@ -317,6 +317,39 @@ describe("RecurrencesPage", () => {
     expect(screen.getByRole("dialog", { name: "Gestionar evidencia" })).toHaveAttribute("data-recurrence-id", selected.id);
   });
 
+  it("cierra la gestión al revocar lectura, restaura foco y mantiene separado el prompt de carga", async () => {
+    const user = userEvent.setup();
+    const allowed = workspace({
+      selected,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: selected.id },
+      capabilities: { ...workspace().capabilities, canViewEvidence: true, canUploadEvidence: true },
+    });
+    const rendered = render(view(allowed));
+    await user.click(screen.getByRole("button", { name: "Gestionar evidencia" }));
+    expect(screen.getByRole("dialog", { name: "Gestionar evidencia" })).toBeInTheDocument();
+
+    const revoked = workspace({
+      selected,
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: selected.id },
+      capabilities: { ...workspace().capabilities, canUploadEvidence: true },
+    });
+    rendered.rerender(view(revoked));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Gestionar evidencia" })).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Casos registrados")).toHaveFocus();
+
+    rendered.rerender(view(workspace({
+      selected: { ...selected, id: "rec-created", recurrenceNumber: "RI-2026-0042" },
+      detailState: "ready",
+      query: { filters: { page: 1, pageSize: 20 }, selectedId: "rec-created" },
+      evidencePromptForId: "rec-created",
+      capabilities: { ...workspace().capabilities, canUploadEvidence: true },
+    })));
+    expect(screen.getByRole("dialog", { name: "Agregar evidencia" })).toBeInTheDocument();
+  });
+
   it("loads the real evidence list and exposes download and archive operations", async () => {
     const listRecurrence = vi.fn().mockResolvedValue({ items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } });
     const current = workspace({

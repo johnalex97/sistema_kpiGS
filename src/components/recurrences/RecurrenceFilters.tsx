@@ -1,5 +1,5 @@
 import { AlertTriangle, ChevronsUpDown, RotateCcw, X } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { RecurrenceLookupApi } from "../../api/recurrence-lookups";
 import { currentRecurrenceMonth } from "../../hooks/recurrence-workspace.helpers";
 import type { LoadState } from "../../hooks/useRecurrencesWorkspace";
@@ -63,11 +63,12 @@ interface ScopeLookupProps {
   valueLabel?: string;
   placeholder: string;
   disabled: boolean;
+  dependencyKey: string;
   load(search: string, page: number, signal: AbortSignal): Promise<ScopePage>;
   onChange(option: ScopeOption | null): void;
 }
 
-function ScopeLookup({ label, name, valueId, valueLabel, placeholder, disabled, load, onChange }: ScopeLookupProps) {
+function ScopeLookup({ label, name, valueId, valueLabel, placeholder, disabled, dependencyKey, load, onChange }: ScopeLookupProps) {
   const id = useId();
   const listId = `${id}-list`;
   const normalizedValueLabel = valueLabel ?? "";
@@ -85,8 +86,21 @@ function ScopeLookup({ label, name, valueId, valueLabel, placeholder, disabled, 
   const controllerRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
   const loadRef = useRef(load);
+  const requestContextRef = useRef({ query, dependencyKey, disabled });
 
   useEffect(() => { loadRef.current = load; }, [load]);
+
+  useLayoutEffect(() => {
+    const previous = requestContextRef.current;
+    requestContextRef.current = { query, dependencyKey, disabled };
+    if (previous.dependencyKey === dependencyKey && previous.disabled === disabled) return;
+    generationRef.current += 1;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    setOptions([]);
+    setLoading(false);
+    setFailed(false);
+  }, [dependencyKey, disabled, query]);
 
   useEffect(() => () => controllerRef.current?.abort(), []);
 
@@ -96,11 +110,17 @@ function ScopeLookup({ label, name, valueId, valueLabel, placeholder, disabled, 
     const controller = new AbortController();
     controllerRef.current = controller;
     const generation = ++generationRef.current;
+    const requestedDependencyKey = requestContextRef.current.dependencyKey;
     setLoading(true);
     setFailed(false);
     try {
       const result = await loadRef.current(search, requestedPage, controller.signal);
-      if (controller.signal.aborted || generation !== generationRef.current) return;
+      const currentContext = requestContextRef.current;
+      if (controller.signal.aborted
+        || generation !== generationRef.current
+        || currentContext.disabled
+        || currentContext.dependencyKey !== requestedDependencyKey
+        || currentContext.query.trim() !== search) return;
       setOptions((current) => requestedPage === 1
         ? result.items
         : [...new Map([...current, ...result.items].map((item) => [item.id, item])).values()]);
@@ -178,7 +198,14 @@ function ScopeLookup({ label, name, valueId, valueLabel, placeholder, disabled, 
         onFocus={() => { if (!open) { setOpen(true); void request(query.trim(), 1); } }}
         onChange={(event) => {
           if (valueId) onChange(null);
-          setInputState({ valueId: "", valueLabel: "", query: event.target.value });
+          const nextQuery = event.target.value;
+          generationRef.current += 1;
+          controllerRef.current?.abort();
+          controllerRef.current = null;
+          requestContextRef.current = { query: nextQuery, dependencyKey, disabled };
+          setLoading(false);
+          setOptions([]);
+          setInputState({ valueId: "", valueLabel: "", query: nextQuery });
           setOpen(true);
           setFailed(false);
         }}
@@ -268,10 +295,10 @@ export function RecurrenceFilters({ filters, catalog, catalogState, canViewAll, 
       <label><span>Desde</span><input name="recurrenceDetectedFrom" autoComplete="off" type="date" value={filters.detectedFrom?.slice(0, 10) ?? ""} onChange={(event) => change({ detectedFrom: startOfHondurasDay(event.target.value) })} /></label>
       <label><span>Hasta</span><input name="recurrenceDetectedTo" autoComplete="off" type="date" value={filters.detectedTo?.slice(0, 10) ?? ""} onChange={(event) => change({ detectedTo: endOfHondurasDay(event.target.value) })} /></label>
       {canViewAll && <div className="recurrence-filters__scope" aria-label="Filtros globales">
-        <ScopeLookup label="Orden original" name="recurrenceOriginalOrder" valueId={scopeDraft.originalOrder?.id ?? ""} valueLabel={scopeDraft.originalOrder?.label} placeholder="Busca por número de orden" disabled={!lookupApi || !lookupCapabilities?.orders} load={async (search, page, signal) => { const result = await lookupApi!.orders(search, ["COMPLETED"], page, signal); return { items: result.items.map((item) => ({ id: item.id, label: `${item.orderNumber} · ${item.clientName} · ${item.branchName}` })), totalPages: result.pagination.totalPages }; }} onChange={(option) => updateScopeDraft("originalOrder", option)} />
-        <ScopeLookup label="Técnico" name="recurrenceTechnician" valueId={scopeDraft.technician?.id ?? ""} valueLabel={scopeDraft.technician?.label} placeholder="Busca por nombre o código" disabled={!lookupApi || !lookupCapabilities?.technicians} load={async (search, page, signal) => { const result = await lookupApi!.technicians(search, page, signal); return { items: result.items.map((item) => ({ id: item.id, label: `${item.fullName} · ${item.code}` })), totalPages: result.pagination.totalPages }; }} onChange={(option) => updateScopeDraft("technician", option)} />
-        <ScopeLookup label="Cliente" name="recurrenceClient" valueId={scopeDraft.client?.id ?? ""} valueLabel={scopeDraft.client?.label} placeholder="Busca por nombre o código" disabled={!lookupApi || !lookupCapabilities?.clients} load={async (search, page, signal) => { const result = await lookupApi!.clients(search, page, signal); return { items: result.items.map((item) => ({ id: item.id, label: `${item.name} · ${item.code}` })), totalPages: result.pagination.totalPages }; }} onChange={(option) => setDraftState((current) => ({ ...current, values: { ...current.values, client: option, branch: null } }))} />
-        <ScopeLookup key={scopeDraft.client?.id ?? "no-client"} label="Sucursal" name="recurrenceBranch" valueId={scopeDraft.branch?.id ?? ""} valueLabel={scopeDraft.branch?.label} placeholder={scopeDraft.client ? "Busca por nombre o código" : "Selecciona primero un cliente"} disabled={!lookupApi || !lookupCapabilities?.branches || !scopeDraft.client} load={async (search, page, signal) => { const result = await lookupApi!.branches(scopeDraft.client!.id, search, page, signal); return { items: result.items.map((item) => ({ id: item.id, label: `${item.name} · ${item.code}` })), totalPages: result.pagination.totalPages }; }} onChange={(option) => updateScopeDraft("branch", option)} />
+        <ScopeLookup label="Orden original" name="recurrenceOriginalOrder" valueId={scopeDraft.originalOrder?.id ?? ""} valueLabel={scopeDraft.originalOrder?.label} placeholder="Busca por número de orden" disabled={!lookupApi || !lookupCapabilities?.orders} dependencyKey={scopeKey} load={async (search, page, signal) => { const result = await lookupApi!.orders(search, ["COMPLETED"], page, signal); return { items: result.items.map((item) => ({ id: item.id, label: `${item.orderNumber} · ${item.clientName} · ${item.branchName}` })), totalPages: result.pagination.totalPages }; }} onChange={(option) => updateScopeDraft("originalOrder", option)} />
+        <ScopeLookup label="Técnico" name="recurrenceTechnician" valueId={scopeDraft.technician?.id ?? ""} valueLabel={scopeDraft.technician?.label} placeholder="Busca por nombre o código" disabled={!lookupApi || !lookupCapabilities?.technicians} dependencyKey={scopeKey} load={async (search, page, signal) => { const result = await lookupApi!.technicians(search, page, signal); return { items: result.items.map((item) => ({ id: item.id, label: `${item.fullName} · ${item.code}` })), totalPages: result.pagination.totalPages }; }} onChange={(option) => updateScopeDraft("technician", option)} />
+        <ScopeLookup label="Cliente" name="recurrenceClient" valueId={scopeDraft.client?.id ?? ""} valueLabel={scopeDraft.client?.label} placeholder="Busca por nombre o código" disabled={!lookupApi || !lookupCapabilities?.clients} dependencyKey={scopeKey} load={async (search, page, signal) => { const result = await lookupApi!.clients(search, page, signal); return { items: result.items.map((item) => ({ id: item.id, label: `${item.name} · ${item.code}` })), totalPages: result.pagination.totalPages }; }} onChange={(option) => setDraftState({ scopeKey, values: { ...scopeDraft, client: option, branch: null } })} />
+        <ScopeLookup key={scopeDraft.client?.id ?? "no-client"} label="Sucursal" name="recurrenceBranch" valueId={scopeDraft.branch?.id ?? ""} valueLabel={scopeDraft.branch?.label} placeholder={scopeDraft.client ? "Busca por nombre o código" : "Selecciona primero un cliente"} disabled={!lookupApi || !lookupCapabilities?.branches || !scopeDraft.client} dependencyKey={`${scopeKey}:${scopeDraft.client?.id ?? ""}`} load={async (search, page, signal) => { const result = await lookupApi!.branches(scopeDraft.client!.id, search, page, signal); return { items: result.items.map((item) => ({ id: item.id, label: `${item.name} · ${item.code}` })), totalPages: result.pagination.totalPages }; }} onChange={(option) => updateScopeDraft("branch", option)} />
         <button className="recurrence-filters__apply" type="button" onClick={applyScope}>Aplicar alcance</button>
       </div>}
       <button className="recurrence-filters__clear" type="button" onClick={clear}><RotateCcw size={14} aria-hidden="true" />Limpiar filtros</button>

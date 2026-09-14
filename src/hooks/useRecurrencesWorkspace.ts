@@ -98,8 +98,10 @@ export interface UseRecurrencesWorkspaceOptions {
   evidenceApi: EvidenceApi;
   lookupApi: RecurrenceLookupApi;
   permissions: readonly string[];
+  authorizationIdentity: string;
   search: string;
   now?: () => Date;
+  onAuthorizationStale?(): void | Promise<void>;
 }
 
 export class RecurrencePermissionError extends Error {
@@ -112,6 +114,11 @@ export class RecurrencePermissionError extends Error {
 interface AuxiliaryRequest {
   controller: AbortController;
   cleanup(): void;
+}
+
+interface AuthorizationIdentity {
+  key: string;
+  generation: number;
 }
 
 const systemNow = () => new Date();
@@ -191,6 +198,12 @@ function deriveCapabilities(permissions: readonly string[]): RecurrenceCapabilit
       branches: canLookup("branches"),
     },
   };
+}
+
+function canReadRecurrences(permissions: readonly string[]): boolean {
+  return permissions.some((permission) => permission === "RECURRENCES_VIEW_OWN"
+    || permission === "RECURRENCES_VIEW_ALL"
+    || permission === "RECURRENCES_REVIEW");
 }
 
 function actionAllowed(mode: RecurrenceActionMode, capabilities: RecurrenceCapabilities): boolean {
@@ -308,8 +321,10 @@ export function useRecurrencesWorkspace({
   evidenceApi: rawEvidenceApi,
   lookupApi: rawLookupApi,
   permissions,
+  authorizationIdentity,
   search,
   now,
+  onAuthorizationStale,
 }: UseRecurrencesWorkspaceOptions): RecurrencesWorkspace {
   const nowRef = useRef(now);
   const clock = useCallback(() => (nowRef.current ?? systemNow)(), []);
@@ -330,11 +345,13 @@ export function useRecurrencesWorkspace({
   const [detailState, setDetailState] = useState<LoadState>("idle");
   const [listStale, setListStale] = useState(false);
   const [mutation, setMutation] = useState<RecurrenceMutationState | null>(null);
-  const [evidencePrompt, setEvidencePrompt] = useState<{ id: string; permissionsKey: string } | null>(null);
+  const [evidencePrompt, setEvidencePrompt] = useState<{ id: string; authorizationKey: string } | null>(null);
   const [actionMode, setActionModeState] = useState<RecurrenceActionMode | null>(null);
   const [reviewRevoked, setReviewRevoked] = useState(false);
+  const [deniedCapabilities, setDeniedCapabilities] = useState<ReadonlySet<"report" | "note" | "evidenceUpload" | "evidenceView" | "evidenceManage">>(() => new Set());
 
   const permissionsKey = permissionKey(permissions);
+  const authorizationKey = JSON.stringify([authorizationIdentity, permissionsKey]);
   const listRequestKey = listKey(query.filters);
   const summaryRequestKey = summaryKey(query.filters);
   const summarySnapshot = useMemo(
@@ -347,8 +364,16 @@ export function useRecurrencesWorkspace({
   );
   const capabilities = useMemo(() => {
     const derived = deriveCapabilities(permissions);
-    return reviewRevoked ? { ...derived, canReview: false } : derived;
-  }, [permissions, reviewRevoked]);
+    return {
+      ...derived,
+      canReport: derived.canReport && !deniedCapabilities.has("report"),
+      canReview: derived.canReview && !reviewRevoked,
+      canAddNote: derived.canAddNote && !deniedCapabilities.has("note"),
+      canUploadEvidence: derived.canUploadEvidence && !deniedCapabilities.has("evidenceUpload"),
+      canViewEvidence: derived.canViewEvidence && !deniedCapabilities.has("evidenceView"),
+      canManageEvidence: derived.canManageEvidence && !deniedCapabilities.has("evidenceManage"),
+    };
+  }, [deniedCapabilities, permissions, reviewRevoked]);
   const capabilitiesRef = useRef(capabilities);
 
   const queryRef = useRef(query);
@@ -366,7 +391,9 @@ export function useRecurrencesWorkspace({
   const detailGenerationRef = useRef(0);
   const auxiliaryGenerationRef = useRef(0);
   const auxiliaryRequestsRef = useRef(new Map<string, AuxiliaryRequest>());
-  const previousPermissionsKeyRef = useRef(permissionsKey);
+  const previousAuthorizationKeyRef = useRef(authorizationKey);
+  const authorizationRef = useRef<AuthorizationIdentity>({ key: authorizationKey, generation: 0 });
+  const onAuthorizationStaleRef = useRef(onAuthorizationStale);
   const mutationPendingRef = useRef(false);
   const workflowGenerationRef = useRef(0);
   const workflowPendingGenerationRef = useRef<number | null>(null);
@@ -387,7 +414,37 @@ export function useRecurrencesWorkspace({
       workflowPendingGenerationRef.current = null;
       mutationPendingRef.current = false;
     }
-    setMutation((current) => current && ["analyze", "correct", "visit", "note", "dismiss", "close", "adjust"].includes(current.name) ? null : current);
+    setMutation((current) => current ? null : current);
+  }, []);
+
+  const handleForbidden = useCallback((
+    name: RecurrenceMutationState["name"],
+    message: string,
+    denied: "report" | "review" | "note" | "evidenceUpload" | "evidenceView" | "evidenceManage",
+  ): false => {
+    invalidateWorkflowOperation();
+    actionModeRef.current = null;
+    setActionModeState(null);
+    if (denied === "review") setReviewRevoked(true);
+    else setDeniedCapabilities((current) => new Set(current).add(denied));
+    if (denied === "evidenceUpload") revokeEvidencePrompt();
+    setMutation({ name, pending: false, error: message, conflict: false });
+    try {
+      void Promise.resolve(onAuthorizationStaleRef.current?.()).catch(() => undefined);
+    } catch {
+      // The operation remains safely closed even if session refresh cannot start.
+    }
+    return false;
+  }, [invalidateWorkflowOperation, revokeEvidencePrompt]);
+
+  const authorizationIsCurrent = useCallback((identity: AuthorizationIdentity) =>
+    authorizationRef.current.key === identity.key
+      && authorizationRef.current.generation === identity.generation, []);
+
+  const invalidateCatalog = useCallback(() => {
+    catalogGenerationRef.current += 1;
+    catalogControllerRef.current?.abort();
+    catalogControllerRef.current = null;
   }, []);
 
   const invalidateList = useCallback(() => {
@@ -413,16 +470,17 @@ export function useRecurrencesWorkspace({
     const controller = new AbortController();
     catalogControllerRef.current = controller;
     const generation = ++catalogGenerationRef.current;
+    const authorization = authorizationRef.current;
     try {
       const incoming = await api.catalog(controller.signal);
-      if (controller.signal.aborted || generation !== catalogGenerationRef.current) return;
+      if (controller.signal.aborted || generation !== catalogGenerationRef.current || !authorizationIsCurrent(authorization)) return;
       setCatalog(incoming);
       setCatalogState(incoming.causes.length ? "ready" : "empty");
     } catch (error: unknown) {
-      if (controller.signal.aborted || generation !== catalogGenerationRef.current || isAbortError(error)) return;
+      if (controller.signal.aborted || generation !== catalogGenerationRef.current || !authorizationIsCurrent(authorization) || isAbortError(error)) return;
       setCatalogState("error");
     }
-  }, [api]);
+  }, [api, authorizationIsCurrent]);
 
   const loadList = useCallback(async (
     requestedKey: string,
@@ -432,9 +490,10 @@ export function useRecurrencesWorkspace({
     const controller = new AbortController();
     listControllerRef.current = controller;
     const generation = ++listGenerationRef.current;
+    const authorization = authorizationRef.current;
     try {
       const incoming = await api.list(requestedFilters, controller.signal);
-      if (controller.signal.aborted || generation !== listGenerationRef.current || listKey(queryRef.current.filters) !== requestedKey) return;
+      if (controller.signal.aborted || generation !== listGenerationRef.current || !authorizationIsCurrent(authorization) || listKey(queryRef.current.filters) !== requestedKey) return;
       const lastPage = Math.max(1, incoming.pagination.totalPages);
       if (requestedFilters.page > lastPage) {
         invalidateList();
@@ -451,7 +510,7 @@ export function useRecurrencesWorkspace({
       setListState(incoming.items.length ? "ready" : "empty");
       setListStale(false);
     } catch (error: unknown) {
-      if (controller.signal.aborted || generation !== listGenerationRef.current || isAbortError(error)) return;
+      if (controller.signal.aborted || generation !== listGenerationRef.current || !authorizationIsCurrent(authorization) || isAbortError(error)) return;
       const currentPage = pageRef.current;
       if (currentPage) {
         setListState(currentPage.items.length ? "ready" : "empty");
@@ -461,23 +520,24 @@ export function useRecurrencesWorkspace({
         setListStale(false);
       }
     }
-  }, [api, invalidateList]);
+  }, [api, authorizationIsCurrent, invalidateList]);
 
   const loadSummary = useCallback(async (requestedFilters: RecurrenceSummaryFilters): Promise<void> => {
     summaryControllerRef.current?.abort();
     const controller = new AbortController();
     summaryControllerRef.current = controller;
     const generation = ++summaryGenerationRef.current;
+    const authorization = authorizationRef.current;
     try {
       const incoming = await api.summary(requestedFilters, controller.signal);
-      if (controller.signal.aborted || generation !== summaryGenerationRef.current) return;
+      if (controller.signal.aborted || generation !== summaryGenerationRef.current || !authorizationIsCurrent(authorization)) return;
       setSummary(incoming);
       setSummaryState("ready");
     } catch (error: unknown) {
-      if (controller.signal.aborted || generation !== summaryGenerationRef.current || isAbortError(error)) return;
+      if (controller.signal.aborted || generation !== summaryGenerationRef.current || !authorizationIsCurrent(authorization) || isAbortError(error)) return;
       setSummaryState("error");
     }
-  }, [api]);
+  }, [api, authorizationIsCurrent]);
 
   const removeSelection = useCallback(() => {
     invalidateWorkflowOperation();
@@ -503,9 +563,10 @@ export function useRecurrencesWorkspace({
     const controller = new AbortController();
     detailControllerRef.current = controller;
     const generation = ++detailGenerationRef.current;
+    const authorization = authorizationRef.current;
     try {
       const incoming = await api.detail(id, controller.signal);
-      if (controller.signal.aborted || generation !== detailGenerationRef.current || selectedIdRef.current !== id || options?.canPublish?.() === false) return;
+      if (controller.signal.aborted || generation !== detailGenerationRef.current || !authorizationIsCurrent(authorization) || selectedIdRef.current !== id || options?.canPublish?.() === false) return;
       const next = reconcileRecurrence(selectedRef.current, incoming);
       selectedRef.current = next;
       setSelected(next);
@@ -517,14 +578,14 @@ export function useRecurrencesWorkspace({
         invalidateWorkflowOperation();
       }
     } catch (error: unknown) {
-      if (controller.signal.aborted || generation !== detailGenerationRef.current || selectedIdRef.current !== id || options?.canPublish?.() === false || isAbortError(error)) return;
+      if (controller.signal.aborted || generation !== detailGenerationRef.current || !authorizationIsCurrent(authorization) || selectedIdRef.current !== id || options?.canPublish?.() === false || isAbortError(error)) return;
       if (error instanceof ApiClientError && error.status === 404) {
         removeSelection();
         return;
       }
       if (!silent || !selectedRef.current) setDetailState("error");
     }
-  }, [api, invalidateWorkflowOperation, removeSelection]);
+  }, [api, authorizationIsCurrent, invalidateWorkflowOperation, removeSelection]);
 
   const runAuxiliary = useCallback(async <T,>(
     key: string,
@@ -616,12 +677,23 @@ export function useRecurrencesWorkspace({
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { actionModeRef.current = actionMode; }, [actionMode]);
   useEffect(() => { nowRef.current = now; }, [now]);
+  useEffect(() => { onAuthorizationStaleRef.current = onAuthorizationStale; }, [onAuthorizationStale]);
 
   useLayoutEffect(() => {
     capabilitiesRef.current = capabilities;
-    if (previousPermissionsKeyRef.current === permissionsKey) return;
-    previousPermissionsKeyRef.current = permissionsKey;
+    if (previousAuthorizationKeyRef.current === authorizationKey) return;
+    previousAuthorizationKeyRef.current = authorizationKey;
+    authorizationRef.current = {
+      key: authorizationKey,
+      generation: authorizationRef.current.generation + 1,
+    };
     setReviewRevoked(false);
+    setDeniedCapabilities(new Set());
+    invalidateCatalog();
+    invalidateList();
+    invalidateSummary();
+    invalidateDetail();
+    invalidateWorkflowOperation();
     auxiliaryGenerationRef.current += 1;
     auxiliaryRequestsRef.current.forEach((request) => {
       request.cleanup();
@@ -630,11 +702,43 @@ export function useRecurrencesWorkspace({
     auxiliaryRequestsRef.current.clear();
     const currentAction = actionModeRef.current;
     const nextAction = currentAction && !actionAllowed(currentAction, capabilities) ? null : currentAction;
-    if (currentAction && ["analyze", "correct", "visit", "note", "dismiss", "close", "adjust"].includes(currentAction) && nextAction !== currentAction) invalidateWorkflowOperation();
     actionModeRef.current = nextAction;
     setActionModeState(nextAction);
     if (!capabilities.canUploadEvidence) revokeEvidencePrompt();
-  }, [capabilities, invalidateWorkflowOperation, permissionsKey, revokeEvidencePrompt]);
+
+    catalogControllerRef.current = null;
+    listControllerRef.current = null;
+    summaryControllerRef.current = null;
+    detailControllerRef.current = null;
+    pageRef.current = null;
+    selectedRef.current = null;
+    setCatalog(null);
+    setPage(null);
+    setSummary(null);
+    setSelected(null);
+    setListStale(false);
+
+    if (!canReadRecurrences(permissions)) {
+      setCatalogState("error");
+      setListState("error");
+      setSummaryState("error");
+      setDetailState("idle");
+      return;
+    }
+
+    const requestedQuery = queryRef.current;
+    const requestedSummary = createSummarySnapshot(summaryFilters(requestedQuery.filters));
+    const requestedList = createListSnapshot(requestedQuery.filters, requestedSummary);
+    setCatalogState("loading");
+    setListState("loading");
+    setSummaryState("loading");
+    void loadCatalog();
+    void loadList(listKey(requestedQuery.filters), requestedList);
+    void loadSummary(requestedSummary);
+    const selectedId = selectedIdRef.current;
+    setDetailState(selectedId ? "loading" : "idle");
+    if (selectedId) void loadDetail(selectedId);
+  }, [authorizationKey, capabilities, invalidateCatalog, invalidateDetail, invalidateList, invalidateSummary, invalidateWorkflowOperation, loadCatalog, loadDetail, loadList, loadSummary, permissions, revokeEvidencePrompt]);
 
   useEffect(() => {
     let active = true;
@@ -845,10 +949,18 @@ export function useRecurrencesWorkspace({
       setMutation({ name: "report", pending: false, error: "No tienes permiso para reportar reincidencias.", conflict: false });
       return false;
     }
+    const generation = ++workflowGenerationRef.current;
+    const authorization = authorizationRef.current;
+    const mutationIsCurrent = () => workflowGenerationRef.current === generation
+      && workflowPendingGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
+      && actionAllowed("report", capabilitiesRef.current);
     mutationPendingRef.current = true;
+    workflowPendingGenerationRef.current = generation;
     setMutation({ name: "report", pending: true, error: null, conflict: false });
     try {
       const incoming = await api.report(input);
+      if (!mutationIsCurrent()) return false;
       invalidateDetail();
       selectedIdRef.current = incoming.id;
       selectedRef.current = incoming;
@@ -862,7 +974,7 @@ export function useRecurrencesWorkspace({
       setActionModeState(null);
       const promptId = capabilitiesRef.current.canUploadEvidence ? incoming.id : null;
       evidencePromptRef.current = promptId;
-      setEvidencePrompt(promptId ? { id: promptId, permissionsKey: previousPermissionsKeyRef.current } : null);
+      setEvidencePrompt(promptId ? { id: promptId, authorizationKey: previousAuthorizationKeyRef.current } : null);
       setMutation({ name: "report", pending: false, error: null, conflict: false });
 
       const requestedSummary = createSummarySnapshot(summaryFilters(current.filters));
@@ -874,13 +986,20 @@ export function useRecurrencesWorkspace({
       void loadSummary(requestedSummary);
       return true;
     } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
       const failure = reportMutationError(error);
+      if (error instanceof ApiClientError && error.status === 403) {
+        return handleForbidden("report", failure.message, "report");
+      }
       setMutation({ name: "report", pending: false, error: failure.message, conflict: failure.conflict });
       return false;
     } finally {
-      mutationPendingRef.current = false;
+      if (workflowPendingGenerationRef.current === generation) {
+        workflowPendingGenerationRef.current = null;
+        mutationPendingRef.current = false;
+      }
     }
-  }, [api, invalidateDetail, loadList, loadSummary]);
+  }, [api, authorizationIsCurrent, handleForbidden, invalidateDetail, loadList, loadSummary]);
 
   const analyzeRecurrence = useCallback(async (
     input: Omit<AnalyzeRecurrenceInput, "version">,
@@ -903,12 +1022,15 @@ export function useRecurrencesWorkspace({
     }
 
     const generation = ++workflowGenerationRef.current;
+    const authorization = authorizationRef.current;
     const mutationIsCurrent = () => workflowGenerationRef.current === generation
       && workflowPendingGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
       && capabilitiesRef.current.canReview
       && selectedIdRef.current === target.id
       && actionModeRef.current === "analyze";
     const refreshIsCurrent = () => workflowGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
       && capabilitiesRef.current.canReview
       && selectedIdRef.current === target.id;
     mutationPendingRef.current = true;
@@ -939,6 +1061,9 @@ export function useRecurrencesWorkspace({
     } catch (error: unknown) {
       if (!mutationIsCurrent()) return false;
       const failure = analysisMutationError(error);
+      if (error instanceof ApiClientError && error.status === 403) {
+        return handleForbidden("analyze", failure.message, "review");
+      }
       if (error instanceof ApiClientError && error.code === "RECURRENCE_NOT_FOUND") {
         removeSelection();
         return false;
@@ -963,7 +1088,7 @@ export function useRecurrencesWorkspace({
         mutationPendingRef.current = false;
       }
     }
-  }, [api, invalidateDetail, loadCatalog, loadDetail, loadList, loadSummary, removeSelection]);
+  }, [api, authorizationIsCurrent, handleForbidden, invalidateDetail, loadCatalog, loadDetail, loadList, loadSummary, removeSelection]);
 
   const runWorkflowMutation = useCallback(async <T,>(
     mode: "correct" | "visit" | "note",
@@ -988,12 +1113,15 @@ export function useRecurrencesWorkspace({
     }
 
     const generation = ++workflowGenerationRef.current;
+    const authorization = authorizationRef.current;
     const mutationIsCurrent = () => workflowGenerationRef.current === generation
       && workflowPendingGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
       && actionAllowed(mode, capabilitiesRef.current)
       && selectedIdRef.current === target.id
       && actionModeRef.current === mode;
     const refreshIsCurrent = () => workflowGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
       && actionAllowed(mode, capabilitiesRef.current)
       && selectedIdRef.current === target.id;
     mutationPendingRef.current = true;
@@ -1029,10 +1157,7 @@ export function useRecurrencesWorkspace({
         return false;
       }
       if (error instanceof ApiClientError && error.status === 403) {
-        actionModeRef.current = null;
-        setActionModeState(null);
-        invalidateWorkflowOperation();
-        return false;
+        return handleForbidden(mode, failure.message, mode === "note" ? "note" : "review");
       }
       if (error instanceof ApiClientError && error.code === "INVALID_RECURRENCE_TRANSITION") {
         await loadDetail(target.id, true, { canPublish: mutationIsCurrent });
@@ -1050,7 +1175,7 @@ export function useRecurrencesWorkspace({
         mutationPendingRef.current = false;
       }
     }
-  }, [invalidateDetail, invalidateWorkflowOperation, loadDetail, loadList, loadSummary, removeSelection]);
+  }, [authorizationIsCurrent, handleForbidden, invalidateDetail, loadDetail, loadList, loadSummary, removeSelection]);
 
   const correctRecurrence = useCallback((input: Omit<CorrectRecurrenceInput, "version">) => runWorkflowMutation(
     "correct",
@@ -1093,12 +1218,15 @@ export function useRecurrencesWorkspace({
     }
 
     const generation = ++workflowGenerationRef.current;
+    const authorization = authorizationRef.current;
     const mutationIsCurrent = () => workflowGenerationRef.current === generation
       && workflowPendingGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
       && capabilitiesRef.current.canReview
       && selectedIdRef.current === target.id
       && actionModeRef.current === mode;
     const refreshIsCurrent = () => workflowGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
       && capabilitiesRef.current.canReview
       && selectedIdRef.current === target.id;
     mutationPendingRef.current = true;
@@ -1133,12 +1261,7 @@ export function useRecurrencesWorkspace({
         return false;
       }
       if (error instanceof ApiClientError && error.status === 403) {
-        setReviewRevoked(true);
-        actionModeRef.current = null;
-        setActionModeState(null);
-        invalidateWorkflowOperation();
-        setMutation({ name: mode, pending: false, error: failure.message, conflict: false });
-        return false;
+        return handleForbidden(mode, failure.message, "review");
       }
       if (error instanceof ApiClientError && error.code === "RECURRENCE_CAUSE_NOT_FOUND") {
         await loadCatalog();
@@ -1162,7 +1285,7 @@ export function useRecurrencesWorkspace({
         mutationPendingRef.current = false;
       }
     }
-  }, [invalidateDetail, invalidateWorkflowOperation, loadCatalog, loadDetail, loadList, loadSummary, removeSelection]);
+  }, [authorizationIsCurrent, handleForbidden, invalidateDetail, loadCatalog, loadDetail, loadList, loadSummary, removeSelection]);
 
   const dismissRecurrence = useCallback((reason: string) => runTerminalMutation(
     "dismiss", { reason } satisfies Omit<DismissRecurrenceInput, "version">,
@@ -1190,10 +1313,20 @@ export function useRecurrencesWorkspace({
       setMutation({ name: "evidence", pending: false, error: "No tienes permiso para subir evidencia interna.", conflict: false });
       return false;
     }
+    const generation = ++workflowGenerationRef.current;
+    const authorization = authorizationRef.current;
+    const mutationIsCurrent = () => workflowGenerationRef.current === generation
+      && workflowPendingGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
+      && capabilitiesRef.current.canUploadEvidence
+      && (input.accessLevel !== "INTERNAL" || capabilitiesRef.current.canManageEvidence)
+      && (evidencePromptRef.current ?? selectedIdRef.current) === targetId;
     mutationPendingRef.current = true;
+    workflowPendingGenerationRef.current = generation;
     setMutation({ name: "evidence", pending: true, error: null, conflict: false });
     try {
       await rawEvidenceApi.uploadRecurrence(targetId, input);
+      if (!mutationIsCurrent()) return false;
       if (evidencePromptRef.current === targetId) {
         evidencePromptRef.current = null;
         setEvidencePrompt(null);
@@ -1210,13 +1343,20 @@ export function useRecurrencesWorkspace({
       if (selectedIdRef.current === targetId) void loadDetail(targetId, true);
       return true;
     } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
       const failure = evidenceMutationError(error, "upload");
+      if (error instanceof ApiClientError && error.status === 403) {
+        return handleForbidden("evidence", failure.message, "evidenceUpload");
+      }
       setMutation({ name: "evidence", pending: false, error: failure.message, conflict: failure.conflict });
       return false;
     } finally {
-      mutationPendingRef.current = false;
+      if (workflowPendingGenerationRef.current === generation) {
+        workflowPendingGenerationRef.current = null;
+        mutationPendingRef.current = false;
+      }
     }
-  }, [loadDetail, loadList, loadSummary, rawEvidenceApi]);
+  }, [authorizationIsCurrent, handleForbidden, loadDetail, loadList, loadSummary, rawEvidenceApi]);
 
   const downloadEvidence = useCallback(async (item: Evidence): Promise<boolean> => {
     if (mutationPendingRef.current) return false;
@@ -1224,12 +1364,20 @@ export function useRecurrencesWorkspace({
       setMutation({ name: "evidence", pending: false, error: "No tienes permiso para descargar evidencia.", conflict: false });
       return false;
     }
+    const generation = ++workflowGenerationRef.current;
+    const authorization = authorizationRef.current;
+    const mutationIsCurrent = () => workflowGenerationRef.current === generation
+      && workflowPendingGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
+      && capabilitiesRef.current.canViewEvidence;
     mutationPendingRef.current = true;
+    workflowPendingGenerationRef.current = generation;
     setMutation({ name: "evidence", pending: true, error: null, conflict: false });
     let objectUrl: string | null = null;
     let anchor: HTMLAnchorElement | null = null;
     try {
       const downloaded = await evidenceApi.download(item.id);
+      if (!mutationIsCurrent()) return false;
       objectUrl = URL.createObjectURL(downloaded.blob);
       anchor = document.createElement("a");
       anchor.href = objectUrl;
@@ -1240,15 +1388,22 @@ export function useRecurrencesWorkspace({
       setMutation({ name: "evidence", pending: false, error: null, conflict: false });
       return true;
     } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
       const failure = evidenceMutationError(error, "download");
+      if (error instanceof ApiClientError && error.status === 403) {
+        return handleForbidden("evidence", failure.message, "evidenceView");
+      }
       setMutation({ name: "evidence", pending: false, error: failure.message, conflict: failure.conflict });
       return false;
     } finally {
       anchor?.remove();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
-      mutationPendingRef.current = false;
+      if (workflowPendingGenerationRef.current === generation) {
+        workflowPendingGenerationRef.current = null;
+        mutationPendingRef.current = false;
+      }
     }
-  }, [evidenceApi]);
+  }, [authorizationIsCurrent, evidenceApi, handleForbidden]);
 
   const archiveEvidence = useCallback(async (item: Evidence, rawReason: string): Promise<boolean> => {
     if (mutationPendingRef.current) return false;
@@ -1261,27 +1416,43 @@ export function useRecurrencesWorkspace({
       setMutation({ name: "evidence", pending: false, error: "El motivo para archivar debe tener entre 10 y 500 caracteres.", conflict: false });
       return false;
     }
+    const generation = ++workflowGenerationRef.current;
+    const authorization = authorizationRef.current;
+    const mutationIsCurrent = () => workflowGenerationRef.current === generation
+      && workflowPendingGenerationRef.current === generation
+      && authorizationIsCurrent(authorization)
+      && capabilitiesRef.current.canManageEvidence;
     mutationPendingRef.current = true;
+    workflowPendingGenerationRef.current = generation;
     setMutation({ name: "evidence", pending: true, error: null, conflict: false });
     try {
       await rawEvidenceApi.archive(item.id, { version: item.version, reason });
+      if (!mutationIsCurrent()) return false;
       setMutation({ name: "evidence", pending: false, error: null, conflict: false });
       if (selectedIdRef.current === item.resourceId) void loadDetail(item.resourceId, true);
       return true;
     } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
       const failure = evidenceMutationError(error, "archive");
+      if (error instanceof ApiClientError && error.status === 403) {
+        return handleForbidden("evidence", failure.message, "evidenceManage");
+      }
       setMutation({ name: "evidence", pending: false, error: failure.message, conflict: failure.conflict });
       return false;
     } finally {
-      mutationPendingRef.current = false;
+      if (workflowPendingGenerationRef.current === generation) {
+        workflowPendingGenerationRef.current = null;
+        mutationPendingRef.current = false;
+      }
     }
-  }, [loadDetail, rawEvidenceApi]);
+  }, [authorizationIsCurrent, handleForbidden, loadDetail, rawEvidenceApi]);
 
   const clearEvidencePrompt = useCallback(() => {
+    invalidateWorkflowOperation();
     evidencePromptRef.current = null;
     setEvidencePrompt(null);
     setMutation((current) => current?.name === "evidence" ? null : current);
-  }, []);
+  }, [invalidateWorkflowOperation]);
 
   const setActionMode = useCallback((mode: RecurrenceActionMode | null) => {
     const next = mode && actionAllowed(mode, capabilitiesRef.current) ? mode : null;
@@ -1305,7 +1476,7 @@ export function useRecurrencesWorkspace({
     listStale,
     mutation,
     evidencePromptForId: capabilities.canUploadEvidence
-      && evidencePrompt?.permissionsKey === permissionsKey
+      && evidencePrompt?.authorizationKey === authorizationKey
       ? evidencePrompt.id
       : null,
     capabilities,

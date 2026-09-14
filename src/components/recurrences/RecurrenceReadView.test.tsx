@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecurrenceLookupApi } from "../../api/recurrence-lookups";
@@ -103,6 +103,12 @@ const capabilities: RecurrenceCapabilities = {
   lookupCapabilities: { orders: false, technicians: false, clients: false, branches: false },
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 function filterLookups(): RecurrenceLookupApi {
   return {
     orders: vi.fn().mockResolvedValue({
@@ -175,6 +181,48 @@ describe("lectura de reincidencias", () => {
       originalOrderId: undefined,
       detectedFrom: "2026-09-01T00:00:00-06:00",
       detectedTo: "2026-09-30T23:59:59.999-06:00",
+      page: 1,
+    }));
+  });
+
+  it("invalida de inmediato una búsqueda de alcance cuando cambia el texto durante el debounce", async () => {
+    const pending = deferred<Awaited<ReturnType<RecurrenceLookupApi["clients"]>>>();
+    const lookups = filterLookups();
+    vi.mocked(lookups.clients).mockImplementationOnce(() => pending.promise);
+    render(<RecurrenceFilters filters={{ page: 1, pageSize: 20 }} catalog={catalog} catalogState="ready" canViewAll lookupApi={lookups} lookupCapabilities={{ orders: true, technicians: true, clients: true, branches: true }} onChange={vi.fn()} onRetryCatalog={vi.fn()} />);
+
+    const client = screen.getByRole("combobox", { name: "Cliente" });
+    fireEvent.focus(client);
+    await waitFor(() => expect(lookups.clients).toHaveBeenCalledTimes(1));
+    const firstSignal = vi.mocked(lookups.clients).mock.calls[0]?.[2] as AbortSignal;
+
+    fireEvent.change(client, { target: { value: "Cliente vigente" } });
+    expect(firstSignal.aborted).toBe(true);
+    pending.resolve({
+      items: [{ id: "client-stale", code: "OLD", name: "Cliente obsoleto" }],
+      pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.queryByText(/Cliente obsoleto/)).not.toBeInTheDocument();
+  });
+
+  it("aplica el alcance vigente tras popstate y limpia la sucursal al elegir otro cliente", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn<(patch: Partial<RecurrenceListFilters>) => void>();
+    const lookups = filterLookups();
+    const rendered = render(<RecurrenceFilters filters={{ originalOrderId: "order-old", clientId: "client-old", branchId: "branch-old", page: 1, pageSize: 20 }} catalog={catalog} catalogState="ready" canViewAll lookupApi={lookups} lookupCapabilities={{ orders: true, technicians: true, clients: true, branches: true }} onChange={onChange} onRetryCatalog={vi.fn()} />);
+
+    rendered.rerender(<RecurrenceFilters filters={{ originalOrderId: "order-current", clientId: "client-current", branchId: "branch-current", page: 1, pageSize: 20 }} catalog={catalog} catalogState="ready" canViewAll lookupApi={lookups} lookupCapabilities={{ orders: true, technicians: true, clients: true, branches: true }} onChange={onChange} onRetryCatalog={vi.fn()} />);
+    await user.clear(screen.getByRole("combobox", { name: "Cliente" }));
+    await user.type(screen.getByRole("combobox", { name: "Cliente" }), "Cliente Demo");
+    await user.click(await screen.findByText("Cliente Demo · CLI-001"));
+    await user.click(screen.getByRole("button", { name: "Aplicar alcance" }));
+
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      originalOrderId: "order-current",
+      clientId: "client-1",
+      branchId: undefined,
       page: 1,
     }));
   });

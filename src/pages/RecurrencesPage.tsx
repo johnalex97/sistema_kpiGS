@@ -39,14 +39,16 @@ function ConnectedRecurrencesPage({
   lookupApi = defaultLookupApi,
   now,
 }: Omit<RecurrencesPageProps, "workspace">) {
-  const { user } = useAuth();
+  const { user, retry } = useAuth();
   const workspace = useRecurrencesWorkspace({
     api,
     evidenceApi,
     lookupApi,
     permissions: user?.permissions ?? [],
+    authorizationIdentity: user?.id ?? "anonymous",
     search,
     now,
+    onAuthorizationStale: retry,
   });
   return <RecurrencesWorkspaceView workspace={workspace} />;
 }
@@ -149,7 +151,7 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
   const promptedEvidence = workspace.evidencePromptForId && workspace.capabilities.canUploadEvidence
     ? { id: workspace.evidencePromptForId, number: promptedRecurrence?.recurrenceNumber ?? workspace.evidencePromptForId }
     : null;
-  const activeEvidenceCase = evidenceCase ?? promptedEvidence;
+  const activeEvidenceCase = (workspace.capabilities.canViewEvidence ? evidenceCase : null) ?? promptedEvidence;
 
   const openReport = (trigger: HTMLButtonElement) => {
     reportTriggerRef.current = trigger;
@@ -209,6 +211,17 @@ function RecurrencesWorkspaceView({ workspace }: { workspace: RecurrencesWorkspa
     workspace.clearEvidencePrompt();
     restoreFocus();
   };
+
+  useEffect(() => {
+    if (!evidenceCase || workspace.capabilities.canViewEvidence) return;
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      setEvidenceCase(null);
+      restoreFocus();
+    });
+    return () => { active = false; };
+  }, [evidenceCase, restoreFocus, workspace.capabilities.canViewEvidence]);
 
   useEffect(() => {
     const wasVisible = previousShowAnalysisRef.current;
