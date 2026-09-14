@@ -1199,6 +1199,14 @@ export function useRecurrencesWorkspace({
         setEvidencePrompt(null);
       }
       setMutation({ name: "evidence", pending: false, error: null, conflict: false });
+      const requestedQuery = queryRef.current;
+      const requestedSummary = createSummarySnapshot(summaryFilters(requestedQuery.filters));
+      const requestedList = createListSnapshot(requestedQuery.filters, requestedSummary);
+      setListState("loading");
+      setListStale(false);
+      setSummaryState("loading");
+      void loadList(listKey(requestedQuery.filters), requestedList);
+      void loadSummary(requestedSummary);
       if (selectedIdRef.current === targetId) void loadDetail(targetId, true);
       return true;
     } catch (error: unknown) {
@@ -1208,7 +1216,7 @@ export function useRecurrencesWorkspace({
     } finally {
       mutationPendingRef.current = false;
     }
-  }, [loadDetail, rawEvidenceApi]);
+  }, [loadDetail, loadList, loadSummary, rawEvidenceApi]);
 
   const downloadEvidence = useCallback(async (item: Evidence): Promise<boolean> => {
     if (mutationPendingRef.current) return false;

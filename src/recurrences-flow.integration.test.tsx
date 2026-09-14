@@ -58,6 +58,33 @@ interface RequestRecord {
   body: Record<string, unknown> | FormData | null;
 }
 
+function normalizedMutationBody(body: RequestRecord["body"]): Record<string, unknown> | null {
+  if (!(body instanceof FormData)) return body;
+  return Object.fromEntries(Array.from(body.entries()).map(([key, value]) => [
+    key,
+    typeof value === "string"
+      ? value
+      : { name: value.name, type: value.type, size: value.size },
+  ]));
+}
+
+function expectListAndSummaryRefetchAfterEach(mutations: RequestRecord[]) {
+  const mutationPositions = mutations.map((mutation) => requests.indexOf(mutation));
+  mutations.forEach((mutation, index) => {
+    const nextMutationPosition = mutationPositions[index + 1] ?? requests.length;
+    const subsequentRequests = requests.slice(mutationPositions[index] + 1, nextMutationPosition);
+    const pathname = new URL(mutation.path, "http://local").pathname.replace("/api/v1", "");
+    expect(
+      subsequentRequests.some((request) => request.method === "GET" && new URL(request.path, "http://local").pathname === "/api/v1/recurrences"),
+      `${pathname} debe refrescar el listado antes de la siguiente mutación`,
+    ).toBe(true);
+    expect(
+      subsequentRequests.some((request) => request.method === "GET" && new URL(request.path, "http://local").pathname === "/api/v1/recurrences/summary"),
+      `${pathname} debe refrescar el resumen antes de la siguiente mutación`,
+    ).toBe(true);
+  });
+}
+
 function json(data: unknown) {
   return new Response(JSON.stringify({ data }), {
     status: 200,
@@ -320,22 +347,60 @@ describe("flujo integrado de reincidencias", () => {
     const mutations = requests.filter(({ method, path }) => method === "POST" && path.includes("/recurrences"));
     expect(mutations.map(({ path, body }) => ({
       path: new URL(path, "http://local").pathname.replace("/api/v1", ""),
-      version: body instanceof FormData ? body.get("version") : body?.version,
+      body: normalizedMutationBody(body),
     }))).toEqual([
-      { path: "/recurrences", version: undefined },
-      { path: `/recurrences/${recurrenceId}/evidences`, version: null },
-      { path: `/recurrences/${recurrenceId}/analysis`, version: 1 },
-      { path: `/recurrences/${recurrenceId}/correction`, version: 2 },
-      { path: `/recurrences/${recurrenceId}/visits`, version: 3 },
-      { path: `/recurrences/${recurrenceId}/notes`, version: undefined },
-      { path: `/recurrences/${recurrenceId}/close`, version: 4 },
-      { path: `/recurrences/${recurrenceId}/adjust`, version: 5 },
+      {
+        path: "/recurrences",
+        body: { originalOrderId, correctionOrderId, detectedProblem: "El enlace principal volvió a fallar" },
+      },
+      {
+        path: `/recurrences/${recurrenceId}/evidences`,
+        body: {
+          file: { name: "enlace-router.pdf", type: "application/pdf", size: 8 },
+          accessLevel: "TECHNICIAN",
+          description: "Lectura del enlace",
+        },
+      },
+      {
+        path: `/recurrences/${recurrenceId}/analysis`,
+        body: {
+          causeId,
+          impact: "HIGH",
+          responsibility: "EQUIPMENT",
+          analysis: "Se confirmó una falla intermitente del equipo",
+          qualityDecisions: [{ technicianId, affectsQuality: false }],
+          version: 1,
+        },
+      },
+      {
+        path: `/recurrences/${recurrenceId}/correction`,
+        body: {
+          correctiveAction: "Sustituir equipo y certificar el enlace",
+          preventiveAction: "Monitorear potencia durante siete días",
+          version: 2,
+        },
+      },
+      {
+        path: `/recurrences/${recurrenceId}/visits`,
+        body: { orderId: visitOrderId, observation: "Validación posterior al reemplazo", version: 3 },
+      },
+      {
+        path: `/recurrences/${recurrenceId}/notes`,
+        body: { content: "Cliente confirma estabilidad durante 24 horas" },
+      },
+      {
+        path: `/recurrences/${recurrenceId}/close`,
+        body: { version: 4 },
+      },
+      {
+        path: `/recurrences/${recurrenceId}/adjust`,
+        body: { reason: "Corrección validada por supervisión", impact: "MEDIUM", version: 5 },
+      },
     ]);
     expect(requests.find(({ path }) => path.includes("/evidences/evidence-1/download"))).toBeDefined();
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:recurrence");
-    expect(requests.filter(({ method, path }) => method === "GET" && path.includes("/recurrences/summary")).length).toBeGreaterThan(6);
-    expect(requests.filter(({ method, path }) => method === "GET" && /\/recurrences\?/.test(path)).length).toBeGreaterThan(6);
+    expectListAndSummaryRefetchAfterEach(mutations);
   }, 30_000);
 
   it("filtra el alcance global mediante opciones legibles y no anuncia un conteo ficticio", async () => {

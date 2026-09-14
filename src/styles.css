@@ -694,6 +694,8 @@ tbody tr:last-child td { border-bottom: 0; }tbody tr:hover { background: #fbfdfd
   .recurrence-detail { max-height: none; }
   .recurrence-workspace button, .recurrence-filters input, .recurrence-filters select { min-height: 44px; }
   .recurrence-workspace .icon-button, .recurrence-table__open { width: 44px; min-width: 44px; }
+  .recurrence-scope-combobox__control input { padding-right: 51px; }
+  .recurrence-scope-combobox__control > button { width: 44px; min-width: 44px; }
 }
 
 @media (max-width: 640px) {
