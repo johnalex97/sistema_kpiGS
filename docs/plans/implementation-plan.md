@@ -176,10 +176,9 @@ ADMIN y SUPERVISOR revisan todos los casos; TECHNICIAN puede reportar con
 `RECURRENCES_REPORT_OWN` desde una orden correctiva donde participe, y consultar
 con `RECURRENCES_VIEW_OWN` su historial. El caso avanza `OPEN → ANALYSIS →
 CORRECTION → CLOSED`; `DISMISSED` y `CLOSED` son terminales. Solo `CLOSED`
-entrega hechos a la fase 11 de KPI, que sigue pendiente y no calcula puntajes
-todavía. La evidencia de reincidencia respeta los niveles `TECHNICIAN` e
-`INTERNAL` y el archivo se conserva tras archivar la metadata. La fase 11 de KPI
-ya consume de forma durable los cierres y ajustes atribuibles.
+entrega hechos a la fase 11 de KPI, que ya consume de forma durable los cierres
+y ajustes atribuibles. La evidencia de reincidencia respeta los niveles
+`TECHNICIAN` e `INTERNAL` y el archivo se conserva tras archivar la metadata.
 
 Salida verificada: 66 pruebas unitarias de reincidencias, 94 pruebas de
 persistencia/HTTP de reincidencias, 8 de regresión HTTP de evidencias y 12 de
@@ -218,7 +217,7 @@ Estado: en progreso. Los subbloques de autenticación, KPI,
 Actividades/Jornada operativa, Técnicos y Reincidencias están completados. Actividades consume
 catálogo, listado, detalle, búsquedas auxiliares y todas sus mutaciones desde la
 API, con URL, polling, control optimista y recuperación de conflictos. La
-La jornada visual del Dashboard y las interfaces globales de Evidencias,
+jornada visual del Dashboard y las interfaces globales de Evidencias,
 Órdenes y Clientes continúan pendientes; por eso la fase 12 completa sigue
 abierta.
 
