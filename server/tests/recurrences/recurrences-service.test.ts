@@ -229,7 +229,7 @@ describe("RecurrenceService read permission matrix", () => {
     );
   });
 
-  it("keeps INTERNAL evidence metadata out of every technician detail hydration", async () => {
+  it("derives evidence metadata visibility only from evidence permissions and technician scope", async () => {
     const record = {
       ...detailRecord(),
       evidencias: [
@@ -240,13 +240,22 @@ describe("RecurrenceService read permission matrix", () => {
     const repository = repositoryWith({ kind: "UPDATED", recurrence: record });
     vi.mocked(repository.findRecurrence).mockResolvedValue(record);
     const recurrenceService = service(repository);
-    const technician = actor(["RECURRENCES_VIEW_OWN"], technicianId);
-    const management = actor(["RECURRENCES_REVIEW"], technicianId);
+    const withoutEvidenceView = actor(["RECURRENCES_VIEW_OWN"], technicianId);
+    const technicianEvidenceView = actor(["RECURRENCES_VIEW_OWN", "EVIDENCES_VIEW"], technicianId);
+    const unlinkedEvidenceView = actor(["RECURRENCES_VIEW_ALL", "EVIDENCES_VIEW"]);
+    const recurrenceReviewer = actor(["RECURRENCES_REVIEW", "EVIDENCES_VIEW"], technicianId);
+    const evidenceManager = actor(["RECURRENCES_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_MANAGE"]);
 
-    const managementDetail = await recurrenceService.get(recurrenceId, management);
-    const technicianDetail = await recurrenceService.get(recurrenceId, technician);
-    const technicianNoteResult = await recurrenceService.addNote(recurrenceId, noteInput, technician);
+    const hiddenDetail = await recurrenceService.get(recurrenceId, withoutEvidenceView);
+    const technicianDetail = await recurrenceService.get(recurrenceId, technicianEvidenceView);
+    const unlinkedDetail = await recurrenceService.get(recurrenceId, unlinkedEvidenceView);
+    const reviewerDetail = await recurrenceService.get(recurrenceId, recurrenceReviewer);
+    const managementDetail = await recurrenceService.get(recurrenceId, evidenceManager);
+    const technicianNoteResult = await recurrenceService.addNote(recurrenceId, noteInput, technicianEvidenceView);
 
+    expect(hiddenDetail.evidences).toEqual([]);
+    expect(unlinkedDetail.evidences).toEqual([]);
+    expect(reviewerDetail.evidences.map(({ id }) => id)).toEqual(["evidence-technician"]);
     expect(managementDetail.evidences.map(({ id }) => id)).toEqual([
       "evidence-internal",
       "evidence-technician",

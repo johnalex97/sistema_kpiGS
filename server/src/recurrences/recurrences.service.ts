@@ -119,11 +119,17 @@ function pagination(
   };
 }
 
+function evidenceVisibility(actor: RecurrenceActorContext): "ALL" | "TECHNICIAN" | "NONE" {
+  if (!hasPermission(actor, "EVIDENCES_VIEW")) return "NONE";
+  if (hasPermission(actor, "EVIDENCES_MANAGE")) return "ALL";
+  return actor.technicianId === null ? "NONE" : "TECHNICIAN";
+}
+
 function mapDetailForActor(
   recurrence: RecurrenceDetailRecord,
   actor: RecurrenceActorContext,
 ): PublicRecurrenceDetail {
-  return mapRecurrenceDetail(recurrence, isManagement(actor) ? "ALL" : "TECHNICIAN");
+  return mapRecurrenceDetail(recurrence, evidenceVisibility(actor));
 }
 
 function mapMutationResult(

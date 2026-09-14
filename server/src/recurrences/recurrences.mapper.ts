@@ -57,7 +57,7 @@ export function mapRecurrenceSummary(record: RecurrenceSummaryRecord): PublicRec
 
 export function mapRecurrenceDetail(
   record: RecurrenceDetailRecord,
-  evidenceVisibility: "ALL" | "TECHNICIAN" = "TECHNICIAN",
+  evidenceVisibility: "ALL" | "TECHNICIAN" | "NONE" = "NONE",
 ): PublicRecurrenceDetail {
   const qualitySnapshots = record.tecnicos.filter((technician) => technician.affectsQuality);
   if (record.status === "DISMISSED" && qualitySnapshots.length > 0) {
@@ -94,7 +94,8 @@ export function mapRecurrenceDetail(
       authorDisplayName: note.author.displayName,
     })),
     evidences: record.evidencias
-      .filter((evidence) => evidenceVisibility === "ALL" || evidence.accessLevel === "TECHNICIAN")
+      .filter((evidence) => evidenceVisibility === "ALL"
+        || evidenceVisibility === "TECHNICIAN" && evidence.accessLevel === "TECHNICIAN")
       .map((evidence) => ({
         id: evidence.id,
         originalName: evidence.originalName,

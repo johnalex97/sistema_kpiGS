@@ -43,6 +43,18 @@ const users = {
     id: randomUUID(),
     email: `recurrences.http.no-read.${randomUUID()}@example.test`,
   },
+  recurrenceOnly: {
+    id: randomUUID(),
+    email: `recurrences.http.recurrence-only.${randomUUID()}@example.test`,
+  },
+  evidenceManager: {
+    id: randomUUID(),
+    email: `recurrences.http.evidence-manager.${randomUUID()}@example.test`,
+  },
+} as const;
+const customRoles = {
+  recurrenceOnly: { id: randomUUID(), code: `REC_ONLY_${suffix}` },
+  evidenceManager: { id: randomUUID(), code: `REC_EVIDENCE_MANAGER_${suffix}` },
 } as const;
 const ids = {
   supervisorTechnician: randomUUID(),
@@ -205,6 +217,9 @@ async function cleanupFixture(): Promise<void> {
   await database.sesion.deleteMany({ where: { userId: { in: userIds } } });
   await database.usuarioRol.deleteMany({ where: { usuarioId: { in: userIds } } });
   await database.usuario.deleteMany({ where: { id: { in: userIds } } });
+  const customRoleIds = Object.values(customRoles).map(({ id }) => id);
+  await database.rolPermiso.deleteMany({ where: { rolId: { in: customRoleIds } } });
+  await database.rol.deleteMany({ where: { id: { in: customRoleIds } } });
 }
 
 beforeAll(async () => {
@@ -217,9 +232,13 @@ beforeAll(async () => {
   )?.lastNumber ?? null;
   await cleanupFixture();
 
-  const [roles, passwordHash] = await Promise.all([
+  const [roles, permissions, passwordHash] = await Promise.all([
     database.rol.findMany({
       where: { code: { in: ["ADMIN", "SUPERVISOR", "TECHNICIAN"] } },
+      select: { id: true, code: true },
+    }),
+    database.permiso.findMany({
+      where: { code: { in: ["RECURRENCES_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_MANAGE"] } },
       select: { id: true, code: true },
     }),
     hashPassword(password, {
@@ -230,6 +249,22 @@ beforeAll(async () => {
     }),
   ]);
   const roleIds = Object.fromEntries(roles.map(({ id, code }) => [code, id]));
+  const permissionIds = Object.fromEntries(permissions.map(({ id, code }) => [code, id]));
+
+  await database.rol.createMany({
+    data: [
+      { ...customRoles.recurrenceOnly, name: "Lectura de reincidencias sin evidencias" },
+      { ...customRoles.evidenceManager, name: "Lectura interna de evidencias en reincidencias" },
+    ],
+  });
+  await database.rolPermiso.createMany({
+    data: [
+      { rolId: customRoles.recurrenceOnly.id, permisoId: permissionIds.RECURRENCES_VIEW_ALL! },
+      { rolId: customRoles.evidenceManager.id, permisoId: permissionIds.RECURRENCES_VIEW_ALL! },
+      { rolId: customRoles.evidenceManager.id, permisoId: permissionIds.EVIDENCES_VIEW! },
+      { rolId: customRoles.evidenceManager.id, permisoId: permissionIds.EVIDENCES_MANAGE! },
+    ],
+  });
 
   await database.usuario.createMany({
     data: [
@@ -239,6 +274,8 @@ beforeAll(async () => {
       { ...users.foreign, displayName: "Técnico ajeno HTTP", status: "ACTIVE", mustChangePassword: false, passwordHash },
       { ...users.provisional, displayName: "Usuario provisional HTTP", status: "ACTIVE", mustChangePassword: true, passwordHash },
       { ...users.noRead, displayName: "Usuario sin lectura de reincidencias", status: "ACTIVE", mustChangePassword: false, passwordHash },
+      { ...users.recurrenceOnly, displayName: "Usuario personalizado sin evidencia", status: "ACTIVE", mustChangePassword: false, passwordHash },
+      { ...users.evidenceManager, displayName: "Usuario personalizado con evidencia interna", status: "ACTIVE", mustChangePassword: false, passwordHash },
     ],
   });
   await database.usuarioRol.createMany({
@@ -248,6 +285,8 @@ beforeAll(async () => {
       { usuarioId: users.reporter.id, rolId: roleIds.TECHNICIAN! },
       { usuarioId: users.foreign.id, rolId: roleIds.TECHNICIAN! },
       { usuarioId: users.provisional.id, rolId: roleIds.ADMIN! },
+      { usuarioId: users.recurrenceOnly.id, rolId: customRoles.recurrenceOnly.id },
+      { usuarioId: users.evidenceManager.id, rolId: customRoles.evidenceManager.id },
     ],
   });
   await database.tecnico.createMany({
@@ -851,7 +890,7 @@ describe("recurrences DB-backed HTTP contract", () => {
     assertNoPrivateRecurrenceFields(postRead.body);
   });
 
-  it("hides management INTERNAL evidence from technician detail and note hydration", async () => {
+  it("filters evidence metadata with custom evidence permissions without exposing private fields", async () => {
     await database.reincidencia.create({
       data: {
         id: ids.privacyRecurrence,
@@ -872,6 +911,8 @@ describe("recurrences DB-backed HTTP contract", () => {
     });
     const supervisor = await authenticatedAgent(users.supervisor);
     const reporter = await authenticatedAgent(users.reporter);
+    const recurrenceOnly = await authenticatedAgent(users.recurrenceOnly);
+    const evidenceManager = await authenticatedAgent(users.evidenceManager);
     const uploaded = await uploadEvidence(
       supervisor,
       ids.privacyRecurrence,
@@ -890,6 +931,12 @@ describe("recurrences DB-backed HTTP contract", () => {
       .set("Origin", allowedOrigin)
       .send({ content: "Nota sin exposición de evidencia interna." })
       .expect(200);
+    const recurrenceOnlyDetail = await recurrenceOnly
+      .get(`/api/v1/recurrences/${ids.privacyRecurrence}`)
+      .expect(200);
+    const customManagerDetail = await evidenceManager
+      .get(`/api/v1/recurrences/${ids.privacyRecurrence}`)
+      .expect(200);
 
     expect(managementDetail.body.data.evidences.map(({ id }: { id: string }) => id))
       .toContain(uploaded.body.data.id);
@@ -897,5 +944,10 @@ describe("recurrences DB-backed HTTP contract", () => {
       .not.toContain(uploaded.body.data.id);
     expect(technicianNote.body.data.evidences.map(({ id }: { id: string }) => id))
       .not.toContain(uploaded.body.data.id);
+    expect(recurrenceOnlyDetail.body.data.evidences).toEqual([]);
+    expect(customManagerDetail.body.data.evidences.map(({ id }: { id: string }) => id))
+      .toContain(uploaded.body.data.id);
+    assertNoPrivateRecurrenceFields(recurrenceOnlyDetail.body);
+    assertNoPrivateRecurrenceFields(customManagerDetail.body);
   });
 });
