@@ -170,6 +170,39 @@ describe("useOrdersWorkspace", () => {
     expect(result.current.catalog.data).toBeNull();
     expect(result.current.capabilities.canManage).toBe(false);
   });
+
+  it("assigns and removes technicians with the latest server version", async () => {
+    const assigned = { ...order, version: 2, participants: [{ id: "tech-2", code: "TEC-2", fullName: "Beatriz", role: "SUPPORT" as const, assignedAt: "2026-09-16T13:00:00.000Z", unassignedAt: null, active: true }] };
+    const removed = { ...assigned, version: 3, participants: [{ ...assigned.participants[0], active: false, unassignedAt: "2026-09-16T14:00:00.000Z" }] };
+    const api = apiMock({ assign: vi.fn(async () => assigned), unassign: vi.fn(async () => removed) });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "TECHNICIANS_VIEW"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder("order-1"));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+
+    await act(async () => { await result.current.assignTechnician("tech-2", "SUPPORT"); });
+    expect(api.assign).toHaveBeenCalledWith("order-1", { technicianId: "tech-2", role: "SUPPORT", version: 1 });
+    expect(result.current.detail.data).toEqual(assigned);
+    await act(async () => { await result.current.unassignTechnician("tech-2", "Cambio de turno autorizado"); });
+    expect(api.unassign).toHaveBeenCalledWith("order-1", "tech-2", { reason: "Cambio de turno autorizado", version: 2 });
+    expect(result.current.detail.data).toEqual(removed);
+  });
+
+  it("keeps a stable backend assignment error without inventing availability", async () => {
+    const api = apiMock({ assign: vi.fn(async () => { throw new ApiClientError(409, "TECHNICIAN_BUSY", "Ocupado"); }) });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "TECHNICIANS_VIEW"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder("order-1"));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    await act(async () => { await result.current.assignTechnician("tech-2", "PRIMARY"); });
+
+    expect(result.current.assignment.error).toBe("El técnico ya tiene otro trabajo operativo.");
+    expect(result.current.assignment.pending).toBe(false);
+  });
   it("loads list, catalog and URL-selected detail", async () => {
     window.history.replaceState({}, "", "/ordenes?status=ASSIGNED&orderId=order-1");
     const api = apiMock();

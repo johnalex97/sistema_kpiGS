@@ -2,6 +2,7 @@ import { AlertTriangle, Plus, RefreshCw, Search } from "lucide-react";
 import { createOrderLookupApi, type OrderLookupApi } from "../api/order-lookups";
 import { createOrdersApi, type OrdersApi } from "../api/orders";
 import { OrderDetail } from "../components/orders/OrderDetail";
+import { OrderAssignments } from "../components/orders/OrderAssignments";
 import { OrderFilters } from "../components/orders/OrderFilters";
 import { OrderForm } from "../components/orders/OrderForm";
 import { OrderTable } from "../components/orders/OrderTable";
@@ -44,7 +45,7 @@ function OrdersWorkspaceView({ workspace, lookupApi }: { workspace: OrdersWorksp
         {page && page.items.length > 0 && <OrderTable items={page.items} selectedId={workspace.selectedOrderId} onOpen={workspace.selectOrder} />}
         {pagination && pagination.totalPages > 1 && <nav className="orders-pagination" aria-label="Paginación de órdenes"><button type="button" disabled={pagination.page <= 1} onClick={() => workspace.setPage(pagination.page - 1)}>Anterior</button><span>Página <b>{pagination.page}</b> de {pagination.totalPages}</span><button type="button" disabled={pagination.page >= pagination.totalPages} onClick={() => workspace.setPage(pagination.page + 1)}>Siguiente</button></nav>}
       </div>
-      {workspace.selectedOrderId && <div className="orders-register__detail">{workspace.detail.status === "loading" && <div className="orders-state" role="status"><span />Cargando detalle…</div>}{workspace.detail.status === "error" && <div className="orders-state orders-state--error" role="alert"><strong>No fue posible abrir la orden</strong><p>{workspace.detail.error}</p><button type="button" onClick={workspace.closeDetail}>Cerrar</button></div>}{workspace.detail.data && <OrderDetail order={workspace.detail.data} onClose={workspace.closeDetail} onEdit={workspace.capabilities.canManage && ["PENDING", "ASSIGNED"].includes(workspace.detail.data.status) ? workspace.openEdit : undefined} />}</div>}
+      {workspace.selectedOrderId && <div className="orders-register__detail">{workspace.detail.status === "loading" && <div className="orders-state" role="status"><span />Cargando detalle…</div>}{workspace.detail.status === "error" && <div className="orders-state orders-state--error" role="alert"><strong>No fue posible abrir la orden</strong><p>{workspace.detail.error}</p><button type="button" onClick={workspace.closeDetail}>Cerrar</button></div>}{workspace.detail.data && <><OrderDetail order={workspace.detail.data} onClose={workspace.closeDetail} onEdit={workspace.capabilities.canManage && ["PENDING", "ASSIGNED"].includes(workspace.detail.data.status) ? workspace.openEdit : undefined} />{workspace.capabilities.canManage && <OrderAssignments order={workspace.detail.data} lookupApi={lookupApi} pending={workspace.assignment.pending} error={workspace.assignment.error} onAssign={workspace.assignTechnician} onUnassign={workspace.unassignTechnician} />}</>}</div>}
     </div>
     {workspace.form && workspace.catalog.data && <OrderForm mode={workspace.form.mode} order={workspace.form.order ?? undefined} catalog={workspace.catalog.data} lookupApi={lookupApi} pending={workspace.form.pending} error={workspace.form.error} fieldErrors={workspace.form.fieldErrors} onCancel={workspace.closeForm} onSubmit={workspace.submitOrder} />}
   </section>;

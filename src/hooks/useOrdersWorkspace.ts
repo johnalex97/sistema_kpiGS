@@ -11,6 +11,7 @@ import type {
   OrderPage,
   CreateOrderInput,
   UpdateOrderInput,
+  OrderTechnicianRole,
 } from "../models/order";
 import {
   deriveOrderCapabilities,
@@ -38,6 +39,7 @@ export interface OrdersWorkspace {
   catalog: OrderReadState<OrderCatalog>;
   history: OrderReadState<OrderHistoryPage>;
   form: OrderFormState | null;
+  assignment: OrderAssignmentState;
   setFilters(patch: Partial<OrderFilters>): void;
   setPage(page: number): void;
   selectOrder(id: string): void;
@@ -50,6 +52,13 @@ export interface OrdersWorkspace {
   openEdit(): void;
   closeForm(): void;
   submitOrder(input: CreateOrderInput | Omit<UpdateOrderInput, "version">): Promise<boolean>;
+  assignTechnician(technicianId: string, role: OrderTechnicianRole): Promise<boolean>;
+  unassignTechnician(technicianId: string, reason: string): Promise<boolean>;
+}
+
+export interface OrderAssignmentState {
+  pending: boolean;
+  error: string | null;
 }
 
 export interface OrderFormState {
@@ -121,6 +130,7 @@ export function useOrdersWorkspace({
   const [catalog, setCatalog] = useState<OrderReadState<OrderCatalog>>(idleState);
   const [history, setHistory] = useState<OrderReadState<OrderHistoryPage>>(idleState);
   const [form, setForm] = useState<OrderFormState | null>(null);
+  const [assignment, setAssignment] = useState<OrderAssignmentState>({ pending: false, error: null });
 
   const filtersRef = useRef(filters);
   const selectedIdRef = useRef(selectedOrderId);
@@ -129,6 +139,7 @@ export function useOrdersWorkspace({
   const formRef = useRef(form);
   const canManageRef = useRef(capabilities.canManage);
   const mutationPendingRef = useRef(false);
+  const assignmentPendingRef = useRef(false);
   const appliedSearchRef = useRef(initialSearch);
   const controllers = useRef({
     list: null as AbortController | null,
@@ -474,6 +485,68 @@ export function useOrdersWorkspace({
     }
   }, [api, refreshDetail]);
 
+  const applyAssignmentResult = useCallback((incoming: OrderDetail) => {
+    detailRef.current = { status: "success", data: incoming, error: null, stale: false };
+    setDetail(detailRef.current);
+    setList((current) => {
+      if (!current.data?.items.some((item) => item.id === incoming.id)) return current;
+      const next = {
+        ...current,
+        data: { ...current.data, items: current.data.items.map((item) => item.id === incoming.id ? incoming : item) },
+      };
+      listRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const assignmentErrorMessage = useCallback((error: unknown): string => {
+    if (!(error instanceof ApiClientError)) return errorMessage(error, "No fue posible actualizar el equipo");
+    const messages: Record<string, string> = {
+      TECHNICIAN_BUSY: "El técnico ya tiene otro trabajo operativo.",
+      TECHNICIAN_ALREADY_ASSIGNED: "El técnico ya participa en esta orden.",
+      TECHNICIAN_NOT_ASSIGNED: "El técnico ya no está asignado a esta orden.",
+      PRIMARY_TECHNICIAN_REQUIRED: "La orden requiere un técnico principal.",
+      INVALID_ORDER_TRANSITION: "El estado actual de la orden no permite cambiar el equipo.",
+    };
+    return messages[error.code] ?? error.message ?? "No fue posible actualizar el equipo";
+  }, []);
+
+  const executeAssignment = useCallback(async (
+    operation: (current: OrderDetail) => Promise<OrderDetail>,
+  ): Promise<boolean> => {
+    const current = detailRef.current.data;
+    if (!current || !canManageRef.current || assignmentPendingRef.current) return false;
+    assignmentPendingRef.current = true;
+    setAssignment({ pending: true, error: null });
+    try {
+      const incoming = await operation(current);
+      if (!canManageRef.current) return false;
+      applyAssignmentResult(incoming);
+      setAssignment({ pending: false, error: null });
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof ApiClientError && error.status === 403) {
+        canManageRef.current = false;
+        setManagementForbidden(true);
+      }
+      const versionConflict = error instanceof ApiClientError && error.code === "VERSION_CONFLICT";
+      setAssignment({ pending: false, error: versionConflict ? "La orden cambió en el servidor. Revisa el equipo actualizado." : assignmentErrorMessage(error) });
+      if (versionConflict) await refreshDetail();
+      return false;
+    } finally {
+      assignmentPendingRef.current = false;
+      setAssignment((currentState) => ({ ...currentState, pending: false }));
+    }
+  }, [applyAssignmentResult, assignmentErrorMessage, refreshDetail]);
+
+  const assignTechnician = useCallback((technicianId: string, role: OrderTechnicianRole) => executeAssignment(
+    (current) => api.assign(current.id, { technicianId, role, version: current.version }),
+  ), [api, executeAssignment]);
+
+  const unassignTechnician = useCallback((technicianId: string, reason: string) => executeAssignment(
+    (current) => api.unassign(current.id, technicianId, { reason, version: current.version }),
+  ), [api, executeAssignment]);
+
   return {
     filters,
     selectedOrderId,
@@ -484,6 +557,7 @@ export function useOrdersWorkspace({
     catalog,
     history,
     form,
+    assignment,
     setFilters,
     setPage,
     selectOrder,
@@ -496,5 +570,7 @@ export function useOrdersWorkspace({
     openEdit,
     closeForm,
     submitOrder,
+    assignTechnician,
+    unassignTechnician,
   };
 }

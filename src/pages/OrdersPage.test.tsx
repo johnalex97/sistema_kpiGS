@@ -64,6 +64,7 @@ function workspace(
     catalog: { status: "success", data: { serviceTypes: [], materials: [] }, error: null, stale: false },
     history: { status: "idle", data: null, error: null, stale: false },
     form: null,
+    assignment: { pending: false, error: null },
     setFilters: vi.fn(),
     setPage: vi.fn(),
     selectOrder: vi.fn(),
@@ -76,6 +77,8 @@ function workspace(
     openEdit: vi.fn(),
     closeForm: vi.fn(),
     submitOrder: vi.fn(),
+    assignTechnician: vi.fn(),
+    unassignTechnician: vi.fn(),
     ...overrides,
   };
 }
@@ -87,6 +90,15 @@ describe("OrdersPage", () => {
     render(<OrdersPage search="" workspace={state} />);
     await user.click(screen.getByRole("button", { name: "Nueva orden" }));
     expect(state.openCreate).toHaveBeenCalledOnce();
+  });
+
+  it("does not expose team management without ORDERS_MANAGE", () => {
+    render(<OrdersPage search="" workspace={workspace({
+      capabilities: { ...workspace().capabilities, canManage: false },
+      selectedOrderId: detail.id,
+      detail: { status: "success", data: detail, error: null, stale: false },
+    })} />);
+    expect(screen.queryByRole("region", { name: "Administrar equipo" })).not.toBeInTheDocument();
   });
   it("renders the dense list, mobile cards and an explicit overdue signal", () => {
     render(<OrdersPage search="" workspace={workspace()} />);
