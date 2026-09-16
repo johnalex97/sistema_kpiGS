@@ -16,6 +16,33 @@ afterEach(() => {
 });
 
 describe("AppShell", () => {
+  it("navigates to the persistent orders workspace", async () => {
+    const orderUser = {
+      ...limitedUser,
+      permissions: ["ORDERS_VIEW_OWN"],
+    };
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname;
+      const data = path.endsWith("/orders/catalog")
+        ? { serviceTypes: [], materials: [] }
+        : { items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } };
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const user = userEvent.setup();
+    renderWithAuth(<AppShell />, { user: orderUser });
+
+    await user.click(screen.getByRole("button", { name: "Órdenes" }));
+
+    expect(window.location.pathname).toBe("/ordenes");
+    expect(screen.getByRole("heading", { level: 1, name: "Órdenes" }))
+      .toBeInTheDocument();
+    expect(await screen.findByText("No hay órdenes para estos filtros"))
+      .toBeInTheDocument();
+  });
+
   it("expone un buscador preparado para consultas operativas", () => {
     renderWithAuth(<AppShell />);
 

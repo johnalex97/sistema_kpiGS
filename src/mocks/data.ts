@@ -1,5 +1,6 @@
 import {
   ClipboardList,
+  ClipboardCheck,
   LayoutDashboard,
   RefreshCw,
   Users,
@@ -28,6 +29,7 @@ export const initialWorks: Work[] = [
 
 export const navItems: NavigationItem[] = [
   { label: "Resumen", path: "/resumen", icon: LayoutDashboard },
+  { label: "Órdenes", path: "/ordenes", icon: ClipboardCheck },
   { label: "Actividades", path: "/actividades", icon: ClipboardList },
   { label: "Técnicos", path: "/tecnicos", icon: Users },
   { label: "Reincidencias", path: "/reincidencias", icon: RefreshCw },

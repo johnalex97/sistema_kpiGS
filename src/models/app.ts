@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 
-export type Page = "Resumen" | "Actividades" | "Técnicos" | "Reincidencias";
-export type PagePath = "/resumen" | "/actividades" | "/tecnicos" | "/reincidencias";
+export type Page = "Resumen" | "Órdenes" | "Actividades" | "Técnicos" | "Reincidencias";
+export type PagePath = "/resumen" | "/ordenes" | "/actividades" | "/tecnicos" | "/reincidencias";
 
 // Contratos temporales del resumen visual; el módulo persistente de Actividades usa models/activity.ts.
 export type WorkType = "Soporte" | "Instalación" | "Entrega";
