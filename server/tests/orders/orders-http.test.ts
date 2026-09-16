@@ -48,6 +48,10 @@ const users = {
     id: randomUUID(),
     email: `orders.provisional.${randomUUID()}@example.test`,
   },
+  denied: {
+    id: randomUUID(),
+    email: `orders.denied.${randomUUID()}@example.test`,
+  },
 } as const;
 const technicianIds = {
   primary: randomUUID(),
@@ -129,6 +133,13 @@ beforeAll(async () => {
         displayName: "Provisional HTTP órdenes",
         status: "ACTIVE",
         mustChangePassword: true,
+        passwordHash,
+      },
+      {
+        ...users.denied,
+        displayName: "Sin permisos HTTP ordenes",
+        status: "ACTIVE",
+        mustChangePassword: false,
         passwordHash,
       },
     ],
@@ -232,6 +243,40 @@ function orderInput(label: string) {
 }
 
 describe("orders HTTP security", () => {
+  it("protects the operational catalog and exposes it to every order profile", async () => {
+    const app = createApp({ env, logger: silentLogger, database });
+    const unauthenticated = await request(app)
+      .get("/api/v1/orders/catalog")
+      .expect(401);
+    expect(unauthenticated.body.errors[0].code).toBe(
+      "AUTHENTICATION_REQUIRED",
+    );
+
+    const provisional = await authenticatedAgent(users.provisional);
+    const passwordRequired = await provisional
+      .get("/api/v1/orders/catalog")
+      .expect(403);
+    expect(passwordRequired.body.errors[0].code).toBe(
+      "PASSWORD_CHANGE_REQUIRED",
+    );
+
+    const denied = await authenticatedAgent(users.denied);
+    const forbidden = await denied.get("/api/v1/orders/catalog").expect(403);
+    expect(forbidden.body.errors[0].code).toBe("FORBIDDEN");
+
+    for (const user of [users.admin, users.supervisor, users.primary]) {
+      const agent = await authenticatedAgent(user);
+      const response = await agent.get("/api/v1/orders/catalog").expect(200);
+      expect(response.body).toMatchObject({
+        success: true,
+        data: {
+          serviceTypes: expect.any(Array),
+          materials: expect.any(Array),
+        },
+      });
+    }
+  });
+
   it("enforces authentication, provisional-password, origin, and route permissions", async () => {
     const app = createApp({ env, logger: silentLogger, database });
     const unauthenticated = await request(app).get("/api/v1/orders").expect(401);

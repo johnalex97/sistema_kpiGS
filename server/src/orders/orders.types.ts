@@ -128,6 +128,25 @@ export interface PaginatedResult<T> {
   pagination: Pagination;
 }
 
+export interface PublicServiceTypeOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export interface PublicMaterialOption {
+  id: string;
+  code: string;
+  name: string;
+  unit: string;
+  referenceCost: string;
+}
+
+export interface PublicOrderCatalog {
+  serviceTypes: PublicServiceTypeOption[];
+  materials: PublicMaterialOption[];
+}
+
 export interface PublicOrderTechnician {
   id: string;
   code: string;

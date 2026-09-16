@@ -61,6 +61,21 @@ const materialInput: MaterialInput = {
 const updateMaterialInput: UpdateMaterialInput = { version: 1, quantity: "3.000" };
 const removeMaterialInput: RemoveMaterialInput = { version: 1 };
 
+const orderCatalog = {
+  serviceTypes: [
+    { id: "service-1", code: "SUPPORT", name: "Soporte" },
+  ],
+  materials: [
+    {
+      id: "material-1",
+      code: "MAT-001",
+      name: "Cable UTP",
+      unit: "metro",
+      referenceCost: "12.50",
+    },
+  ],
+};
+
 function actor(
   permissions: readonly string[],
   linkedTechnicianId: string | null = null,
@@ -143,6 +158,7 @@ function historyRecord(): OrderHistoryRecord {
 function repositoryWithSuccess(): OrdersRepository {
   const detail = detailRecord();
   return {
+    listOrderCatalog: vi.fn(async () => orderCatalog),
     listOrders: vi.fn(async () => ({ items: [summaryRecord()], totalItems: 21 })),
     findOrderById: vi.fn(async () => detail),
     listOrderHistory: vi.fn(async () => ({ items: [historyRecord()], totalItems: 11 })),
@@ -172,6 +188,27 @@ function expectForbidden(operation: Promise<unknown>) {
 }
 
 describe("OrdersService read authorization", () => {
+  it.each([
+    "ORDERS_VIEW_ALL",
+    "ORDERS_VIEW_OWN",
+    "ORDERS_MANAGE",
+    "ORDERS_OPERATE_OWN",
+  ])("returns the order catalog with %s", async (permission) => {
+    const repository = repositoryWithSuccess();
+    const service = createOrdersService(repository, () => fixedNow);
+
+    await expect(service.catalog(actor([permission]))).resolves.toEqual(orderCatalog);
+  });
+
+  it("denies the order catalog without a module permission", async () => {
+    const repository = repositoryWithSuccess();
+    const service = createOrdersService(repository, () => fixedNow);
+
+    await expectForbidden(service.catalog(actor([])));
+
+    expect(repository.listOrderCatalog).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["ADMIN", ["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]],
     ["SUPERVISOR", ["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]],

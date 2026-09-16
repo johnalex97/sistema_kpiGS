@@ -11,6 +11,7 @@ import type {
   OrderActorContext,
   OrderListFilters,
   PauseOrderInput,
+  PublicOrderCatalog,
   RemoveMaterialInput,
   UnassignmentInput,
   UpdateMaterialInput,
@@ -109,6 +110,7 @@ export interface PageRecord<T> {
 }
 
 export interface OrdersReadRepository {
+  listOrderCatalog(): Promise<PublicOrderCatalog>;
   listOrders(
     filters: OrderListFilters,
     scope: OrderAccessScope,

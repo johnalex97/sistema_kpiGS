@@ -247,6 +247,38 @@ export function createOrdersReadRepository(
   database: PrismaClient,
 ): OrdersReadRepository {
   return {
+    async listOrderCatalog() {
+      const [serviceTypes, materials] = await Promise.all([
+        database.tipoServicio.findMany({
+          where: { isActive: true, deletedAt: null },
+          select: { id: true, code: true, name: true },
+          orderBy: [{ name: "asc" }, { id: "asc" }],
+        }),
+        database.material.findMany({
+          where: {
+            isActive: true,
+            deletedAt: null,
+            referenceCost: { not: null },
+          },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            unit: true,
+            referenceCost: true,
+          },
+          orderBy: [{ name: "asc" }, { id: "asc" }],
+        }),
+      ]);
+      return {
+        serviceTypes,
+        materials: materials.map(({ referenceCost, ...material }) => ({
+          ...material,
+          referenceCost: referenceCost!.toString(),
+        })),
+      };
+    },
+
     async listOrders(filters, scope, now) {
       const where = listOrderWhere(filters, scope, now);
       return database.$transaction(

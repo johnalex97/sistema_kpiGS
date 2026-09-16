@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createOrdersReadRepository } from "../../src/orders/orders.read.repository.js";
 import type { OrderListFilters } from "../../src/orders/orders.types.js";
@@ -29,6 +30,82 @@ describe("orders read repository", () => {
   });
   afterAll(async () => {
     await removeOrdersReadFixture(database, fixture);
+  });
+
+  it("returns only eligible service types and materials in stable name order", async () => {
+    const ids = {
+      serviceDelivery: randomUUID(),
+      serviceSupport: randomUUID(),
+      serviceInactive: randomUUID(),
+      serviceDeleted: randomUUID(),
+      materialCable: randomUUID(),
+      materialRouter: randomUUID(),
+      materialInactive: randomUUID(),
+      materialDeleted: randomUUID(),
+      materialWithoutCost: randomUUID(),
+    };
+    const prefix = `Catalog ${fixture.suffix}`;
+    const serviceIds: string[] = [
+      ids.serviceDelivery,
+      ids.serviceSupport,
+      ids.serviceInactive,
+      ids.serviceDeleted,
+    ];
+    const materialIds: string[] = [
+      ids.materialCable,
+      ids.materialRouter,
+      ids.materialInactive,
+      ids.materialDeleted,
+      ids.materialWithoutCost,
+    ];
+
+    await database.tipoServicio.createMany({
+      data: [
+        { id: ids.serviceSupport, code: `CAT-SUP-${fixture.suffix}`, name: `${prefix} Soporte` },
+        { id: ids.serviceDelivery, code: `CAT-ENT-${fixture.suffix}`, name: `${prefix} Entrega` },
+        { id: ids.serviceInactive, code: `CAT-INA-${fixture.suffix}`, name: `${prefix} Inactivo`, isActive: false },
+        { id: ids.serviceDeleted, code: `CAT-DEL-${fixture.suffix}`, name: `${prefix} Eliminado`, deletedAt: now },
+      ],
+    });
+    await database.material.createMany({
+      data: [
+        { id: ids.materialRouter, code: `CAT-ROU-${fixture.suffix}`, name: `${prefix} Router`, unit: "unidad", referenceCost: "950.00" },
+        { id: ids.materialCable, code: `CAT-CAB-${fixture.suffix}`, name: `${prefix} Cable UTP`, unit: "metro", referenceCost: "12.50" },
+        { id: ids.materialInactive, code: `CAT-MIN-${fixture.suffix}`, name: `${prefix} Material inactivo`, unit: "unidad", referenceCost: "1.00", isActive: false },
+        { id: ids.materialDeleted, code: `CAT-MDE-${fixture.suffix}`, name: `${prefix} Material eliminado`, unit: "unidad", referenceCost: "1.00", deletedAt: now },
+        { id: ids.materialWithoutCost, code: `CAT-SCO-${fixture.suffix}`, name: `${prefix} Sin costo`, unit: "unidad", referenceCost: null },
+      ],
+    });
+
+    try {
+      const result = await createOrdersReadRepository(database).listOrderCatalog();
+      const ownServices = result.serviceTypes.filter(({ id }) => serviceIds.includes(id));
+      const ownMaterials = result.materials.filter(({ id }) => materialIds.includes(id));
+
+      expect(ownServices.map(({ id }) => id)).toEqual([
+        ids.serviceDelivery,
+        ids.serviceSupport,
+      ]);
+      expect(ownMaterials).toEqual([
+        {
+          id: ids.materialCable,
+          code: `CAT-CAB-${fixture.suffix}`,
+          name: `${prefix} Cable UTP`,
+          unit: "metro",
+          referenceCost: "12.5",
+        },
+        {
+          id: ids.materialRouter,
+          code: `CAT-ROU-${fixture.suffix}`,
+          name: `${prefix} Router`,
+          unit: "unidad",
+          referenceCost: "950",
+        },
+      ]);
+    } finally {
+      await database.material.deleteMany({ where: { id: { in: materialIds } } });
+      await database.tipoServicio.deleteMany({ where: { id: { in: serviceIds } } });
+    }
   });
 
   it("scopes a technician to active and historical assignments without exposing unrelated orders", async () => {

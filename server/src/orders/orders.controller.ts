@@ -24,6 +24,7 @@ import type { OrdersService } from "./orders.service.js";
 import type { OrderActorContext } from "./orders.types.js";
 
 const messages = {
+  catalog: "Catálogo de órdenes consultado",
   list: "Órdenes consultadas",
   detail: "Orden consultada",
   history: "Historial consultado",
@@ -97,6 +98,19 @@ export function createOrdersController(service: OrdersService) {
   };
 
   return {
+    catalog: async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        success(
+          req,
+          res,
+          200,
+          messages.catalog,
+          await service.catalog(actor(req)),
+        );
+      } catch (error) {
+        next(error);
+      }
+    },
     list: async (req: Request, res: Response, next: NextFunction) => {
       try {
         const query = parse(orderListQuerySchema.safeParse(req.query));

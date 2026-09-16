@@ -34,6 +34,16 @@ export function createOrdersRouter(
     requirePasswordChanged,
     requireAnyPermission("ORDERS_VIEW_ALL", "ORDERS_VIEW_OWN"),
   ];
+  const catalogSecurity = [
+    authentication,
+    requirePasswordChanged,
+    requireAnyPermission(
+      "ORDERS_VIEW_ALL",
+      "ORDERS_VIEW_OWN",
+      "ORDERS_MANAGE",
+      "ORDERS_OPERATE_OWN",
+    ),
+  ];
   const manageSecurity = [
     requireAllowedOrigin(env.CORS_ORIGINS),
     authentication,
@@ -54,6 +64,7 @@ export function createOrdersRouter(
   ];
 
   router.get("/", ...readSecurity, controller.list);
+  router.get("/catalog", ...catalogSecurity, controller.catalog);
   router.get("/:orderId", ...readSecurity, controller.detail);
   router.get("/:orderId/history", ...readSecurity, controller.history);
   router.post("/", ...manageSecurity, controller.create);

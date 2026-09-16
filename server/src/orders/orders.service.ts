@@ -22,6 +22,7 @@ import type {
   OrderListFilters,
   PaginatedResult,
   PauseOrderInput,
+  PublicOrderCatalog,
   PublicOrderDetail,
   PublicOrderHistory,
   PublicOrderSummary,
@@ -144,6 +145,18 @@ function requireMaterialOperation(actor: OrderActorContext): void {
   requireOwnOperation(actor);
 }
 
+function requireCatalogAccess(actor: OrderActorContext): void {
+  const catalogPermissions = [
+    "ORDERS_VIEW_ALL",
+    "ORDERS_VIEW_OWN",
+    "ORDERS_MANAGE",
+    "ORDERS_OPERATE_OWN",
+  ];
+  if (!catalogPermissions.some((permission) => hasPermission(actor, permission))) {
+    throw forbidden();
+  }
+}
+
 function accessScope(actor: OrderActorContext): OrderAccessScope {
   if (hasPermission(actor, "ORDERS_VIEW_ALL")) return { kind: "ALL" };
   if (
@@ -175,6 +188,7 @@ function mapMutationResult(
 }
 
 export interface OrdersService {
+  catalog(actor: OrderActorContext): Promise<PublicOrderCatalog>;
   listOrders(
     filters: OrderListFilters,
     actor: OrderActorContext,
@@ -274,6 +288,11 @@ export function createOrdersService(
   }
 
   return {
+    async catalog(actor) {
+      requireCatalogAccess(actor);
+      return repository.listOrderCatalog();
+    },
+
     async listOrders(filters, actor) {
       const scope = accessScope(actor);
       const timestamp = now();
