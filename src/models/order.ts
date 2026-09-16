@@ -125,6 +125,40 @@ export interface OrderCatalog {
   materials: OrderMaterialOption[];
 }
 
+export interface OrderClientOption {
+  id: string;
+  code: string;
+  tradeName: string;
+}
+
+export interface OrderBranchOption {
+  id: string;
+  code: string;
+  name: string;
+  address: string;
+  isEffectivelyActive: boolean;
+}
+
+export type OrderTechnicianStatus =
+  | "AVAILABLE"
+  | "BUSY"
+  | "ON_ROUTE"
+  | "INACTIVE";
+
+export interface OrderTechnicianOption extends OrderTechnician {
+  status: OrderTechnicianStatus;
+}
+
+export interface OrderClientPage {
+  items: OrderClientOption[];
+  pagination: OrderPagination;
+}
+
+export interface OrderTechnicianPage {
+  items: OrderTechnicianOption[];
+  pagination: OrderPagination;
+}
+
 export interface VersionInput {
   version: number;
 }
