@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OrderLookupApi } from "../api/order-lookups";
 import type { OrdersApi } from "../api/orders";
+import { ApiClientError, type ApiFieldError } from "../api/http";
 import { useAuth } from "../auth/useAuth";
 import type {
   OrderCatalog,
@@ -8,6 +9,8 @@ import type {
   OrderFilters,
   OrderHistoryPage,
   OrderPage,
+  CreateOrderInput,
+  UpdateOrderInput,
 } from "../models/order";
 import {
   deriveOrderCapabilities,
@@ -34,6 +37,7 @@ export interface OrdersWorkspace {
   detail: OrderReadState<OrderDetail>;
   catalog: OrderReadState<OrderCatalog>;
   history: OrderReadState<OrderHistoryPage>;
+  form: OrderFormState | null;
   setFilters(patch: Partial<OrderFilters>): void;
   setPage(page: number): void;
   selectOrder(id: string): void;
@@ -42,6 +46,19 @@ export interface OrdersWorkspace {
   refreshDetail(): Promise<void>;
   refresh(): Promise<void>;
   loadHistory(page?: number): Promise<void>;
+  openCreate(): void;
+  openEdit(): void;
+  closeForm(): void;
+  submitOrder(input: CreateOrderInput | Omit<UpdateOrderInput, "version">): Promise<boolean>;
+}
+
+export interface OrderFormState {
+  mode: "create" | "edit";
+  order: OrderDetail | null;
+  pending: boolean;
+  error: string | null;
+  fieldErrors: ApiFieldError[];
+  conflict: boolean;
 }
 
 export interface UseOrdersWorkspaceOptions {
@@ -79,12 +96,17 @@ export function useOrdersWorkspace({
 }: UseOrdersWorkspaceOptions): OrdersWorkspace {
   const { user } = useAuth();
   const permissionsKey = (user?.permissions ?? []).join("\u0000");
-  const capabilities = useMemo(
+  const grantedCapabilities = useMemo(
     () => deriveOrderCapabilities(user?.permissions ?? []),
     // permissionsKey captures in-place permission array changes from auth refreshes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [permissionsKey],
   );
+  const [managementForbidden, setManagementForbidden] = useState(false);
+  const capabilities = useMemo(() => ({
+    ...grantedCapabilities,
+    canManage: grantedCapabilities.canManage && !managementForbidden,
+  }), [grantedCapabilities, managementForbidden]);
   const initialRef = useRef(readOrderUrlState(window.location.search));
   const initialSearch = search.trim();
   const [filters, setFiltersState] = useState<OrderFilters>(() => ({
@@ -98,11 +120,15 @@ export function useOrdersWorkspace({
   const [detail, setDetail] = useState<OrderReadState<OrderDetail>>(idleState);
   const [catalog, setCatalog] = useState<OrderReadState<OrderCatalog>>(idleState);
   const [history, setHistory] = useState<OrderReadState<OrderHistoryPage>>(idleState);
+  const [form, setForm] = useState<OrderFormState | null>(null);
 
   const filtersRef = useRef(filters);
   const selectedIdRef = useRef(selectedOrderId);
   const listRef = useRef(list);
   const detailRef = useRef(detail);
+  const formRef = useRef(form);
+  const canManageRef = useRef(capabilities.canManage);
+  const mutationPendingRef = useRef(false);
   const appliedSearchRef = useRef(initialSearch);
   const controllers = useRef({
     list: null as AbortController | null,
@@ -116,6 +142,8 @@ export function useOrdersWorkspace({
   useEffect(() => { selectedIdRef.current = selectedOrderId; }, [selectedOrderId]);
   useEffect(() => { listRef.current = list; }, [list]);
   useEffect(() => { detailRef.current = detail; }, [detail]);
+  useEffect(() => { formRef.current = form; }, [form]);
+  useEffect(() => { canManageRef.current = capabilities.canManage; }, [capabilities.canManage]);
 
   const loadList = useCallback(async (): Promise<void> => {
     if (!capabilities.canView) return;
@@ -301,7 +329,7 @@ export function useOrdersWorkspace({
 
   useEffect(() => {
     const poll = () => {
-      if (document.visibilityState === "visible" && !formActive) void refresh();
+      if (document.visibilityState === "visible" && !formActive && !formRef.current) void refresh();
     };
     const timer = window.setInterval(poll, pollIntervalMs);
     const handleVisibility = () => poll();
@@ -311,6 +339,12 @@ export function useOrdersWorkspace({
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [formActive, pollIntervalMs, refresh]);
+
+  useEffect(() => {
+    if (capabilities.canManage) return;
+    mutationPendingRef.current = false;
+    setForm(null);
+  }, [capabilities.canManage]);
 
   useEffect(() => () => {
     Object.values(controllers.current).forEach((controller) => controller?.abort());
@@ -366,6 +400,80 @@ export function useOrdersWorkspace({
     );
   }, []);
 
+  const openCreate = useCallback(() => {
+    if (!canManageRef.current) return;
+    setForm({ mode: "create", order: null, pending: false, error: null, fieldErrors: [], conflict: false });
+  }, []);
+
+  const openEdit = useCallback(() => {
+    const current = detailRef.current.data;
+    if (!canManageRef.current || !current || !["PENDING", "ASSIGNED"].includes(current.status)) return;
+    setForm({ mode: "edit", order: current, pending: false, error: null, fieldErrors: [], conflict: false });
+  }, []);
+
+  const closeForm = useCallback(() => {
+    if (mutationPendingRef.current) return;
+    setForm(null);
+  }, []);
+
+  const submitOrder = useCallback(async (
+    input: CreateOrderInput | Omit<UpdateOrderInput, "version">,
+  ): Promise<boolean> => {
+    const currentForm = formRef.current;
+    if (!currentForm || !canManageRef.current || mutationPendingRef.current) return false;
+    mutationPendingRef.current = true;
+    setForm((current) => current ? { ...current, pending: true, error: null, fieldErrors: [], conflict: false } : null);
+    try {
+      const currentDetail = detailRef.current.data;
+      const incoming = currentForm.mode === "create"
+        ? await api.create(input as CreateOrderInput)
+        : currentDetail && currentDetail.id === currentForm.order?.id
+          ? await api.update(currentDetail.id, { ...input, version: currentDetail.version })
+          : null;
+      if (!incoming || !canManageRef.current) return false;
+      selectedIdRef.current = incoming.id;
+      setSelectedOrderId(incoming.id);
+      setDetail({ status: "success", data: incoming, error: null, stale: false });
+      setList((current) => current.data ? {
+        ...current,
+        data: {
+          ...current.data,
+          items: current.data.items.some((item) => item.id === incoming.id)
+            ? current.data.items.map((item) => item.id === incoming.id ? incoming : item)
+            : [incoming, ...current.data.items],
+        },
+      } : current);
+      setForm(null);
+      window.history.pushState(window.history.state, "", urlFor({ filters: filtersRef.current, orderId: incoming.id }));
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof ApiClientError && error.status === 403) {
+        canManageRef.current = false;
+        setManagementForbidden(true);
+        controllers.current.catalog?.abort();
+        generations.current.catalog += 1;
+        setCatalog(idleState());
+        setForm(null);
+        return false;
+      }
+      const conflict = error instanceof ApiClientError && error.status === 409;
+      setForm((current) => current ? {
+        ...current,
+        pending: false,
+        error: conflict
+          ? "La orden cambió en el servidor. Revisa la versión actual antes de guardar de nuevo."
+          : errorMessage(error, "No fue posible guardar la orden"),
+        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [],
+        conflict,
+      } : null);
+      if (conflict && currentForm.mode === "edit") await refreshDetail();
+      return false;
+    } finally {
+      mutationPendingRef.current = false;
+      setForm((current) => current ? { ...current, pending: false } : null);
+    }
+  }, [api, refreshDetail]);
+
   return {
     filters,
     selectedOrderId,
@@ -375,6 +483,7 @@ export function useOrdersWorkspace({
     detail,
     catalog,
     history,
+    form,
     setFilters,
     setPage,
     selectOrder,
@@ -383,5 +492,9 @@ export function useOrdersWorkspace({
     refreshDetail,
     refresh,
     loadHistory,
+    openCreate,
+    openEdit,
+    closeForm,
+    submitOrder,
   };
 }

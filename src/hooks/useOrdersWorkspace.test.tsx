@@ -2,6 +2,7 @@ import type { PropsWithChildren } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OrderLookupApi } from "../api/order-lookups";
+import { ApiClientError } from "../api/http";
 import type { OrdersApi } from "../api/orders";
 import { AuthContext } from "../auth/AuthContext";
 import type { AuthUser } from "../models/auth";
@@ -107,6 +108,68 @@ afterEach(() => {
 });
 
 describe("useOrdersWorkspace", () => {
+  it("creates an order only with management permission and adopts the server response", async () => {
+    const created = { ...order, id: "order-2", orderNumber: "OT-2026-0002", version: 1 };
+    const api = apiMock({
+      create: vi.fn(async () => created),
+      detail: vi.fn(async (id) => id === created.id ? created : order),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "CLIENTS_VIEW"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+
+    act(() => result.current.openCreate());
+    expect(result.current.form?.mode).toBe("create");
+    await act(async () => {
+      await result.current.submitOrder({
+        branchId: "branch-1", serviceTypeId: "service-1", priority: "HIGH",
+        reportedProblem: "Sin red", scheduledFor: null, estimatedMinutes: 60,
+      });
+    });
+
+    expect(api.create).toHaveBeenCalledOnce();
+    expect(result.current.form).toBeNull();
+    expect(result.current.selectedOrderId).toBe("order-2");
+    expect(result.current.detail.data).toEqual(created);
+  });
+
+  it("uses the current version for edit and preserves the draft on validation or conflict", async () => {
+    const update = vi.fn<OrdersApi["update"]>()
+      .mockRejectedValueOnce(new ApiClientError(422, "VALIDATION_ERROR", "Datos inválidos", [{ field: "reportedProblem", code: "TOO_SHORT", message: "Muy corto" }]))
+      .mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "Conflicto"));
+    const api = apiMock({ update });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "CLIENTS_VIEW"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder("order-1"));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    act(() => result.current.openEdit());
+
+    await act(async () => { await result.current.submitOrder({ reportedProblem: "Nueva descripción" }); });
+    expect(update).toHaveBeenLastCalledWith("order-1", { reportedProblem: "Nueva descripción", version: 1 });
+    expect(result.current.form?.fieldErrors[0]?.field).toBe("reportedProblem");
+
+    await act(async () => { await result.current.submitOrder({ reportedProblem: "Nueva descripción" }); });
+    expect(result.current.form?.conflict).toBe(true);
+    expect(result.current.form?.mode).toBe("edit");
+    expect(api.detail).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes the form and clears catalog data after a forbidden mutation", async () => {
+    const api = apiMock({ create: vi.fn(async () => { throw new ApiClientError(403, "FORBIDDEN", "Prohibido"); }) });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "CLIENTS_VIEW"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.catalog.status).toBe("success"));
+    act(() => result.current.openCreate());
+    await act(async () => { await result.current.submitOrder({ branchId: "branch-1", serviceTypeId: "service-1", priority: "MEDIUM", reportedProblem: "Sin señal" }); });
+
+    expect(result.current.form).toBeNull();
+    expect(result.current.catalog.data).toBeNull();
+    expect(result.current.capabilities.canManage).toBe(false);
+  });
   it("loads list, catalog and URL-selected detail", async () => {
     window.history.replaceState({}, "", "/ordenes?status=ASSIGNED&orderId=order-1");
     const api = apiMock();

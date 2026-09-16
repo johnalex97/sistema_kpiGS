@@ -63,6 +63,7 @@ function workspace(
     detail: { status: "idle", data: null, error: null, stale: false },
     catalog: { status: "success", data: { serviceTypes: [], materials: [] }, error: null, stale: false },
     history: { status: "idle", data: null, error: null, stale: false },
+    form: null,
     setFilters: vi.fn(),
     setPage: vi.fn(),
     selectOrder: vi.fn(),
@@ -71,11 +72,22 @@ function workspace(
     refreshDetail: vi.fn(),
     refresh: vi.fn(),
     loadHistory: vi.fn(),
+    openCreate: vi.fn(),
+    openEdit: vi.fn(),
+    closeForm: vi.fn(),
+    submitOrder: vi.fn(),
     ...overrides,
   };
 }
 
 describe("OrdersPage", () => {
+  it("opens creation only through the management capability", async () => {
+    const state = workspace();
+    const user = userEvent.setup();
+    render(<OrdersPage search="" workspace={state} />);
+    await user.click(screen.getByRole("button", { name: "Nueva orden" }));
+    expect(state.openCreate).toHaveBeenCalledOnce();
+  });
   it("renders the dense list, mobile cards and an explicit overdue signal", () => {
     render(<OrdersPage search="" workspace={workspace()} />);
 
