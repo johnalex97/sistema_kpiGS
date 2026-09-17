@@ -15,6 +15,8 @@ import type {
   OrderActionInput,
   OrderDialogAction,
   OrderOperationalAction,
+  MaterialInput,
+  UpdateMaterialInput,
 } from "../models/order";
 import {
   allowedOrderActions,
@@ -44,6 +46,7 @@ export interface OrdersWorkspace {
   history: OrderReadState<OrderHistoryPage>;
   form: OrderFormState | null;
   assignment: OrderAssignmentState;
+  material: OrderMaterialState;
   action: OrderOperationState;
   setFilters(patch: Partial<OrderFilters>): void;
   setPage(page: number): void;
@@ -59,12 +62,20 @@ export interface OrdersWorkspace {
   submitOrder(input: CreateOrderInput | Omit<UpdateOrderInput, "version">): Promise<boolean>;
   assignTechnician(technicianId: string, role: OrderTechnicianRole): Promise<boolean>;
   unassignTechnician(technicianId: string, reason: string): Promise<boolean>;
+  addMaterial(input: Omit<MaterialInput, "version">): Promise<boolean>;
+  updateMaterial(usageId: string, input: Omit<UpdateMaterialInput, "version">): Promise<boolean>;
+  removeMaterial(usageId: string): Promise<boolean>;
   openOrderAction(action: OrderDialogAction): void;
   closeOrderAction(): void;
   executeOrderAction(action: OrderOperationalAction, input: OrderActionInput): Promise<boolean>;
 }
 
 export interface OrderAssignmentState {
+  pending: boolean;
+  error: string | null;
+}
+
+export interface OrderMaterialState {
   pending: boolean;
   error: string | null;
 }
@@ -154,6 +165,7 @@ export function useOrdersWorkspace({
   const [history, setHistory] = useState<OrderReadState<OrderHistoryPage>>(idleState);
   const [form, setForm] = useState<OrderFormState | null>(null);
   const [assignment, setAssignment] = useState<OrderAssignmentState>({ pending: false, error: null });
+  const [material, setMaterial] = useState<OrderMaterialState>({ pending: false, error: null });
   const [action, setAction] = useState<OrderOperationState>(() => idleOperation());
 
   const filtersRef = useRef(filters);
@@ -166,6 +178,8 @@ export function useOrdersWorkspace({
   const actionRef = useRef(action);
   const mutationPendingRef = useRef(false);
   const assignmentPendingRef = useRef(false);
+  const materialPendingRef = useRef(false);
+  const materialGenerationRef = useRef(0);
   const actionPendingRef = useRef(false);
   const actionGenerationRef = useRef(0);
   const appliedSearchRef = useRef(initialSearch);
@@ -350,6 +364,9 @@ export function useOrdersWorkspace({
       setDetail(idleState());
       setHistory(idleState());
       actionGenerationRef.current += 1;
+      materialGenerationRef.current += 1;
+      materialPendingRef.current = false;
+      setMaterial({ pending: false, error: null });
       actionPendingRef.current = false;
       actionRef.current = idleOperation();
       setAction(actionRef.current);
@@ -371,6 +388,9 @@ export function useOrdersWorkspace({
     setCatalog(idleState());
     setHistory(idleState());
     actionGenerationRef.current += 1;
+    materialGenerationRef.current += 1;
+    materialPendingRef.current = false;
+    setMaterial({ pending: false, error: null });
     actionPendingRef.current = false;
     actionRef.current = idleOperation();
     setAction(actionRef.current);
@@ -394,6 +414,13 @@ export function useOrdersWorkspace({
     mutationPendingRef.current = false;
     setForm(null);
   }, [capabilities.canManage]);
+
+  useEffect(() => {
+    if (capabilities.canManage || capabilities.canOperateOwn) return;
+    materialGenerationRef.current += 1;
+    materialPendingRef.current = false;
+    setMaterial({ pending: false, error: null });
+  }, [capabilities.canManage, capabilities.canOperateOwn]);
 
   useEffect(() => () => {
     Object.values(controllers.current).forEach((controller) => controller?.abort());
@@ -427,6 +454,9 @@ export function useOrdersWorkspace({
     setDetail(idleState());
     setHistory(idleState());
     actionGenerationRef.current += 1;
+    materialGenerationRef.current += 1;
+    materialPendingRef.current = false;
+    setMaterial({ pending: false, error: null });
     actionPendingRef.current = false;
     actionRef.current = idleOperation();
     setAction(actionRef.current);
@@ -447,6 +477,9 @@ export function useOrdersWorkspace({
     setDetail(idleState());
     setHistory(idleState());
     actionGenerationRef.current += 1;
+    materialGenerationRef.current += 1;
+    materialPendingRef.current = false;
+    setMaterial({ pending: false, error: null });
     actionPendingRef.current = false;
     actionRef.current = idleOperation();
     setAction(actionRef.current);
@@ -595,6 +628,67 @@ export function useOrdersWorkspace({
     (current) => api.unassign(current.id, technicianId, { reason, version: current.version }),
   ), [api, executeAssignment]);
 
+  const executeMaterial = useCallback(async (
+    operation: (current: OrderDetail) => Promise<OrderDetail>,
+  ): Promise<boolean> => {
+    const current = detailRef.current.data;
+    const canManageMaterials = current
+      && allowedOrderActions(current, capabilitiesRef.current, currentTechnicianId).includes("manageMaterials");
+    if (!current || !canManageMaterials || materialPendingRef.current) return false;
+    const targetOrderId = current.id;
+    const generation = ++materialGenerationRef.current;
+    materialPendingRef.current = true;
+    setMaterial({ pending: true, error: null });
+    try {
+      const incoming = await operation(current);
+      const stillCurrent = generation === materialGenerationRef.current
+        && selectedIdRef.current === targetOrderId;
+      applyOrderResult(incoming, targetOrderId, stillCurrent);
+      void loadList();
+      if (stillCurrent) setMaterial({ pending: false, error: null });
+      return true;
+    } catch (error: unknown) {
+      const forbidden = error instanceof ApiClientError && error.status === 403;
+      if (forbidden) {
+        capabilitiesRef.current = {
+          ...capabilitiesRef.current,
+          canManage: false,
+          canOperateOwn: false,
+        };
+        canManageRef.current = false;
+        setOperationsForbidden(true);
+      }
+      const versionConflict = error instanceof ApiClientError && error.code === "VERSION_CONFLICT";
+      if (generation === materialGenerationRef.current) {
+        setMaterial({
+          pending: false,
+          error: versionConflict
+            ? "La orden cambió en el servidor. Revisa los materiales actualizados."
+            : errorMessage(error, "No fue posible actualizar los materiales"),
+        });
+      }
+      if (versionConflict && selectedIdRef.current === targetOrderId) await refreshDetail();
+      return false;
+    } finally {
+      if (generation === materialGenerationRef.current) {
+        materialPendingRef.current = false;
+        setMaterial((currentState) => ({ ...currentState, pending: false }));
+      }
+    }
+  }, [applyOrderResult, currentTechnicianId, loadList, refreshDetail]);
+
+  const addMaterial = useCallback((input: Omit<MaterialInput, "version">) => executeMaterial(
+    (current) => api.addMaterial(current.id, { ...input, version: current.version }),
+  ), [api, executeMaterial]);
+
+  const updateMaterial = useCallback((usageId: string, input: Omit<UpdateMaterialInput, "version">) => executeMaterial(
+    (current) => api.updateMaterial(current.id, usageId, { ...input, version: current.version }),
+  ), [api, executeMaterial]);
+
+  const removeMaterial = useCallback((usageId: string) => executeMaterial(
+    (current) => api.removeMaterial(current.id, usageId, { version: current.version }),
+  ), [api, executeMaterial]);
+
   const openOrderAction = useCallback((requested: OrderDialogAction) => {
     const current = detailRef.current.data;
     if (!current || actionPendingRef.current) return;
@@ -735,6 +829,7 @@ export function useOrdersWorkspace({
     history,
     form,
     assignment,
+    material,
     action,
     setFilters,
     setPage,
@@ -750,6 +845,9 @@ export function useOrdersWorkspace({
     submitOrder,
     assignTechnician,
     unassignTechnician,
+    addMaterial,
+    updateMaterial,
+    removeMaterial,
     openOrderAction,
     closeOrderAction,
     executeOrderAction,

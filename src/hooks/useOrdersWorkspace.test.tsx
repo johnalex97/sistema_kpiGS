@@ -190,6 +190,64 @@ describe("useOrdersWorkspace", () => {
     expect(result.current.detail.data).toEqual(removed);
   });
 
+  it("manages materials with the current detail version, server result and refreshed list", async () => {
+    const active = { ...order, status: "IN_PROGRESS" as const, version: 4 };
+    const added = {
+      ...active,
+      version: 5,
+      materials: [{ id: "usage-1", material: { id: "material-1", code: "MAT-001", name: "Cable", unit: "metro" }, quantity: "2.125", historicalUnitCost: "18.75", observation: "Tramo nuevo", createdAt: "2026-09-16T13:00:00.000Z" }],
+    };
+    const updated = { ...added, version: 6, materials: [{ ...added.materials[0], quantity: "3.000", observation: null }] };
+    const removed = { ...updated, version: 7, materials: [] };
+    const api = apiMock({
+      detail: vi.fn(async () => active),
+      addMaterial: vi.fn(async () => added),
+      updateMaterial: vi.fn(async () => updated),
+      removeMaterial: vi.fn(async () => removed),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(active.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(active));
+
+    await act(async () => { await result.current.addMaterial({ materialId: "material-1", quantity: "2.125", observation: "Tramo nuevo" }); });
+    expect(api.addMaterial).toHaveBeenCalledWith(active.id, { materialId: "material-1", quantity: "2.125", observation: "Tramo nuevo", version: 4 });
+    expect(result.current.detail.data).toEqual(added);
+    await act(async () => { await result.current.updateMaterial("usage-1", { quantity: "3.000", observation: null }); });
+    expect(api.updateMaterial).toHaveBeenCalledWith(active.id, "usage-1", { quantity: "3.000", observation: null, version: 5 });
+    await act(async () => { await result.current.removeMaterial("usage-1"); });
+    expect(api.removeMaterial).toHaveBeenCalledWith(active.id, "usage-1", { version: 6 });
+    expect(result.current.detail.data).toEqual(removed);
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(4));
+  });
+
+  it("rejects material changes after permission revocation or when the order is closed", async () => {
+    const active = { ...order, status: "IN_PROGRESS" as const, version: 4 };
+    const addMaterial = vi.fn<OrdersApi["addMaterial"]>(async () => { throw new ApiClientError(403, "FORBIDDEN", "Prohibido"); });
+    const api = apiMock({ detail: vi.fn(async () => active), addMaterial, updateMaterial: vi.fn(), removeMaterial: vi.fn() });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(active.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(active));
+
+    await act(async () => { await result.current.addMaterial({ materialId: "material-1", quantity: "1" }); });
+    expect(result.current.capabilities.canManage).toBe(false);
+    await act(async () => { await result.current.updateMaterial("usage-1", { quantity: "2" }); });
+    expect(api.updateMaterial).not.toHaveBeenCalled();
+
+    const closedApi = apiMock({ detail: vi.fn(async () => ({ ...active, status: "COMPLETED" as const })), addMaterial: vi.fn() });
+    const closedResult = renderHook(() => useOrdersWorkspace({ api: closedApi, lookupApi }), { wrapper });
+    await waitFor(() => expect(closedResult.result.current.list.status).toBe("success"));
+    act(() => closedResult.result.current.selectOrder(active.id));
+    await waitFor(() => expect(closedResult.result.current.detail.data?.status).toBe("COMPLETED"));
+    await act(async () => { await closedResult.result.current.addMaterial({ materialId: "material-1", quantity: "1" }); });
+    expect(closedApi.addMaterial).not.toHaveBeenCalled();
+  });
+
   it("keeps a stable backend assignment error without inventing availability", async () => {
     const api = apiMock({ assign: vi.fn(async () => { throw new ApiClientError(409, "TECHNICIAN_BUSY", "Ocupado"); }) });
     const lookupApi = lookupMock();

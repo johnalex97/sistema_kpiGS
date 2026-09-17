@@ -13,6 +13,7 @@ import "../components/orders/orders.css";
 
 const defaultApi = createOrdersApi();
 const defaultLookupApi = createOrderLookupApi();
+const emptyCatalog = { serviceTypes: [], materials: [] };
 
 interface OrdersPageProps {
   search?: string;
@@ -63,7 +64,7 @@ function OrdersWorkspaceView({ workspace, lookupApi }: { workspace: OrdersWorksp
         {workspace.detail.status === "loading" && <div className="orders-state" role="status"><span />Cargando detalle…</div>}
         {workspace.detail.status === "error" && <div className="orders-state orders-state--error" role="alert"><strong>No fue posible abrir la orden</strong><p>{workspace.detail.error}</p><button type="button" onClick={workspace.closeDetail}>Cerrar</button></div>}
         {selected && <>
-          <OrderDetail order={selected} actions={selectedActions} actionPending={workspace.action.pending} actionError={workspace.action.error} onClose={workspace.closeDetail} onEdit={selectedActions.includes("edit") ? workspace.openEdit : undefined} onAction={handleAction} />
+          <OrderDetail order={selected} actions={selectedActions} actionPending={workspace.action.pending} actionError={workspace.action.error} onClose={workspace.closeDetail} onEdit={selectedActions.includes("edit") ? workspace.openEdit : undefined} onAction={handleAction} materialCatalog={workspace.catalog.data ?? emptyCatalog} materialCanManage={selectedActions.includes("manageMaterials")} materialPending={workspace.material.pending} materialError={workspace.material.error} onAddMaterial={workspace.addMaterial} onUpdateMaterial={workspace.updateMaterial} onRemoveMaterial={workspace.removeMaterial} />
           {(selectedActions.includes("assign") || selectedActions.includes("unassign")) && <OrderAssignments order={selected} lookupApi={lookupApi} pending={workspace.assignment.pending} error={workspace.assignment.error} onAssign={workspace.assignTechnician} onUnassign={workspace.unassignTechnician} />}
         </>}
       </div>}
