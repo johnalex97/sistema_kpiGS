@@ -65,6 +65,7 @@ function workspace(
     history: { status: "idle", data: null, error: null, stale: false },
     form: null,
     assignment: { pending: false, error: null },
+    action: { pending: false, error: null, dialog: null, targetOrderId: null, targetVersion: null },
     setFilters: vi.fn(),
     setPage: vi.fn(),
     selectOrder: vi.fn(),
@@ -79,6 +80,9 @@ function workspace(
     submitOrder: vi.fn(),
     assignTechnician: vi.fn(),
     unassignTechnician: vi.fn(),
+    openOrderAction: vi.fn(),
+    closeOrderAction: vi.fn(),
+    executeOrderAction: vi.fn(),
     ...overrides,
   };
 }
@@ -99,6 +103,40 @@ describe("OrdersPage", () => {
       detail: { status: "success", data: detail, error: null, stale: false },
     })} />);
     expect(screen.queryByRole("region", { name: "Administrar equipo" })).not.toBeInTheDocument();
+  });
+  it("shows only valid owned operations and opens their specific dialog", async () => {
+    const state = workspace({
+      capabilities: { ...workspace().capabilities, canManage: false, canOperateOwn: true },
+      currentTechnicianId: "tech-1",
+      selectedOrderId: detail.id,
+      detail: { status: "success", data: detail, error: null, stale: false },
+    });
+    const user = userEvent.setup();
+    render(<OrdersPage search="" workspace={state} />);
+    expect(screen.getByRole("button", { name: "Finalizar orden" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Iniciar trabajo" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Finalizar orden" }));
+    expect(state.openOrderAction).toHaveBeenCalledWith("complete");
+  });
+
+  it("renders the requested action dialog with the current order", () => {
+    render(<OrdersPage search="" workspace={workspace({
+      currentTechnicianId: "tech-1",
+      selectedOrderId: detail.id,
+      detail: { status: "success", data: detail, error: null, stale: false },
+      action: { pending: false, error: null, dialog: "complete", targetOrderId: detail.id, targetVersion: detail.version },
+    })} />);
+    expect(screen.getByRole("dialog", { name: "Finalizar orden" })).toBeInTheDocument();
+  });
+  it("shows errors from direct operational actions without requiring a dialog", () => {
+    render(<OrdersPage search="" workspace={workspace({
+      capabilities: { ...workspace().capabilities, canManage: false, canOperateOwn: true },
+      currentTechnicianId: "tech-1",
+      selectedOrderId: detail.id,
+      detail: { status: "success", data: detail, error: null, stale: false },
+      action: { pending: false, error: "No fue posible iniciar el trabajo", dialog: null, targetOrderId: null, targetVersion: null },
+    })} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("No fue posible iniciar el trabajo");
   });
   it("renders the dense list, mobile cards and an explicit overdue signal", () => {
     render(<OrdersPage search="" workspace={workspace()} />);

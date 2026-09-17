@@ -203,6 +203,154 @@ describe("useOrdersWorkspace", () => {
     expect(result.current.assignment.error).toBe("El técnico ya tiene otro trabajo operativo.");
     expect(result.current.assignment.pending).toBe(false);
   });
+  it("executes the operational cycle with each confirmed server version", async () => {
+    let serverOrder = order;
+    const next = (status: OrderDetail["status"]) => {
+      serverOrder = { ...serverOrder, status, version: serverOrder.version + 1 };
+      return Promise.resolve(serverOrder);
+    };
+    const api = apiMock({
+      detail: vi.fn(async () => serverOrder),
+      onRoute: vi.fn(async () => next("ON_ROUTE")),
+      start: vi.fn(async () => next("IN_PROGRESS")),
+      pause: vi.fn(async () => next("PAUSED")),
+      resume: vi.fn(async () => next("IN_PROGRESS")),
+      complete: vi.fn(async () => next("COMPLETED")),
+      adjust: vi.fn(async () => next("COMPLETED")),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN", "ORDERS_MANAGE"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder("order-1"));
+    await waitFor(() => expect(result.current.detail.data?.status).toBe("ASSIGNED"));
+
+    await act(async () => { await result.current.executeOrderAction("onRoute", {}); });
+    expect(api.onRoute).toHaveBeenCalledWith("order-1", { version: 1 });
+    await act(async () => { await result.current.executeOrderAction("start", {}); });
+    expect(api.start).toHaveBeenCalledWith("order-1", { version: 2 });
+    await act(async () => { await result.current.executeOrderAction("pause", { comment: "Esperando acceso autorizado" }); });
+    expect(api.pause).toHaveBeenCalledWith("order-1", { comment: "Esperando acceso autorizado", version: 3 });
+    await act(async () => { await result.current.executeOrderAction("resume", {}); });
+    expect(api.resume).toHaveBeenCalledWith("order-1", { version: 4 });
+    await act(async () => { await result.current.executeOrderAction("complete", { diagnosis: "Conector dañado", result: "Enlace restablecido" }); });
+    expect(api.complete).toHaveBeenCalledWith("order-1", { diagnosis: "Conector dañado", result: "Enlace restablecido", version: 5 });
+    await act(async () => { await result.current.executeOrderAction("adjust", { reason: "Corrección autorizada", description: "Cierre verificado" }); });
+    expect(api.adjust).toHaveBeenCalledWith("order-1", { reason: "Corrección autorizada", description: "Cierre verificado", version: 6 });
+    expect(result.current.detail.data).toEqual(serverOrder);
+  });
+
+  it("cancels with the latest version and rejects actions invalid for state", async () => {
+    const cancelled = { ...order, status: "CANCELLED" as const, version: 2, cancellationReason: "Cliente cancela la intervención" };
+    const api = apiMock({ cancel: vi.fn(async () => cancelled), complete: vi.fn(async () => cancelled) });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder("order-1"));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+
+    await act(async () => { await result.current.executeOrderAction("complete", { diagnosis: "No aplica", result: "No aplica" }); });
+    expect(api.complete).not.toHaveBeenCalled();
+    await act(async () => { await result.current.executeOrderAction("cancel", { cancellationReason: "Cliente cancela la intervención" }); });
+    expect(api.cancel).toHaveBeenCalledWith("order-1", { cancellationReason: "Cliente cancela la intervención", version: 1 });
+    expect(result.current.detail.data).toEqual(cancelled);
+  });
+
+  it("does not replace a newly selected detail with a late operation response", async () => {
+    const pending = deferred<OrderDetail>();
+    const second = { ...order, id: "order-2", orderNumber: "OT-2026-0002" };
+    const api = apiMock({
+      detail: vi.fn(async (id) => id === second.id ? second : order),
+      onRoute: vi.fn(() => pending.promise),
+    });
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]));
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe(order.id));
+
+    let operation!: Promise<boolean>;
+    act(() => { operation = result.current.executeOrderAction("onRoute", {}); });
+    act(() => result.current.selectOrder(second.id));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe(second.id));
+    await act(async () => {
+      pending.resolve({ ...order, status: "ON_ROUTE", version: 2 });
+      await operation;
+    });
+
+    expect(result.current.selectedOrderId).toBe(second.id);
+    expect(result.current.detail.data?.id).toBe(second.id);
+  });
+
+  it("keeps the version captured when an action dialog was opened", async () => {
+    let serverOrder = { ...order, status: "IN_PROGRESS" as const, version: 3 };
+    const paused = { ...serverOrder, status: "PAUSED" as const, version: 4 };
+    const api = apiMock({
+      detail: vi.fn(async () => serverOrder),
+      pause: vi.fn(async () => paused),
+    });
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]));
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openOrderAction("pause"));
+
+    serverOrder = { ...serverOrder, version: 4 };
+    await act(async () => { await result.current.refreshDetail(); });
+    await act(async () => { await result.current.executeOrderAction("pause", { comment: "Esperando acceso autorizado" }); });
+
+    expect(api.pause).toHaveBeenCalledWith(order.id, {
+      comment: "Esperando acceso autorizado",
+      version: 3,
+    });
+  });
+
+  it("refreshes the filtered list after an operational transition", async () => {
+    const api = apiMock({
+      onRoute: vi.fn(async () => ({ ...order, status: "ON_ROUTE" as const, version: 2 })),
+    });
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]));
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    await act(async () => { await result.current.executeOrderAction("onRoute", {}); });
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps a conflicting dialog mounted until the refreshed detail is available", async () => {
+    const current = { ...order, status: "IN_PROGRESS" as const, version: 3 };
+    const refreshed = deferred<OrderDetail>();
+    let detailCalls = 0;
+    const api = apiMock({
+      detail: vi.fn(() => detailCalls++ === 0 ? Promise.resolve(current) : refreshed.promise),
+      complete: vi.fn(async () => { throw new ApiClientError(409, "VERSION_CONFLICT", "Conflicto"); }),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(current));
+    act(() => result.current.openOrderAction("complete"));
+
+    let execution!: Promise<boolean>;
+    act(() => { execution = result.current.executeOrderAction("complete", { diagnosis: "Conector dañado", result: "Enlace restablecido" }); });
+    await waitFor(() => expect(api.detail).toHaveBeenCalledTimes(2));
+    expect(result.current.action.dialog).toBe("complete");
+
+    await act(async () => {
+      refreshed.resolve({ ...current, status: "COMPLETED", version: 4 });
+      await execution;
+    });
+    expect(result.current.action.dialog).toBeNull();
+    expect(result.current.action.error).toContain("cambió en el servidor");
+  });
   it("loads list, catalog and URL-selected detail", async () => {
     window.history.replaceState({}, "", "/ordenes?status=ASSIGNED&orderId=order-1");
     const api = apiMock();

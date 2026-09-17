@@ -217,6 +217,33 @@ export interface AdjustOrderInput extends VersionInput {
   estimatedMinutes?: number | null;
 }
 
+export type OrderOperationalAction =
+  | "onRoute"
+  | "start"
+  | "pause"
+  | "resume"
+  | "complete"
+  | "cancel"
+  | "adjust";
+
+export type OrderDialogAction = Extract<
+  OrderOperationalAction,
+  "pause" | "complete" | "cancel" | "adjust"
+>;
+
+export interface OrderActionInput {
+  comment?: string;
+  diagnosis?: string | null;
+  result?: string | null;
+  cancellationReason?: string | null;
+  reason?: string;
+  description?: string | null;
+  scheduledFor?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  estimatedMinutes?: number | null;
+}
+
 export interface MaterialInput extends VersionInput {
   materialId: string;
   quantity: string;
