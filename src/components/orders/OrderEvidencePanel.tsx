@@ -50,9 +50,16 @@ export function OrderEvidencePanel({ orderId, orderNumber, evidenceApi, canView,
   const generationRef = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const archiveRef = useRef<HTMLTextAreaElement>(null);
+  const refreshRequestedRef = useRef(false);
+  const uploadGenerationRef = useRef(0);
+  const loadRef = useRef<((page: number, retry?: boolean) => Promise<void>) | null>(null);
 
   const load = useCallback(async (page: number, retry = false) => {
-    if (!canView || controllerRef.current) return;
+    if (!canView) return;
+    if (controllerRef.current) {
+      if (page === 1 && retry) refreshRequestedRef.current = true;
+      return;
+    }
     const controller = new AbortController();
     controllerRef.current = controller;
     const generation = ++generationRef.current;
@@ -72,15 +79,27 @@ export function OrderEvidencePanel({ orderId, orderNumber, evidenceApi, canView,
       listRef.current = { ...listRef.current, status: "error" };
       setList(listRef.current);
     } finally {
-      if (controllerRef.current === controller) controllerRef.current = null;
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        if (refreshRequestedRef.current && canView) {
+          refreshRequestedRef.current = false;
+          void loadRef.current?.(1, true);
+        }
+      }
     }
   }, [canView, evidenceApi, orderId]);
+
+  useEffect(() => {
+    loadRef.current = load;
+    return () => { loadRef.current = null; };
+  }, [load]);
 
   useEffect(() => {
     if (!canView) {
       generationRef.current += 1;
       controllerRef.current?.abort();
       controllerRef.current = null;
+      refreshRequestedRef.current = false;
       listRef.current = { items: [], status: "idle", page: 1, totalPages: 1 };
       setList(listRef.current);
       return;
@@ -90,8 +109,24 @@ export function OrderEvidencePanel({ orderId, orderNumber, evidenceApi, canView,
       generationRef.current += 1;
       controllerRef.current?.abort();
       controllerRef.current = null;
+      refreshRequestedRef.current = false;
     };
   }, [canView, load, orderId]);
+
+  useEffect(() => {
+    if (canUpload) return;
+    uploadGenerationRef.current += 1;
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      setFile(null);
+      if (fileRef.current) fileRef.current.value = "";
+      setDescription("");
+      setValidationError(null);
+      setPending(null);
+    });
+    return () => { active = false; };
+  }, [canUpload]);
 
   useEffect(() => {
     if (!canManage) {
@@ -111,9 +146,11 @@ export function OrderEvidencePanel({ orderId, orderNumber, evidenceApi, canView,
     if (invalid) { setValidationError(invalid); fileRef.current?.focus(); return; }
     if (description.trim().length > 500) { setValidationError("La descripción no puede exceder 500 caracteres."); return; }
     if (!file) return;
+    const generation = ++uploadGenerationRef.current;
     setValidationError(null);
     setPending("upload");
     const saved = await onUpload({ file, accessLevel: canManage ? accessLevel : "TECHNICIAN", ...(description.trim() ? { description: description.trim() } : {}) });
+    if (generation !== uploadGenerationRef.current || !canUpload) return;
     if (saved) { setFile(null); if (fileRef.current) fileRef.current.value = ""; setDescription(""); setAccessLevel("TECHNICIAN"); void load(1, true); }
     setPending(null);
   };

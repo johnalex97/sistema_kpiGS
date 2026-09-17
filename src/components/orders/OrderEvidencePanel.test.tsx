@@ -48,4 +48,39 @@ describe("OrderEvidencePanel", () => {
     expect(screen.queryByText("foto.png")).not.toBeInTheDocument();
     resolve(page);
   });
+
+  it("refreshes after an upload even when the initial list request is active", async () => {
+    let resolveInitial!: (value: typeof page) => void;
+    let resolveRefresh!: (value: typeof page) => void;
+    const listOrder = vi.fn()
+      .mockImplementationOnce(() => new Promise<typeof page>((resolve) => { resolveInitial = resolve; }))
+      .mockImplementationOnce(() => new Promise<typeof page>((resolve) => { resolveRefresh = resolve; }));
+    const user = userEvent.setup();
+    const onUpload = vi.fn(async () => true);
+    render(<OrderEvidencePanel {...props({ evidenceApi: reader(listOrder), onUpload })} />);
+    await waitFor(() => expect(listOrder).toHaveBeenCalledOnce());
+    await user.upload(screen.getByLabelText("Archivo de evidencia"), new File(["x"], "nuevo.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Subir evidencia" }));
+    expect(onUpload).toHaveBeenCalledOnce();
+    resolveInitial(page);
+    await waitFor(() => expect(listOrder).toHaveBeenCalledTimes(2));
+    const fresh = { ...page, items: [{ ...evidence, id: "e-2", originalName: "nuevo.pdf" }] };
+    resolveRefresh(fresh);
+    expect(await screen.findByText("nuevo.pdf")).toBeInTheDocument();
+  });
+
+  it("clears the upload draft and validation when upload permission is lost", async () => {
+    const user = userEvent.setup({ applyAccept: false });
+    const view = render(<OrderEvidencePanel {...props()} />);
+    await user.upload(screen.getByLabelText("Archivo de evidencia"), new File(["x"], "script.exe", { type: "application/octet-stream" }));
+    await user.type(screen.getByLabelText(/Descrip/), "borrador");
+    await user.click(screen.getByRole("button", { name: "Subir evidencia" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    view.rerender(<OrderEvidencePanel {...props({ canUpload: false })} />);
+    await waitFor(() => expect(screen.queryByLabelText("Archivo de evidencia")).not.toBeInTheDocument());
+    view.rerender(<OrderEvidencePanel {...props({ canUpload: true })} />);
+    expect(screen.getByLabelText("Archivo de evidencia")).toHaveValue("");
+    expect(screen.getByLabelText(/Descrip/)).toHaveValue("");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

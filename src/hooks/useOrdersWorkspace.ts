@@ -209,6 +209,8 @@ export function useOrdersWorkspace({
   const materialGenerationRef = useRef(0);
   const actionPendingRef = useRef(false);
   const evidenceDownloadControllerRef = useRef<AbortController | null>(null);
+  const evidenceGenerationRef = useRef(0);
+  const evidenceMutationRef = useRef<"upload" | "download" | "archive" | null>(null);
   const actionGenerationRef = useRef(0);
   const appliedSearchRef = useRef(initialSearch);
   const controllers = useRef({
@@ -475,6 +477,11 @@ export function useOrdersWorkspace({
     if (!normalized || normalized === selectedIdRef.current) return;
     controllers.current.detail?.abort();
     controllers.current.history?.abort();
+    evidenceDownloadControllerRef.current?.abort();
+    evidenceDownloadControllerRef.current = null;
+    evidenceGenerationRef.current += 1;
+    evidenceMutationRef.current = null;
+    setEvidence({ pending: false, error: null });
     generations.current.detail += 1;
     generations.current.history += 1;
     selectedIdRef.current = normalized;
@@ -498,6 +505,11 @@ export function useOrdersWorkspace({
   const closeDetail = useCallback(() => {
     controllers.current.detail?.abort();
     controllers.current.history?.abort();
+    evidenceDownloadControllerRef.current?.abort();
+    evidenceDownloadControllerRef.current = null;
+    evidenceGenerationRef.current += 1;
+    evidenceMutationRef.current = null;
+    setEvidence({ pending: false, error: null });
     generations.current.detail += 1;
     generations.current.history += 1;
     selectedIdRef.current = null;
@@ -848,39 +860,66 @@ export function useOrdersWorkspace({
 
   useEffect(() => {
     if (capabilities.canViewEvidence) return;
+    evidenceGenerationRef.current += 1;
+    evidenceDownloadControllerRef.current?.abort();
+    evidenceDownloadControllerRef.current = null;
+    evidenceMutationRef.current = null;
     setEvidence((current) => current.pending || current.error ? { pending: false, error: null } : current);
   }, [capabilities.canViewEvidence]);
+
+  useEffect(() => {
+    if (capabilities.canUploadEvidence || evidenceMutationRef.current !== "upload") return;
+    evidenceGenerationRef.current += 1;
+    evidenceMutationRef.current = null;
+    setEvidence({ pending: false, error: null });
+  }, [capabilities.canUploadEvidence]);
+
+  useEffect(() => {
+    if (capabilities.canManageEvidence || evidenceMutationRef.current !== "archive") return;
+    evidenceGenerationRef.current += 1;
+    evidenceMutationRef.current = null;
+    setEvidence({ pending: false, error: null });
+  }, [capabilities.canManageEvidence]);
 
   const uploadEvidence = useCallback(async (input: EvidenceUploadInput): Promise<boolean> => {
     const targetId = selectedIdRef.current;
     if (!targetId || !capabilitiesRef.current.canUploadEvidence || evidence.pending) return false;
     if (input.accessLevel === "INTERNAL" && !capabilitiesRef.current.canManageEvidence) return false;
+    const generation = evidenceGenerationRef.current;
+    evidenceMutationRef.current = "upload";
     setEvidence({ pending: true, error: null });
     try {
       await rawEvidenceApi.uploadOrder(targetId, input);
-      if (!capabilitiesRef.current.canUploadEvidence || (input.accessLevel === "INTERNAL" && !capabilitiesRef.current.canManageEvidence)) return false;
+      if (generation !== evidenceGenerationRef.current || selectedIdRef.current !== targetId || !capabilitiesRef.current.canUploadEvidence || (input.accessLevel === "INTERNAL" && !capabilitiesRef.current.canManageEvidence)) return false;
       setEvidence({ pending: false, error: null });
+      evidenceMutationRef.current = null;
       return true;
     } catch (error: unknown) {
+      if (generation !== evidenceGenerationRef.current || selectedIdRef.current !== targetId) return false;
       if (error instanceof ApiClientError && error.status === 403) {
         setEvidenceUploadForbidden(true);
         setEvidence({ pending: false, error: "No tienes permiso para subir evidencia." });
       } else setEvidence({ pending: false, error: errorMessage(error, "No fue posible subir la evidencia.") });
+      evidenceMutationRef.current = null;
       return false;
     }
   }, [evidence.pending, rawEvidenceApi]);
 
   const downloadEvidence = useCallback(async (item: Evidence): Promise<boolean> => {
     if (!capabilitiesRef.current.canViewEvidence || evidence.pending) return false;
+    const targetId = selectedIdRef.current;
+    if (!targetId) return false;
+    const generation = evidenceGenerationRef.current;
     const controller = new AbortController();
     evidenceDownloadControllerRef.current?.abort();
     evidenceDownloadControllerRef.current = controller;
+    evidenceMutationRef.current = "download";
     setEvidence({ pending: true, error: null });
     let objectUrl: string | null = null;
     let anchor: HTMLAnchorElement | null = null;
     try {
       const downloaded = await rawEvidenceApi.download(item.id, controller.signal);
-      if (!capabilitiesRef.current.canViewEvidence || controller.signal.aborted) return false;
+      if (!capabilitiesRef.current.canViewEvidence || controller.signal.aborted || generation !== evidenceGenerationRef.current || selectedIdRef.current !== targetId) return false;
       const fallback = safeDownloadName(item.originalName, "evidencia");
       const filename = safeDownloadName(downloaded.filename ?? "", fallback);
       objectUrl = URL.createObjectURL(downloaded.blob);
@@ -888,12 +927,14 @@ export function useOrdersWorkspace({
       setEvidence({ pending: false, error: null });
       return true;
     } catch (error: unknown) {
+      if (generation !== evidenceGenerationRef.current || selectedIdRef.current !== targetId) return false;
       if (error instanceof ApiClientError && error.status === 403) { setEvidenceViewForbidden(true); setEvidence({ pending: false, error: "No tienes permiso para descargar evidencia." }); }
       else if (!(error instanceof Error && error.name === "AbortError")) setEvidence({ pending: false, error: errorMessage(error, "No fue posible descargar la evidencia.") });
       return false;
     } finally {
       anchor?.remove(); if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (evidenceDownloadControllerRef.current === controller) evidenceDownloadControllerRef.current = null;
+      if (generation === evidenceGenerationRef.current && evidenceMutationRef.current === "download") evidenceMutationRef.current = null;
     }
   }, [evidence.pending, rawEvidenceApi]);
 
@@ -901,15 +942,22 @@ export function useOrdersWorkspace({
     if (!capabilitiesRef.current.canManageEvidence || evidence.pending) return false;
     const normalizedReason = reason.trim();
     if (normalizedReason.length < 10 || normalizedReason.length > 500) return false;
+    const targetId = selectedIdRef.current;
+    if (!targetId) return false;
+    const generation = evidenceGenerationRef.current;
+    evidenceMutationRef.current = "archive";
     setEvidence({ pending: true, error: null });
     try {
       await rawEvidenceApi.archive(item.id, { version: item.version, reason: normalizedReason });
-      if (!capabilitiesRef.current.canManageEvidence) return false;
+      if (!capabilitiesRef.current.canManageEvidence || generation !== evidenceGenerationRef.current || selectedIdRef.current !== targetId) return false;
       setEvidence({ pending: false, error: null });
+      evidenceMutationRef.current = null;
       return true;
     } catch (error: unknown) {
+      if (generation !== evidenceGenerationRef.current || selectedIdRef.current !== targetId) return false;
       if (error instanceof ApiClientError && error.status === 403) { setEvidenceManageForbidden(true); setEvidence({ pending: false, error: "No tienes permiso para archivar evidencia." }); }
       else setEvidence({ pending: false, error: errorMessage(error, "No fue posible archivar la evidencia.") });
+      evidenceMutationRef.current = null;
       return false;
     }
   }, [evidence.pending, rawEvidenceApi]);

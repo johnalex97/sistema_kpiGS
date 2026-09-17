@@ -25,4 +25,17 @@ describe("OrderHistory", () => {
     expect(history).not.toHaveBeenCalled();
     expect(screen.getByText("El historial no está disponible para tu perfil.")).toBeInTheDocument();
   });
+  it("uses the controlled response page for pagination controls", async () => {
+    const history = vi.fn();
+    const onLoadHistory = vi.fn(async () => undefined);
+    const view = render(<OrderHistory orderId="order-1" api={{ history } as Pick<OrdersApi, "history">} canView historyState={{ status: "success", data: page, error: null }} onLoadHistory={onLoadHistory} />);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /Siguiente p/ }));
+    expect(onLoadHistory).toHaveBeenCalledWith(2);
+
+    view.rerender(<OrderHistory orderId="order-1" api={{ history } as Pick<OrdersApi, "history">} canView historyState={{ status: "success", data: { ...page, items: [{ ...entry, id: "h-2", action: "PAUSE" }], pagination: { ...page.pagination, page: 2 } }, error: null }} onLoadHistory={onLoadHistory} />);
+    expect(screen.getByRole("navigation", { name: /Pagin/ })).toHaveTextContent(/2 de 2/);
+    expect(screen.getByRole("button", { name: /anterior/ })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /Siguiente p/ })).toBeDisabled();
+  });
 });

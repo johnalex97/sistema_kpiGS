@@ -7,6 +7,7 @@ import { ApiClientError } from "../api/http";
 import type { OrdersApi } from "../api/orders";
 import { AuthContext } from "../auth/AuthContext";
 import type { AuthUser } from "../models/auth";
+import type { Evidence } from "../models/evidence";
 import type { OrderDetail, OrderPage } from "../models/order";
 import { authContext } from "../test/auth-test-utils";
 import { useOrdersWorkspace } from "./useOrdersWorkspace";
@@ -129,6 +130,74 @@ describe("useOrdersWorkspace", () => {
     expect(evidenceApi.uploadOrder).toHaveBeenCalledWith(order.id, { file, accessLevel: "TECHNICIAN" });
     await act(async () => { await result.current.downloadEvidence?.({ id: "e-1", originalName: "archivo.pdf" } as never); });
     expect(evidenceApi.download).toHaveBeenCalledWith("e-1", expect.any(AbortSignal));
+  });
+
+  it("clears an upload mutation when upload permission is revoked and recovers", async () => {
+    const first = deferred<never>();
+    const uploadOrder = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce({} as never);
+    const evidenceApi: OrderEvidenceApi = {
+      listOrder: vi.fn(async () => ({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } })),
+      uploadOrder, listRecurrence: vi.fn(), uploadRecurrence: vi.fn(), download: vi.fn(), archive: vi.fn(),
+    };
+    const api = apiMock();
+    const lookupApi = lookupMock();
+    let currentUser = user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_UPLOAD"]);
+    const wrapper = wrapperFor(() => currentUser);
+    const { result, rerender } = renderHook(() => useOrdersWorkspace({ api, lookupApi, evidenceApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    const input = { file: new File(["ok"], "archivo.pdf", { type: "application/pdf" }), accessLevel: "TECHNICIAN" as const };
+    let firstMutation!: Promise<boolean>;
+    act(() => { firstMutation = result.current.uploadEvidence!(input); });
+    await waitFor(() => expect(result.current.evidence?.pending).toBe(true));
+    currentUser = user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW"]);
+    rerender();
+    await waitFor(() => expect(result.current.evidence?.pending).toBe(false));
+    first.resolve(undefined as never);
+    await act(async () => { await firstMutation; });
+    currentUser = user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_UPLOAD"]);
+    rerender();
+    await waitFor(() => expect(result.current.capabilities.canUploadEvidence).toBe(true));
+    await act(async () => { await result.current.uploadEvidence!(input); });
+    expect(uploadOrder).toHaveBeenCalledTimes(2);
+    expect(result.current.evidence?.pending).toBe(false);
+  });
+
+  it("clears an archive mutation when manage permission is revoked and recovers", async () => {
+    const first = deferred<never>();
+    const archive = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce({});
+    const evidenceApi: OrderEvidenceApi = {
+      listOrder: vi.fn(async () => ({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } })),
+      uploadOrder: vi.fn(), listRecurrence: vi.fn(), uploadRecurrence: vi.fn(), download: vi.fn(), archive,
+    };
+    const api = apiMock();
+    const lookupApi = lookupMock();
+    let currentUser = user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_MANAGE"]);
+    const wrapper = wrapperFor(() => currentUser);
+    const { result, rerender } = renderHook(() => useOrdersWorkspace({ api, lookupApi, evidenceApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    const item = { id: "e-1", version: 1 } as Evidence;
+    let firstMutation!: Promise<boolean>;
+    act(() => { firstMutation = result.current.archiveEvidence!(item, "Motivo suficiente para archivar"); });
+    await waitFor(() => expect(result.current.evidence?.pending).toBe(true));
+    currentUser = user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW"]);
+    rerender();
+    await waitFor(() => expect(result.current.evidence?.pending).toBe(false));
+    first.resolve(undefined as never);
+    await act(async () => { await firstMutation; });
+    currentUser = user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_MANAGE"]);
+    rerender();
+    await waitFor(() => expect(result.current.capabilities.canManageEvidence).toBe(true));
+    await act(async () => { await result.current.archiveEvidence!(item, "Motivo suficiente para archivar"); });
+    expect(archive).toHaveBeenCalledTimes(2);
+    expect(result.current.evidence?.pending).toBe(false);
   });
 
   it("creates an order only with management permission and adopts the server response", async () => {
@@ -363,6 +432,34 @@ describe("useOrdersWorkspace", () => {
 
     expect(result.current.selectedOrderId).toBe(second.id);
     expect(result.current.detail.data?.id).toBe(second.id);
+  });
+
+  it("invalidates a late evidence download after selecting another order", async () => {
+    const pendingDownload = deferred<{ blob: Blob; filename: string }>();
+    const download = vi.fn<OrderEvidenceApi["download"]>(() => pendingDownload.promise);
+    const evidenceApi: OrderEvidenceApi = {
+      listOrder: vi.fn(async () => ({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } })),
+      uploadOrder: vi.fn(), listRecurrence: vi.fn(), uploadRecurrence: vi.fn(), download, archive: vi.fn(),
+    };
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: vi.fn(() => "blob:late") });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const api = apiMock({ detail: vi.fn(async (id) => id === "order-2" ? { ...order, id: "order-2" } : order) });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi, evidenceApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder("order-1"));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe("order-1"));
+    let downloadMutation!: Promise<boolean>;
+    act(() => { downloadMutation = result.current.downloadEvidence!( { id: "e-1", originalName: "archivo.pdf" } as Evidence); });
+    const signal = download.mock.calls[0]?.[1] as AbortSignal;
+    act(() => result.current.selectOrder("order-2"));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe("order-2"));
+    expect(signal.aborted).toBe(true);
+    pendingDownload.resolve({ blob: new Blob(["old"]), filename: "viejo.pdf" });
+    await act(async () => { await downloadMutation; });
+    expect(click).not.toHaveBeenCalled();
+    click.mockRestore();
   });
 
   it("keeps the version captured when an action dialog was opened", async () => {
