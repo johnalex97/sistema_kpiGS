@@ -34,6 +34,29 @@ const evidence = {
 afterEach(() => vi.mocked(fetch).mockReset());
 
 describe("createEvidenceApi", () => {
+  it("lista evidencias de una orden con la ruta anidada y página", async () => {
+    const page = { items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } };
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(page));
+    const controller = new AbortController();
+
+    await expect(createEvidenceApi().listOrder("order/id", 1, controller.signal)).resolves.toEqual(page);
+    const [request, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(new URL(String(request)).pathname).toBe("/api/v1/orders/order%2Fid/evidences");
+    expect(new URL(String(request)).search).toBe("?page=1&pageSize=20");
+    expect(init).toEqual(expect.objectContaining({ signal: controller.signal, credentials: "include" }));
+  });
+
+  it("sube evidencias de orden como multipart sin Content-Type manual", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(evidence));
+    const file = new File(["imagen"], "foto.png", { type: "image/png" });
+
+    await createEvidenceApi().uploadOrder("order/id", { file, accessLevel: "TECHNICIAN" });
+    const [request, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(new URL(String(request)).pathname).toBe("/api/v1/orders/order%2Fid/evidences");
+    expect(new Headers(init?.headers).get("Content-Type")).toBeNull();
+    expect((init?.body as FormData).get("file")).toBe(file);
+  });
+
   it("lista evidencias paginadas con ID codificado y señal de aborto", async () => {
     const page = {
       items: [evidence],

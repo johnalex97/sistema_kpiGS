@@ -2,6 +2,7 @@ import type { PropsWithChildren } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OrderLookupApi } from "../api/order-lookups";
+import type { OrderEvidenceApi } from "../api/evidences";
 import { ApiClientError } from "../api/http";
 import type { OrdersApi } from "../api/orders";
 import { AuthContext } from "../auth/AuthContext";
@@ -108,6 +109,28 @@ afterEach(() => {
 });
 
 describe("useOrdersWorkspace", () => {
+  it("uploads and downloads order evidence only with the independent evidence permissions", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: vi.fn(() => "blob:order") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: vi.fn() });
+    const evidenceApi: OrderEvidenceApi = {
+      listOrder: vi.fn(async () => ({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } })),
+      uploadOrder: vi.fn(async () => ({}) as never), listRecurrence: vi.fn(), uploadRecurrence: vi.fn(),
+      download: vi.fn(async () => ({ blob: new Blob(["ok"]), filename: "archivo.pdf" })), archive: vi.fn(),
+    };
+    const api = apiMock();
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_UPLOAD"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi, evidenceApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    const file = new File(["ok"], "archivo.pdf", { type: "application/pdf" });
+    await act(async () => { await result.current.uploadEvidence?.({ file, accessLevel: "TECHNICIAN" }); });
+    expect(evidenceApi.uploadOrder).toHaveBeenCalledWith(order.id, { file, accessLevel: "TECHNICIAN" });
+    await act(async () => { await result.current.downloadEvidence?.({ id: "e-1", originalName: "archivo.pdf" } as never); });
+    expect(evidenceApi.download).toHaveBeenCalledWith("e-1", expect.any(AbortSignal));
+  });
+
   it("creates an order only with management permission and adopts the server response", async () => {
     const created = { ...order, id: "order-2", orderNumber: "OT-2026-0002", version: 1 };
     const api = apiMock({

@@ -1,8 +1,14 @@
 import { AlertTriangle, Building2, Clock3, MapPin, Pencil, UserRound, X } from "lucide-react";
+import { useState } from "react";
+import type { OrderEvidenceApi } from "../../api/evidences";
+import type { Evidence, EvidenceUploadInput } from "../../models/evidence";
+import type { OrdersApi } from "../../api/orders";
 import type { OrderAction } from "../../hooks/order-workspace.helpers";
 import type { OrderCatalog, OrderDetail as Detail } from "../../models/order";
 import { OrderRoute } from "./OrderRoute";
 import { OrderMaterials } from "./OrderMaterials";
+import { OrderEvidencePanel } from "./OrderEvidencePanel";
+import { OrderHistory } from "./OrderHistory";
 
 const labels: Partial<Record<OrderAction, string>> = {
   onRoute: "Salir en camino",
@@ -38,9 +44,22 @@ interface OrderDetailProps {
   onAddMaterial?: (input: { materialId: string; quantity: string; observation?: string | null }) => Promise<boolean>;
   onUpdateMaterial?: (usageId: string, input: { quantity?: string; observation?: string | null }) => Promise<boolean>;
   onRemoveMaterial?: (usageId: string) => Promise<boolean>;
+  ordersApi?: Pick<OrdersApi, "history">;
+  historyState?: { status: "idle" | "loading" | "success" | "error"; data: import("../../models/order").OrderHistoryPage | null; error: string | null };
+  onLoadHistory?: (page?: number) => Promise<void>;
+  evidenceApi?: Pick<OrderEvidenceApi, "listOrder">;
+  canViewEvidence?: boolean;
+  canUploadEvidence?: boolean;
+  canManageEvidence?: boolean;
+  evidenceError?: string | null;
+  evidencePending?: boolean;
+  onUploadEvidence?: (input: EvidenceUploadInput) => Promise<boolean>;
+  onDownloadEvidence?: (evidence: Evidence) => Promise<boolean>;
+  onArchiveEvidence?: (evidence: Evidence, reason: string) => Promise<boolean>;
 }
 
-export function OrderDetail({ order, actions = [], actionPending = false, actionError = null, onClose, onEdit, onAction, materialCatalog, materialCanManage = false, materialPending = false, materialError = null, onAddMaterial, onUpdateMaterial, onRemoveMaterial }: OrderDetailProps) {
+export function OrderDetail({ order, actions = [], actionPending = false, actionError = null, onClose, onEdit, onAction, materialCatalog, materialCanManage = false, materialPending = false, materialError = null, onAddMaterial, onUpdateMaterial, onRemoveMaterial, ordersApi, historyState, onLoadHistory, evidenceApi, canViewEvidence = false, canUploadEvidence = false, canManageEvidence = false, evidenceError = null, onUploadEvidence, onDownloadEvidence, onArchiveEvidence }: OrderDetailProps) {
+  const [area, setArea] = useState<"summary" | "materials" | "evidence" | "history">("summary");
   const actionable = actions.filter((action) => labels[action]);
   const primary = primaryByStatus[order.status];
   const ordered = primary && actionable.includes(primary)
@@ -49,10 +68,13 @@ export function OrderDetail({ order, actions = [], actionPending = false, action
   return <aside className="order-detail" aria-label={`Detalle de ${order.orderNumber}`}>
     <header><div><span>ORDEN DE TRABAJO</span><h2>{order.orderNumber}</h2><p>Versión {order.version}</p></div><div className="order-detail__actions">{onEdit && <button type="button" aria-label="Editar orden" onClick={onEdit}><Pencil size={17} /></button>}<button type="button" aria-label="Cerrar detalle" onClick={onClose}><X size={18} /></button></div></header>
     <OrderRoute status={order.status} />
+    <nav className="order-detail__areas" aria-label="Áreas del detalle">{(["summary", "materials", "evidence", "history"] as const).map((key) => <button type="button" key={key} aria-selected={area === key} onClick={() => setArea(key)}>{key === "summary" ? "Resumen" : key === "materials" ? "Materiales" : key === "evidence" ? "Evidencias" : "Historial"}</button>)}</nav>
     <div className="order-detail__identity"><span><Building2 size={15} />{order.client.tradeName}</span><span><MapPin size={15} />{order.branch.name}</span><span><UserRound size={15} />{order.primaryTechnician?.fullName ?? "Sin responsable"}</span><span><Clock3 size={15} />{order.estimatedMinutes ? `${order.estimatedMinutes} min estimados` : "Sin estimación"}</span></div>
     <section><span className="order-detail__label">Problema reportado</span><h3>{order.reportedProblem}</h3>{order.description && <p>{order.description}</p>}</section>
     <section><span className="order-detail__label">Servicio</span><h3>{order.serviceType.name}</h3><p>Prioridad {order.priority.toLowerCase()} · {order.overdue ? "Agenda atrasada" : "Dentro de agenda"}</p></section>
-    {materialCatalog && onAddMaterial && onUpdateMaterial && onRemoveMaterial && <OrderMaterials order={order} catalog={materialCatalog} canManage={materialCanManage} pending={materialPending} error={materialError} onAdd={onAddMaterial} onUpdate={onUpdateMaterial} onRemove={onRemoveMaterial} />}
+    {area === "materials" && materialCatalog && onAddMaterial && onUpdateMaterial && onRemoveMaterial && <OrderMaterials order={order} catalog={materialCatalog} canManage={materialCanManage} pending={materialPending} error={materialError} onAdd={onAddMaterial} onUpdate={onUpdateMaterial} onRemove={onRemoveMaterial} />}
+    {area === "evidence" && evidenceApi && onUploadEvidence && onDownloadEvidence && onArchiveEvidence && <OrderEvidencePanel orderId={order.id} orderNumber={order.orderNumber} evidenceApi={evidenceApi} canView={canViewEvidence} canUpload={canUploadEvidence} canManage={canManageEvidence} error={evidenceError} onUpload={onUploadEvidence} onDownload={onDownloadEvidence} onArchive={onArchiveEvidence} />}
+    {area === "history" && ordersApi && <OrderHistory orderId={order.id} api={ordersApi} canView={true} historyState={historyState} onLoadHistory={onLoadHistory} />}
     {actionError && <p className="order-detail__action-error" role="alert"><AlertTriangle size={15} />{actionError}</p>}
     {ordered.length > 0 && <footer className="order-detail__workflow">{ordered.map((action, index) => <button key={action} type="button" className={index === 0 ? "button button--primary" : "button button--ghost"} disabled={actionPending} onClick={() => onAction?.(action)}>{labels[action]}</button>)}</footer>}
   </aside>;

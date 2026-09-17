@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OrderLookupApi } from "../api/order-lookups";
 import type { OrdersApi } from "../api/orders";
+import { createEvidenceApi, type OrderEvidenceApi } from "../api/evidences";
 import { ApiClientError, type ApiFieldError } from "../api/http";
 import { useAuth } from "../auth/useAuth";
 import type {
@@ -18,6 +19,7 @@ import type {
   MaterialInput,
   UpdateMaterialInput,
 } from "../models/order";
+import type { Evidence, EvidenceUploadInput } from "../models/evidence";
 import {
   allowedOrderActions,
   deriveOrderCapabilities,
@@ -68,6 +70,12 @@ export interface OrdersWorkspace {
   openOrderAction(action: OrderDialogAction): void;
   closeOrderAction(): void;
   executeOrderAction(action: OrderOperationalAction, input: OrderActionInput): Promise<boolean>;
+  evidenceApi?: OrderEvidenceApi;
+  ordersApi?: Pick<OrdersApi, "history">;
+  evidence?: { pending: boolean; error: string | null };
+  uploadEvidence?: (input: EvidenceUploadInput) => Promise<boolean>;
+  downloadEvidence?: (evidence: Evidence) => Promise<boolean>;
+  archiveEvidence?: (evidence: Evidence, reason: string) => Promise<boolean>;
 }
 
 export interface OrderAssignmentState {
@@ -103,7 +111,10 @@ export interface UseOrdersWorkspaceOptions {
   search?: string;
   pollIntervalMs?: number;
   formActive?: boolean;
+  evidenceApi?: OrderEvidenceApi;
 }
+
+const defaultEvidenceApi = createEvidenceApi();
 
 function idleState<T>(): OrderReadState<T> {
   return { status: "idle", data: null, error: null, stale: false };
@@ -122,6 +133,14 @@ function isAbortError(error: unknown): boolean {
     || error instanceof Error && error.name === "AbortError";
 }
 
+function safeDownloadName(value: string, fallback: string): string {
+  const clean = Array.from(value).filter((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code > 0x1f && code !== 0x7f && character !== "/" && character !== "\\";
+  }).join("").trim();
+  return clean || fallback;
+}
+
 function urlFor(state: { filters: OrderFilters; orderId: string | null }): string {
   const query = writeOrderUrlState(window.location.search, state).toString();
   return `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
@@ -133,6 +152,7 @@ export function useOrdersWorkspace({
   search = "",
   pollIntervalMs = 30_000,
   formActive = false,
+  evidenceApi: rawEvidenceApi = defaultEvidenceApi,
 }: UseOrdersWorkspaceOptions): OrdersWorkspace {
   const { user } = useAuth();
   const currentTechnicianId = user?.technicianId ?? null;
@@ -145,11 +165,17 @@ export function useOrdersWorkspace({
   );
   const [managementForbidden, setManagementForbidden] = useState(false);
   const [operationsForbidden, setOperationsForbidden] = useState(false);
+  const [evidenceViewForbidden, setEvidenceViewForbidden] = useState(false);
+  const [evidenceUploadForbidden, setEvidenceUploadForbidden] = useState(false);
+  const [evidenceManageForbidden, setEvidenceManageForbidden] = useState(false);
   const capabilities = useMemo(() => ({
     ...grantedCapabilities,
     canManage: grantedCapabilities.canManage && !managementForbidden && !operationsForbidden,
     canOperateOwn: grantedCapabilities.canOperateOwn && !operationsForbidden,
-  }), [grantedCapabilities, managementForbidden, operationsForbidden]);
+    canViewEvidence: grantedCapabilities.canViewEvidence && !evidenceViewForbidden,
+    canUploadEvidence: grantedCapabilities.canUploadEvidence && !evidenceUploadForbidden,
+    canManageEvidence: grantedCapabilities.canManageEvidence && !evidenceManageForbidden,
+  }), [evidenceManageForbidden, evidenceUploadForbidden, evidenceViewForbidden, grantedCapabilities, managementForbidden, operationsForbidden]);
   const initialRef = useRef(readOrderUrlState(window.location.search));
   const initialSearch = search.trim();
   const [filters, setFiltersState] = useState<OrderFilters>(() => ({
@@ -167,6 +193,7 @@ export function useOrdersWorkspace({
   const [assignment, setAssignment] = useState<OrderAssignmentState>({ pending: false, error: null });
   const [material, setMaterial] = useState<OrderMaterialState>({ pending: false, error: null });
   const [action, setAction] = useState<OrderOperationState>(() => idleOperation());
+  const [evidence, setEvidence] = useState({ pending: false, error: null as string | null });
 
   const filtersRef = useRef(filters);
   const selectedIdRef = useRef(selectedOrderId);
@@ -181,6 +208,7 @@ export function useOrdersWorkspace({
   const materialPendingRef = useRef(false);
   const materialGenerationRef = useRef(0);
   const actionPendingRef = useRef(false);
+  const evidenceDownloadControllerRef = useRef<AbortController | null>(null);
   const actionGenerationRef = useRef(0);
   const appliedSearchRef = useRef(initialSearch);
   const controllers = useRef({
@@ -818,6 +846,74 @@ export function useOrdersWorkspace({
     setAction(actionRef.current);
   }, [capabilities, currentTechnicianId, detail.data]);
 
+  useEffect(() => {
+    if (capabilities.canViewEvidence) return;
+    setEvidence((current) => current.pending || current.error ? { pending: false, error: null } : current);
+  }, [capabilities.canViewEvidence]);
+
+  const uploadEvidence = useCallback(async (input: EvidenceUploadInput): Promise<boolean> => {
+    const targetId = selectedIdRef.current;
+    if (!targetId || !capabilitiesRef.current.canUploadEvidence || evidence.pending) return false;
+    if (input.accessLevel === "INTERNAL" && !capabilitiesRef.current.canManageEvidence) return false;
+    setEvidence({ pending: true, error: null });
+    try {
+      await rawEvidenceApi.uploadOrder(targetId, input);
+      if (!capabilitiesRef.current.canUploadEvidence || (input.accessLevel === "INTERNAL" && !capabilitiesRef.current.canManageEvidence)) return false;
+      setEvidence({ pending: false, error: null });
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof ApiClientError && error.status === 403) {
+        setEvidenceUploadForbidden(true);
+        setEvidence({ pending: false, error: "No tienes permiso para subir evidencia." });
+      } else setEvidence({ pending: false, error: errorMessage(error, "No fue posible subir la evidencia.") });
+      return false;
+    }
+  }, [evidence.pending, rawEvidenceApi]);
+
+  const downloadEvidence = useCallback(async (item: Evidence): Promise<boolean> => {
+    if (!capabilitiesRef.current.canViewEvidence || evidence.pending) return false;
+    const controller = new AbortController();
+    evidenceDownloadControllerRef.current?.abort();
+    evidenceDownloadControllerRef.current = controller;
+    setEvidence({ pending: true, error: null });
+    let objectUrl: string | null = null;
+    let anchor: HTMLAnchorElement | null = null;
+    try {
+      const downloaded = await rawEvidenceApi.download(item.id, controller.signal);
+      if (!capabilitiesRef.current.canViewEvidence || controller.signal.aborted) return false;
+      const fallback = safeDownloadName(item.originalName, "evidencia");
+      const filename = safeDownloadName(downloaded.filename ?? "", fallback);
+      objectUrl = URL.createObjectURL(downloaded.blob);
+      anchor = document.createElement("a"); anchor.href = objectUrl; anchor.download = filename; anchor.hidden = true; document.body.append(anchor); anchor.click();
+      setEvidence({ pending: false, error: null });
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof ApiClientError && error.status === 403) { setEvidenceViewForbidden(true); setEvidence({ pending: false, error: "No tienes permiso para descargar evidencia." }); }
+      else if (!(error instanceof Error && error.name === "AbortError")) setEvidence({ pending: false, error: errorMessage(error, "No fue posible descargar la evidencia.") });
+      return false;
+    } finally {
+      anchor?.remove(); if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (evidenceDownloadControllerRef.current === controller) evidenceDownloadControllerRef.current = null;
+    }
+  }, [evidence.pending, rawEvidenceApi]);
+
+  const archiveEvidence = useCallback(async (item: Evidence, reason: string): Promise<boolean> => {
+    if (!capabilitiesRef.current.canManageEvidence || evidence.pending) return false;
+    const normalizedReason = reason.trim();
+    if (normalizedReason.length < 10 || normalizedReason.length > 500) return false;
+    setEvidence({ pending: true, error: null });
+    try {
+      await rawEvidenceApi.archive(item.id, { version: item.version, reason: normalizedReason });
+      if (!capabilitiesRef.current.canManageEvidence) return false;
+      setEvidence({ pending: false, error: null });
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof ApiClientError && error.status === 403) { setEvidenceManageForbidden(true); setEvidence({ pending: false, error: "No tienes permiso para archivar evidencia." }); }
+      else setEvidence({ pending: false, error: errorMessage(error, "No fue posible archivar la evidencia.") });
+      return false;
+    }
+  }, [evidence.pending, rawEvidenceApi]);
+
   return {
     filters,
     selectedOrderId,
@@ -851,5 +947,11 @@ export function useOrdersWorkspace({
     openOrderAction,
     closeOrderAction,
     executeOrderAction,
+    evidenceApi: rawEvidenceApi,
+    ordersApi: api,
+    evidence,
+    uploadEvidence,
+    downloadEvidence,
+    archiveEvidence,
   };
 }
