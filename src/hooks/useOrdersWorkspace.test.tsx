@@ -109,6 +109,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("useOrdersWorkspace", () => {
@@ -836,6 +837,301 @@ describe("useOrdersWorkspace", () => {
     expect(result.current.detail).toEqual({ status: "idle", data: null, error: null, stale: false });
     expect(new URLSearchParams(window.location.search).get("orderId")).toBeNull();
     expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["ASSIGNED"]);
+  });
+
+  it("invalidates a pending create when the workspace unmounts", async () => {
+    const pending = deferred<OrderDetail>();
+    const created = { ...order, id: "created", orderNumber: "OT-CREATED" };
+    const api = apiMock({ create: vi.fn(() => pending.promise) });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result, unmount } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.openCreate());
+    let mutation!: Promise<boolean>;
+    act(() => {
+      mutation = result.current.submitOrder({
+        branchId: "branch-1",
+        serviceTypeId: "service-1",
+        priority: "HIGH",
+        reportedProblem: "Sin red",
+      });
+    });
+    await waitFor(() => expect(result.current.form?.pending).toBe(true));
+
+    unmount();
+    pending.resolve(created);
+    const published = await mutation;
+
+    expect(published).toBe(false);
+    expect(new URLSearchParams(window.location.search).get("orderId")).toBeNull();
+  });
+
+  it("invalidates a pending assignment when the workspace unmounts", async () => {
+    const pending = deferred<OrderDetail>();
+    const api = apiMock({ assign: vi.fn(() => pending.promise) });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result, unmount } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.assignTechnician("tech-2", "SUPPORT"); });
+    await waitFor(() => expect(result.current.assignment.pending).toBe(true));
+
+    unmount();
+    pending.resolve({ ...order, version: 2 });
+
+    expect(await mutation).toBe(false);
+  });
+
+  it("does not refresh after a pending material mutation outlives the workspace", async () => {
+    const active = { ...order, status: "IN_PROGRESS" as const, version: 4 };
+    const pending = deferred<OrderDetail>();
+    const list = vi.fn<OrdersApi["list"]>(async () => ({ ...page, items: [active] }));
+    const api = apiMock({
+      list,
+      detail: vi.fn(async () => active),
+      addMaterial: vi.fn(() => pending.promise),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result, unmount } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(active.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(active));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.addMaterial({ materialId: "material-1", quantity: "1" }); });
+    await waitFor(() => expect(result.current.material.pending).toBe(true));
+
+    unmount();
+    pending.resolve({ ...active, version: 5 });
+
+    expect(await mutation).toBe(false);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh after a pending operation outlives the workspace", async () => {
+    const pending = deferred<OrderDetail>();
+    const list = vi.fn<OrdersApi["list"]>(async () => page);
+    const api = apiMock({ list, onRoute: vi.fn(() => pending.promise) });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]));
+    const { result, unmount } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.executeOrderAction("onRoute", {}); });
+    await waitFor(() => expect(result.current.action.pending).toBe(true));
+
+    unmount();
+    pending.resolve({ ...order, status: "ON_ROUTE", version: 2 });
+
+    expect(await mutation).toBe(false);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts a pending evidence download when the workspace unmounts", async () => {
+    const pending = deferred<{ blob: Blob; filename: string }>();
+    const download = vi.fn<OrderEvidenceApi["download"]>(() => pending.promise);
+    const evidenceApi: OrderEvidenceApi = {
+      listOrder: vi.fn(), uploadOrder: vi.fn(), listRecurrence: vi.fn(), uploadRecurrence: vi.fn(),
+      download, archive: vi.fn(),
+    };
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: vi.fn(() => "blob:late") });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const api = apiMock();
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW"]));
+    const { result, unmount } = renderHook(() => useOrdersWorkspace({ api, lookupApi, evidenceApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.downloadEvidence!({ id: "e-1", originalName: "archivo.pdf" } as Evidence); });
+    const signal = download.mock.calls[0]?.[1] as AbortSignal;
+
+    unmount();
+    pending.resolve({ blob: new Blob(["late"]), filename: "late.pdf" });
+
+    expect(await mutation).toBe(false);
+    expect(signal.aborted).toBe(true);
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale form 403 after another order is selected", async () => {
+    const pending = deferred<OrderDetail>();
+    const second = { ...order, id: "order-2", orderNumber: "OT-2" };
+    const api = apiMock({
+      detail: vi.fn(async (id) => id === second.id ? second : order),
+      update: vi.fn(() => pending.promise),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    act(() => result.current.openEdit());
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.submitOrder({ reportedProblem: "Cambio" }); });
+    act(() => result.current.selectOrder(second.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(second));
+
+    await act(async () => {
+      pending.reject(new ApiClientError(403, "FORBIDDEN", "Prohibido"));
+      await mutation;
+    });
+
+    expect(result.current.capabilities.canManage).toBe(true);
+    expect(result.current.catalog.data).toEqual(catalog);
+    expect(result.current.detail.data).toEqual(second);
+  });
+
+  it("ignores a stale assignment 403 after another order is selected", async () => {
+    const pending = deferred<OrderDetail>();
+    const second = { ...order, id: "order-2", orderNumber: "OT-2" };
+    const api = apiMock({
+      detail: vi.fn(async (id) => id === second.id ? second : order),
+      assign: vi.fn(() => pending.promise),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.assignTechnician("tech-2", "SUPPORT"); });
+    act(() => result.current.selectOrder(second.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(second));
+
+    await act(async () => {
+      pending.reject(new ApiClientError(403, "FORBIDDEN", "Prohibido"));
+      await mutation;
+    });
+
+    expect(result.current.capabilities.canManage).toBe(true);
+    expect(result.current.detail.data).toEqual(second);
+  });
+
+  it("ignores a stale material 403 after another order is selected", async () => {
+    const first = { ...order, status: "IN_PROGRESS" as const };
+    const second = { ...first, id: "order-2", orderNumber: "OT-2" };
+    const pending = deferred<OrderDetail>();
+    const api = apiMock({
+      detail: vi.fn(async (id) => id === second.id ? second : first),
+      addMaterial: vi.fn(() => pending.promise),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(first.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(first));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.addMaterial({ materialId: "material-1", quantity: "1" }); });
+    act(() => result.current.selectOrder(second.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(second));
+
+    await act(async () => {
+      pending.reject(new ApiClientError(403, "FORBIDDEN", "Prohibido"));
+      await mutation;
+    });
+
+    expect(result.current.capabilities.canManage).toBe(true);
+    expect(result.current.detail.data).toEqual(second);
+  });
+
+  it("ignores a stale operation 403 after another order is selected", async () => {
+    const second = { ...order, id: "order-2", orderNumber: "OT-2" };
+    const pending = deferred<OrderDetail>();
+    const api = apiMock({
+      detail: vi.fn(async (id) => id === second.id ? second : order),
+      onRoute: vi.fn(() => pending.promise),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_OWN", "ORDERS_OPERATE_OWN"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.executeOrderAction("onRoute", {}); });
+    act(() => result.current.selectOrder(second.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(second));
+
+    await act(async () => {
+      pending.reject(new ApiClientError(403, "FORBIDDEN", "Prohibido"));
+      await mutation;
+    });
+
+    expect(result.current.capabilities.canOperateOwn).toBe(true);
+    expect(result.current.detail.data).toEqual(second);
+  });
+
+  it("clears order data when history becomes forbidden", async () => {
+    const history = vi.fn<OrdersApi["history"]>()
+      .mockResolvedValueOnce({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } })
+      .mockRejectedValueOnce(new ApiClientError(403, "FORBIDDEN", "Prohibido"));
+    const api = apiMock({ history });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    await act(async () => { await result.current.loadHistory(); });
+    expect(result.current.history.status).toBe("success");
+
+    await act(async () => { await result.current.loadHistory(); });
+
+    expect(result.current.capabilities.canView).toBe(false);
+    expect(result.current.history.data).toBeNull();
+    expect(result.current.selectedOrderId).toBeNull();
+  });
+
+  it("closes the selected order when history reports 404", async () => {
+    const api = apiMock({
+      history: vi.fn(async () => { throw new ApiClientError(404, "NOT_FOUND", "No encontrada"); }),
+    });
+    const lookupApi = lookupMock();
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+
+    await act(async () => { await result.current.loadHistory(); });
+
+    expect(result.current.selectedOrderId).toBeNull();
+    expect(result.current.detail.data).toBeNull();
+    expect(new URLSearchParams(window.location.search).get("orderId")).toBeNull();
+  });
+
+  it("revokes order reading and closes its form when catalog loading is forbidden", async () => {
+    const pendingCatalog = deferred<typeof catalog>();
+    const api = apiMock();
+    const lookupApi = lookupMock({ catalog: vi.fn(() => pendingCatalog.promise) });
+    const wrapper = wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "EVIDENCES_VIEW"]));
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.openCreate());
+    expect(result.current.form?.mode).toBe("create");
+
+    await act(async () => {
+      pendingCatalog.reject(new ApiClientError(403, "FORBIDDEN", "Prohibido"));
+      await pendingCatalog.promise.catch(() => undefined);
+    });
+
+    expect(result.current.capabilities.canView).toBe(false);
+    expect(result.current.capabilities.canViewEvidence).toBe(true);
+    expect(result.current.capabilities.canManage).toBe(false);
+    expect(result.current.catalog.data).toBeNull();
+    expect(result.current.form).toBeNull();
+    expect(result.current.list.data).toBeNull();
   });
 
   it("loads paged history only for the current selection", async () => {

@@ -366,6 +366,11 @@ export function useOrdersWorkspace({
       setCatalog({ status: "success", data, error: null, stale: false });
     } catch (error: unknown) {
       if (controller.signal.aborted || isAbortError(error) || generation !== generations.current.catalog) return;
+      if (error instanceof ApiClientError && error.status === 403) {
+        setCatalog(idleState());
+        setViewForbidden(true);
+        return;
+      }
       setCatalog((current) => ({
         status: current.data ? "success" : "error",
         data: current.data,
@@ -392,7 +397,21 @@ export function useOrdersWorkspace({
       ) return;
       setHistory({ status: "success", data, error: null, stale: false });
     } catch (error: unknown) {
-      if (controller.signal.aborted || isAbortError(error) || generation !== generations.current.history) return;
+      if (
+        controller.signal.aborted
+        || isAbortError(error)
+        || generation !== generations.current.history
+        || selectedIdRef.current !== id
+      ) return;
+      if (error instanceof ApiClientError && error.status === 403) {
+        setHistory(idleState());
+        setViewForbidden(true);
+        return;
+      }
+      if (error instanceof ApiClientError && error.status === 404) {
+        clearSelectedOrder(id, "replace");
+        return;
+      }
       setHistory((current) => ({
         status: current.data ? "success" : "error",
         data: current.data,
@@ -400,7 +419,7 @@ export function useOrdersWorkspace({
         stale: current.data !== null,
       }));
     }
-  }, [api, capabilities.canView]);
+  }, [api, capabilities.canView, clearSelectedOrder]);
 
   const refreshList = useCallback(() => loadList(), [loadList]);
   const refreshDetail = useCallback(async (): Promise<void> => {
@@ -537,6 +556,18 @@ export function useOrdersWorkspace({
     Object.keys(generations.current).forEach((key) => {
       generations.current[key as keyof typeof generations.current] += 1;
     });
+    formGenerationRef.current += 1;
+    mutationPendingRef.current = false;
+    assignmentGenerationRef.current += 1;
+    assignmentPendingRef.current = false;
+    materialGenerationRef.current += 1;
+    materialPendingRef.current = false;
+    actionGenerationRef.current += 1;
+    actionPendingRef.current = false;
+    evidenceGenerationRef.current += 1;
+    evidenceMutationRef.current = null;
+    evidenceDownloadControllerRef.current?.abort();
+    evidenceDownloadControllerRef.current = null;
   }, []);
 
   const setFilters = useCallback((patch: Partial<OrderFilters>) => {
@@ -616,6 +647,9 @@ export function useOrdersWorkspace({
     if (!currentForm || !canManageRef.current || mutationPendingRef.current) return false;
     const targetOrderId = currentForm.order?.id ?? null;
     const generation = ++formGenerationRef.current;
+    const mutationIsCurrent = () => generation === formGenerationRef.current
+      && canManageRef.current
+      && (currentForm.mode === "create" || selectedIdRef.current === targetOrderId);
     mutationPendingRef.current = true;
     setForm((current) => current ? { ...current, pending: true, error: null, fieldErrors: [], conflict: false } : null);
     try {
@@ -625,10 +659,7 @@ export function useOrdersWorkspace({
         : currentDetail && currentDetail.id === currentForm.order?.id
           ? await api.update(currentDetail.id, { ...input, version: currentDetail.version })
           : null;
-      const stillCurrent = generation === formGenerationRef.current
-        && canManageRef.current
-        && (currentForm.mode === "create" || selectedIdRef.current === targetOrderId);
-      if (!incoming || !stillCurrent) return false;
+      if (!incoming || !mutationIsCurrent()) return false;
       selectedIdRef.current = incoming.id;
       setSelectedOrderId(incoming.id);
       setDetail({ status: "success", data: incoming, error: null, stale: false });
@@ -645,6 +676,7 @@ export function useOrdersWorkspace({
       window.history.pushState(window.history.state, "", urlFor({ filters: filtersRef.current, orderId: incoming.id }));
       return true;
     } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
       if (error instanceof ApiClientError && error.status === 403) {
         canManageRef.current = false;
         setManagementForbidden(true);
@@ -654,7 +686,6 @@ export function useOrdersWorkspace({
         setForm(null);
         return false;
       }
-      if (generation !== formGenerationRef.current) return false;
       if (error instanceof ApiClientError && error.status === 404 && targetOrderId) {
         clearSelectedOrder(targetOrderId, "replace");
         return false;
@@ -714,23 +745,23 @@ export function useOrdersWorkspace({
     if (!current || !canManageRef.current || assignmentPendingRef.current) return false;
     const targetOrderId = current.id;
     const generation = ++assignmentGenerationRef.current;
+    const mutationIsCurrent = () => generation === assignmentGenerationRef.current
+      && selectedIdRef.current === targetOrderId
+      && canManageRef.current;
     assignmentPendingRef.current = true;
     setAssignment({ pending: true, error: null });
     try {
       const incoming = await operation(current);
-      const stillCurrent = generation === assignmentGenerationRef.current
-        && selectedIdRef.current === targetOrderId
-        && canManageRef.current;
-      if (!stillCurrent) return false;
+      if (!mutationIsCurrent()) return false;
       applyOrderResult(incoming, targetOrderId);
       setAssignment({ pending: false, error: null });
       return true;
     } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
       if (error instanceof ApiClientError && error.status === 403) {
         canManageRef.current = false;
         setManagementForbidden(true);
       }
-      if (generation !== assignmentGenerationRef.current) return false;
       if (error instanceof ApiClientError && error.status === 404) {
         clearSelectedOrder(targetOrderId, "replace");
         return false;
@@ -766,21 +797,24 @@ export function useOrdersWorkspace({
     if (!current || !canManageMaterials || materialPendingRef.current) return false;
     const targetOrderId = current.id;
     const generation = ++materialGenerationRef.current;
+    const mutationIsCurrent = () => {
+      const latest = detailRef.current.data;
+      return generation === materialGenerationRef.current
+        && selectedIdRef.current === targetOrderId
+        && latest?.id === targetOrderId
+        && allowedOrderActions(latest, capabilitiesRef.current, currentTechnicianId).includes("manageMaterials");
+    };
     materialPendingRef.current = true;
     setMaterial({ pending: true, error: null });
     try {
       const incoming = await operation(current);
-      const latest = detailRef.current.data;
-      const stillCurrent = generation === materialGenerationRef.current
-        && selectedIdRef.current === targetOrderId
-        && latest?.id === targetOrderId
-        && allowedOrderActions(latest, capabilitiesRef.current, currentTechnicianId).includes("manageMaterials");
-      if (!stillCurrent) return false;
+      if (!mutationIsCurrent()) return false;
       applyOrderResult(incoming, targetOrderId);
       void loadList();
       setMaterial({ pending: false, error: null });
       return true;
     } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
       const forbidden = error instanceof ApiClientError && error.status === 403;
       if (forbidden) {
         capabilitiesRef.current = {
@@ -791,7 +825,6 @@ export function useOrdersWorkspace({
         canManageRef.current = false;
         setOperationsForbidden(true);
       }
-      if (generation !== materialGenerationRef.current) return false;
       if (error instanceof ApiClientError && error.status === 404) {
         clearSelectedOrder(targetOrderId, "replace");
         return false;
@@ -866,6 +899,13 @@ export function useOrdersWorkspace({
     const targetOrderId = current.id;
     const targetVersion = dialogTarget?.targetVersion ?? current.version;
     const generation = ++actionGenerationRef.current;
+    const mutationIsCurrent = () => {
+      const latest = detailRef.current.data;
+      return generation === actionGenerationRef.current
+        && selectedIdRef.current === targetOrderId
+        && latest?.id === targetOrderId
+        && allowedOrderActions(latest, capabilitiesRef.current, currentTechnicianId).includes(requested);
+    };
     actionPendingRef.current = true;
     actionRef.current = {
       ...actionRef.current,
@@ -896,18 +936,14 @@ export function useOrdersWorkspace({
         version: targetVersion,
       });
       else return false;
-      const latest = detailRef.current.data;
-      const stillCurrent = generation === actionGenerationRef.current
-        && selectedIdRef.current === targetOrderId
-        && latest?.id === targetOrderId
-        && allowedOrderActions(latest, capabilitiesRef.current, currentTechnicianId).includes(requested);
-      if (!stillCurrent) return false;
+      if (!mutationIsCurrent()) return false;
       applyOrderResult(incoming, targetOrderId);
       void loadList();
       actionRef.current = idleOperation();
       setAction(actionRef.current);
       return true;
     } catch (error: unknown) {
+      if (!mutationIsCurrent()) return false;
       const forbidden = error instanceof ApiClientError && error.status === 403;
       if (forbidden) {
         capabilitiesRef.current = {
@@ -918,7 +954,6 @@ export function useOrdersWorkspace({
         canManageRef.current = false;
         setOperationsForbidden(true);
       }
-      if (generation !== actionGenerationRef.current) return false;
       if (error instanceof ApiClientError && error.status === 404) {
         clearSelectedOrder(targetOrderId, "replace");
         return false;
