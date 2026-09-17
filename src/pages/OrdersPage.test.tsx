@@ -204,4 +204,21 @@ describe("OrdersPage", () => {
     })} />);
     expect(screen.getByText("No hay órdenes para estos filtros")).toBeInTheDocument();
   });
+
+  it("offers a manual retry when detail loading fails", async () => {
+    const refreshDetail = vi.fn(async () => undefined);
+    const state = workspace({
+      selectedOrderId: detail.id,
+      detail: { status: "error", data: null, error: "Servidor no disponible", stale: false },
+      refreshDetail,
+    });
+    const user = userEvent.setup();
+    render(<OrdersPage search="" workspace={state} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Servidor no disponible");
+    await user.click(screen.getByRole("button", { name: "Reintentar detalle" }));
+
+    expect(refreshDetail).toHaveBeenCalledOnce();
+    expect(state.closeDetail).not.toHaveBeenCalled();
+  });
 });

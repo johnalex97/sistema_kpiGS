@@ -163,6 +163,7 @@ export function useOrdersWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [permissionsKey],
   );
+  const [viewForbidden, setViewForbidden] = useState(false);
   const [managementForbidden, setManagementForbidden] = useState(false);
   const [operationsForbidden, setOperationsForbidden] = useState(false);
   const [evidenceViewForbidden, setEvidenceViewForbidden] = useState(false);
@@ -170,12 +171,14 @@ export function useOrdersWorkspace({
   const [evidenceManageForbidden, setEvidenceManageForbidden] = useState(false);
   const capabilities = useMemo(() => ({
     ...grantedCapabilities,
-    canManage: grantedCapabilities.canManage && !managementForbidden && !operationsForbidden,
-    canOperateOwn: grantedCapabilities.canOperateOwn && !operationsForbidden,
+    canView: grantedCapabilities.canView && !viewForbidden,
+    canViewAll: grantedCapabilities.canViewAll && !viewForbidden,
+    canManage: grantedCapabilities.canManage && !viewForbidden && !managementForbidden && !operationsForbidden,
+    canOperateOwn: grantedCapabilities.canOperateOwn && !viewForbidden && !operationsForbidden,
     canViewEvidence: grantedCapabilities.canViewEvidence && !evidenceViewForbidden,
     canUploadEvidence: grantedCapabilities.canUploadEvidence && !evidenceUploadForbidden,
     canManageEvidence: grantedCapabilities.canManageEvidence && !evidenceManageForbidden,
-  }), [evidenceManageForbidden, evidenceUploadForbidden, evidenceViewForbidden, grantedCapabilities, managementForbidden, operationsForbidden]);
+  }), [evidenceManageForbidden, evidenceUploadForbidden, evidenceViewForbidden, grantedCapabilities, managementForbidden, operationsForbidden, viewForbidden]);
   const initialRef = useRef(readOrderUrlState(window.location.search));
   const initialSearch = search.trim();
   const [filters, setFiltersState] = useState<OrderFilters>(() => ({
@@ -204,7 +207,9 @@ export function useOrdersWorkspace({
   const capabilitiesRef = useRef(capabilities);
   const actionRef = useRef(action);
   const mutationPendingRef = useRef(false);
+  const formGenerationRef = useRef(0);
   const assignmentPendingRef = useRef(false);
+  const assignmentGenerationRef = useRef(0);
   const materialPendingRef = useRef(false);
   const materialGenerationRef = useRef(0);
   const actionPendingRef = useRef(false);
@@ -230,6 +235,46 @@ export function useOrdersWorkspace({
   useEffect(() => { capabilitiesRef.current = capabilities; }, [capabilities]);
   useEffect(() => { actionRef.current = action; }, [action]);
 
+  const clearSelectedOrder = useCallback((
+    expectedId: string | null,
+    historyMode: "none" | "push" | "replace" = "none",
+  ) => {
+    if (expectedId !== null && selectedIdRef.current !== expectedId) return;
+    controllers.current.detail?.abort();
+    controllers.current.history?.abort();
+    evidenceDownloadControllerRef.current?.abort();
+    evidenceDownloadControllerRef.current = null;
+    generations.current.detail += 1;
+    generations.current.history += 1;
+    evidenceGenerationRef.current += 1;
+    evidenceMutationRef.current = null;
+    formGenerationRef.current += 1;
+    mutationPendingRef.current = false;
+    assignmentGenerationRef.current += 1;
+    assignmentPendingRef.current = false;
+    actionGenerationRef.current += 1;
+    actionPendingRef.current = false;
+    materialGenerationRef.current += 1;
+    materialPendingRef.current = false;
+    selectedIdRef.current = null;
+    setSelectedOrderId(null);
+    setDetail(idleState());
+    setHistory(idleState());
+    setEvidence({ pending: false, error: null });
+    setForm(null);
+    setAssignment({ pending: false, error: null });
+    setMaterial({ pending: false, error: null });
+    actionRef.current = idleOperation();
+    setAction(actionRef.current);
+    if (historyMode !== "none") {
+      window.history[historyMode === "push" ? "pushState" : "replaceState"](
+        window.history.state,
+        "",
+        urlFor({ filters: filtersRef.current, orderId: null }),
+      );
+    }
+  }, []);
+
   const loadList = useCallback(async (): Promise<void> => {
     if (!capabilities.canView) return;
     controllers.current.list?.abort();
@@ -248,6 +293,10 @@ export function useOrdersWorkspace({
       setList({ status: "success", data, error: null, stale: false });
     } catch (error: unknown) {
       if (controller.signal.aborted || isAbortError(error) || generation !== generations.current.list) return;
+      if (error instanceof ApiClientError && error.status === 403) {
+        setViewForbidden(true);
+        return;
+      }
       const previous = listRef.current.data;
       setList({
         status: previous ? "success" : "error",
@@ -277,9 +326,23 @@ export function useOrdersWorkspace({
         || generation !== generations.current.detail
         || selectedIdRef.current !== id
       ) return;
-      setDetail({ status: "success", data, error: null, stale: false });
+      detailRef.current = { status: "success", data, error: null, stale: false };
+      setDetail(detailRef.current);
     } catch (error: unknown) {
-      if (controller.signal.aborted || isAbortError(error) || generation !== generations.current.detail) return;
+      if (
+        controller.signal.aborted
+        || isAbortError(error)
+        || generation !== generations.current.detail
+        || selectedIdRef.current !== id
+      ) return;
+      if (error instanceof ApiClientError && error.status === 403) {
+        setViewForbidden(true);
+        return;
+      }
+      if (error instanceof ApiClientError && error.status === 404) {
+        clearSelectedOrder(id, "replace");
+        return;
+      }
       const previous = detailRef.current.data;
       setDetail({
         status: silent && previous ? "success" : "error",
@@ -288,7 +351,7 @@ export function useOrdersWorkspace({
         stale: silent && previous !== null,
       });
     }
-  }, [api, capabilities.canView]);
+  }, [api, capabilities.canView, clearSelectedOrder]);
 
   const loadCatalog = useCallback(async (): Promise<void> => {
     if (!capabilities.canView) return;
@@ -387,12 +450,27 @@ export function useOrdersWorkspace({
   useEffect(() => {
     const handlePopState = () => {
       const parsed = readOrderUrlState(window.location.search);
+      controllers.current.detail?.abort();
+      controllers.current.history?.abort();
+      evidenceDownloadControllerRef.current?.abort();
+      evidenceDownloadControllerRef.current = null;
+      generations.current.detail += 1;
+      generations.current.history += 1;
+      evidenceGenerationRef.current += 1;
+      evidenceMutationRef.current = null;
+      formGenerationRef.current += 1;
+      mutationPendingRef.current = false;
+      assignmentGenerationRef.current += 1;
+      assignmentPendingRef.current = false;
       filtersRef.current = parsed.filters;
       selectedIdRef.current = parsed.orderId;
       setFiltersState(parsed.filters);
       setSelectedOrderId(parsed.orderId);
       setDetail(idleState());
       setHistory(idleState());
+      setEvidence({ pending: false, error: null });
+      setForm(null);
+      setAssignment({ pending: false, error: null });
       actionGenerationRef.current += 1;
       materialGenerationRef.current += 1;
       materialPendingRef.current = false;
@@ -411,20 +489,10 @@ export function useOrdersWorkspace({
     Object.keys(generations.current).forEach((key) => {
       generations.current[key as keyof typeof generations.current] += 1;
     });
-    selectedIdRef.current = null;
-    setSelectedOrderId(null);
+    clearSelectedOrder(null, "replace");
     setList(idleState());
-    setDetail(idleState());
     setCatalog(idleState());
-    setHistory(idleState());
-    actionGenerationRef.current += 1;
-    materialGenerationRef.current += 1;
-    materialPendingRef.current = false;
-    setMaterial({ pending: false, error: null });
-    actionPendingRef.current = false;
-    actionRef.current = idleOperation();
-    setAction(actionRef.current);
-  }, [capabilities.canView]);
+  }, [capabilities.canView, clearSelectedOrder]);
 
   useEffect(() => {
     const poll = () => {
@@ -441,8 +509,12 @@ export function useOrdersWorkspace({
 
   useEffect(() => {
     if (capabilities.canManage) return;
+    formGenerationRef.current += 1;
     mutationPendingRef.current = false;
     setForm(null);
+    assignmentGenerationRef.current += 1;
+    assignmentPendingRef.current = false;
+    setAssignment({ pending: false, error: null });
   }, [capabilities.canManage]);
 
   useEffect(() => {
@@ -450,6 +522,14 @@ export function useOrdersWorkspace({
     materialGenerationRef.current += 1;
     materialPendingRef.current = false;
     setMaterial({ pending: false, error: null });
+  }, [capabilities.canManage, capabilities.canOperateOwn]);
+
+  useEffect(() => {
+    if (capabilities.canManage || capabilities.canOperateOwn) return;
+    actionGenerationRef.current += 1;
+    actionPendingRef.current = false;
+    actionRef.current = idleOperation();
+    setAction(actionRef.current);
   }, [capabilities.canManage, capabilities.canOperateOwn]);
 
   useEffect(() => () => {
@@ -484,6 +564,12 @@ export function useOrdersWorkspace({
     setEvidence({ pending: false, error: null });
     generations.current.detail += 1;
     generations.current.history += 1;
+    formGenerationRef.current += 1;
+    mutationPendingRef.current = false;
+    setForm(null);
+    assignmentGenerationRef.current += 1;
+    assignmentPendingRef.current = false;
+    setAssignment({ pending: false, error: null });
     selectedIdRef.current = normalized;
     setSelectedOrderId(normalized);
     setDetail(idleState());
@@ -503,32 +589,8 @@ export function useOrdersWorkspace({
   }, []);
 
   const closeDetail = useCallback(() => {
-    controllers.current.detail?.abort();
-    controllers.current.history?.abort();
-    evidenceDownloadControllerRef.current?.abort();
-    evidenceDownloadControllerRef.current = null;
-    evidenceGenerationRef.current += 1;
-    evidenceMutationRef.current = null;
-    setEvidence({ pending: false, error: null });
-    generations.current.detail += 1;
-    generations.current.history += 1;
-    selectedIdRef.current = null;
-    setSelectedOrderId(null);
-    setDetail(idleState());
-    setHistory(idleState());
-    actionGenerationRef.current += 1;
-    materialGenerationRef.current += 1;
-    materialPendingRef.current = false;
-    setMaterial({ pending: false, error: null });
-    actionPendingRef.current = false;
-    actionRef.current = idleOperation();
-    setAction(actionRef.current);
-    window.history.pushState(
-      window.history.state,
-      "",
-      urlFor({ filters: filtersRef.current, orderId: null }),
-    );
-  }, []);
+    clearSelectedOrder(selectedIdRef.current, "push");
+  }, [clearSelectedOrder]);
 
   const openCreate = useCallback(() => {
     if (!canManageRef.current) return;
@@ -543,6 +605,7 @@ export function useOrdersWorkspace({
 
   const closeForm = useCallback(() => {
     if (mutationPendingRef.current) return;
+    formGenerationRef.current += 1;
     setForm(null);
   }, []);
 
@@ -551,6 +614,8 @@ export function useOrdersWorkspace({
   ): Promise<boolean> => {
     const currentForm = formRef.current;
     if (!currentForm || !canManageRef.current || mutationPendingRef.current) return false;
+    const targetOrderId = currentForm.order?.id ?? null;
+    const generation = ++formGenerationRef.current;
     mutationPendingRef.current = true;
     setForm((current) => current ? { ...current, pending: true, error: null, fieldErrors: [], conflict: false } : null);
     try {
@@ -560,7 +625,10 @@ export function useOrdersWorkspace({
         : currentDetail && currentDetail.id === currentForm.order?.id
           ? await api.update(currentDetail.id, { ...input, version: currentDetail.version })
           : null;
-      if (!incoming || !canManageRef.current) return false;
+      const stillCurrent = generation === formGenerationRef.current
+        && canManageRef.current
+        && (currentForm.mode === "create" || selectedIdRef.current === targetOrderId);
+      if (!incoming || !stillCurrent) return false;
       selectedIdRef.current = incoming.id;
       setSelectedOrderId(incoming.id);
       setDetail({ status: "success", data: incoming, error: null, stale: false });
@@ -586,6 +654,11 @@ export function useOrdersWorkspace({
         setForm(null);
         return false;
       }
+      if (generation !== formGenerationRef.current) return false;
+      if (error instanceof ApiClientError && error.status === 404 && targetOrderId) {
+        clearSelectedOrder(targetOrderId, "replace");
+        return false;
+      }
       const conflict = error instanceof ApiClientError && error.status === 409;
       setForm((current) => current ? {
         ...current,
@@ -599,10 +672,12 @@ export function useOrdersWorkspace({
       if (conflict && currentForm.mode === "edit") await refreshDetail();
       return false;
     } finally {
-      mutationPendingRef.current = false;
-      setForm((current) => current ? { ...current, pending: false } : null);
+      if (generation === formGenerationRef.current) {
+        mutationPendingRef.current = false;
+        setForm((current) => current ? { ...current, pending: false } : null);
+      }
     }
-  }, [api, refreshDetail]);
+  }, [api, clearSelectedOrder, refreshDetail]);
 
   const applyOrderResult = useCallback((incoming: OrderDetail, targetOrderId: string, updateDetail = true) => {
     if (updateDetail && selectedIdRef.current === targetOrderId && incoming.id === targetOrderId) {
@@ -637,12 +712,17 @@ export function useOrdersWorkspace({
   ): Promise<boolean> => {
     const current = detailRef.current.data;
     if (!current || !canManageRef.current || assignmentPendingRef.current) return false;
+    const targetOrderId = current.id;
+    const generation = ++assignmentGenerationRef.current;
     assignmentPendingRef.current = true;
     setAssignment({ pending: true, error: null });
     try {
       const incoming = await operation(current);
-      if (!canManageRef.current) return false;
-      applyOrderResult(incoming, current.id);
+      const stillCurrent = generation === assignmentGenerationRef.current
+        && selectedIdRef.current === targetOrderId
+        && canManageRef.current;
+      if (!stillCurrent) return false;
+      applyOrderResult(incoming, targetOrderId);
       setAssignment({ pending: false, error: null });
       return true;
     } catch (error: unknown) {
@@ -650,15 +730,24 @@ export function useOrdersWorkspace({
         canManageRef.current = false;
         setManagementForbidden(true);
       }
-      const versionConflict = error instanceof ApiClientError && error.code === "VERSION_CONFLICT";
+      if (generation !== assignmentGenerationRef.current) return false;
+      if (error instanceof ApiClientError && error.status === 404) {
+        clearSelectedOrder(targetOrderId, "replace");
+        return false;
+      }
+      const versionConflict = error instanceof ApiClientError
+        && error.status === 409
+        && error.code === "VERSION_CONFLICT";
       setAssignment({ pending: false, error: versionConflict ? "La orden cambió en el servidor. Revisa el equipo actualizado." : assignmentErrorMessage(error) });
       if (versionConflict) await refreshDetail();
       return false;
     } finally {
-      assignmentPendingRef.current = false;
-      setAssignment((currentState) => ({ ...currentState, pending: false }));
+      if (generation === assignmentGenerationRef.current) {
+        assignmentPendingRef.current = false;
+        setAssignment((currentState) => ({ ...currentState, pending: false }));
+      }
     }
-  }, [applyOrderResult, assignmentErrorMessage, refreshDetail]);
+  }, [applyOrderResult, assignmentErrorMessage, clearSelectedOrder, refreshDetail]);
 
   const assignTechnician = useCallback((technicianId: string, role: OrderTechnicianRole) => executeAssignment(
     (current) => api.assign(current.id, { technicianId, role, version: current.version }),
@@ -681,11 +770,15 @@ export function useOrdersWorkspace({
     setMaterial({ pending: true, error: null });
     try {
       const incoming = await operation(current);
+      const latest = detailRef.current.data;
       const stillCurrent = generation === materialGenerationRef.current
-        && selectedIdRef.current === targetOrderId;
-      applyOrderResult(incoming, targetOrderId, stillCurrent);
+        && selectedIdRef.current === targetOrderId
+        && latest?.id === targetOrderId
+        && allowedOrderActions(latest, capabilitiesRef.current, currentTechnicianId).includes("manageMaterials");
+      if (!stillCurrent) return false;
+      applyOrderResult(incoming, targetOrderId);
       void loadList();
-      if (stillCurrent) setMaterial({ pending: false, error: null });
+      setMaterial({ pending: false, error: null });
       return true;
     } catch (error: unknown) {
       const forbidden = error instanceof ApiClientError && error.status === 403;
@@ -698,7 +791,14 @@ export function useOrdersWorkspace({
         canManageRef.current = false;
         setOperationsForbidden(true);
       }
-      const versionConflict = error instanceof ApiClientError && error.code === "VERSION_CONFLICT";
+      if (generation !== materialGenerationRef.current) return false;
+      if (error instanceof ApiClientError && error.status === 404) {
+        clearSelectedOrder(targetOrderId, "replace");
+        return false;
+      }
+      const versionConflict = error instanceof ApiClientError
+        && error.status === 409
+        && error.code === "VERSION_CONFLICT";
       if (generation === materialGenerationRef.current) {
         setMaterial({
           pending: false,
@@ -715,7 +815,7 @@ export function useOrdersWorkspace({
         setMaterial((currentState) => ({ ...currentState, pending: false }));
       }
     }
-  }, [applyOrderResult, currentTechnicianId, loadList, refreshDetail]);
+  }, [applyOrderResult, clearSelectedOrder, currentTechnicianId, loadList, refreshDetail]);
 
   const addMaterial = useCallback((input: Omit<MaterialInput, "version">) => executeMaterial(
     (current) => api.addMaterial(current.id, { ...input, version: current.version }),
@@ -796,13 +896,16 @@ export function useOrdersWorkspace({
         version: targetVersion,
       });
       else return false;
-      const stillCurrent = generation === actionGenerationRef.current;
-      applyOrderResult(incoming, targetOrderId, stillCurrent);
+      const latest = detailRef.current.data;
+      const stillCurrent = generation === actionGenerationRef.current
+        && selectedIdRef.current === targetOrderId
+        && latest?.id === targetOrderId
+        && allowedOrderActions(latest, capabilitiesRef.current, currentTechnicianId).includes(requested);
+      if (!stillCurrent) return false;
+      applyOrderResult(incoming, targetOrderId);
       void loadList();
-      if (stillCurrent) {
-        actionRef.current = idleOperation();
-        setAction(actionRef.current);
-      }
+      actionRef.current = idleOperation();
+      setAction(actionRef.current);
       return true;
     } catch (error: unknown) {
       const forbidden = error instanceof ApiClientError && error.status === 403;
@@ -815,23 +918,37 @@ export function useOrdersWorkspace({
         canManageRef.current = false;
         setOperationsForbidden(true);
       }
-      const versionConflict = error instanceof ApiClientError && error.code === "VERSION_CONFLICT";
+      if (generation !== actionGenerationRef.current) return false;
+      if (error instanceof ApiClientError && error.status === 404) {
+        clearSelectedOrder(targetOrderId, "replace");
+        return false;
+      }
+      const versionConflict = error instanceof ApiClientError
+        && error.status === 409
+        && error.code === "VERSION_CONFLICT";
       const message = versionConflict
         ? "La orden cambió en el servidor. Revisa la versión actual antes de continuar."
         : errorMessage(error, "No fue posible actualizar el estado de la orden");
-      if (generation === actionGenerationRef.current) {
-        actionRef.current = versionConflict && actionRef.current.dialog
-          ? { ...actionRef.current, pending: true, error: message }
-          : forbidden || versionConflict
-            ? idleOperation(message)
-            : { ...actionRef.current, pending: false, error: message };
+      if (versionConflict && actionRef.current.dialog) {
+        actionRef.current = { ...actionRef.current, pending: true, error: message };
         setAction(actionRef.current);
       }
       if (versionConflict && selectedIdRef.current === targetOrderId) await refreshDetail();
-      if (versionConflict && generation === actionGenerationRef.current) {
-        actionRef.current = idleOperation(message);
-        setAction(actionRef.current);
+      if (generation !== actionGenerationRef.current) return false;
+      if (versionConflict) {
+        const refreshed = detailRef.current.data;
+        const canRetry = actionRef.current.dialog === requested
+          && refreshed?.id === targetOrderId
+          && allowedOrderActions(refreshed, capabilitiesRef.current, currentTechnicianId).includes(requested);
+        actionRef.current = canRetry
+          ? { ...actionRef.current, pending: false, error: message, targetVersion: refreshed.version }
+          : idleOperation(message);
+      } else {
+        actionRef.current = forbidden
+          ? idleOperation(message)
+          : { ...actionRef.current, pending: false, error: message };
       }
+      setAction(actionRef.current);
       return false;
     } finally {
       if (generation === actionGenerationRef.current) {
@@ -842,7 +959,7 @@ export function useOrdersWorkspace({
         }
       }
     }
-  }, [api, applyOrderResult, currentTechnicianId, loadList, refreshDetail]);
+  }, [api, applyOrderResult, clearSelectedOrder, currentTechnicianId, loadList, refreshDetail]);
 
   useEffect(() => {
     const open = actionRef.current;
@@ -854,7 +971,9 @@ export function useOrdersWorkspace({
     if (stillAllowed) return;
     actionGenerationRef.current += 1;
     actionPendingRef.current = false;
-    actionRef.current = idleOperation("La orden cambió y esta acción ya no está disponible.");
+    actionRef.current = idleOperation(
+      open.error ?? "La orden cambió y esta acción ya no está disponible.",
+    );
     setAction(actionRef.current);
   }, [capabilities, currentTechnicianId, detail.data]);
 
