@@ -81,7 +81,7 @@ main { min-width: 0; }
 .page-heading h1 { margin: 0; font: 650 32px/1.1 "Bahnschrift", "Arial Narrow", sans-serif; letter-spacing: -.02em; color: var(--ink); }
 .page-heading > div > p:last-child { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
 .access-denied { max-width: 520px; padding: 34px; border: 1px solid #edd8d3; border-radius: 11px; background: #fff9f7; box-shadow: 0 8px 30px rgba(27,61,82,.035); }.access-denied h1 { margin: 0; color: var(--ink); font: 650 29px/1.1 "Bahnschrift", sans-serif; }.access-denied > p:not(.eyebrow) { margin: 10px 0 22px; color: #617786; font-size: 13px; }
-.button { min-height: 40px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 650; }
+.button { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 7px; cursor: pointer; touch-action: manipulation; font-size: 12px; font-weight: 650; }
 .button--ghost { border: 1px solid var(--line); background: white; }
 .button--primary { border: 1px solid #138f82; background: var(--teal); color: white; box-shadow: 0 5px 12px rgba(24,169,153,.17); }
 .button--dark { width: 100%; border: 0; background: var(--ink); color: white; }

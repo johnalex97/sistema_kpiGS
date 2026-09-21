@@ -9,7 +9,7 @@ cumplimiento, eficiencia y calidad.
 El repositorio contiene un frontend modular conectado gradualmente a una API
 Express independiente, persistencia PostgreSQL administrada mediante Prisma y
 autenticación con sesiones revocables. La sesión, el dashboard KPI y los módulos
-de Actividades, Técnicos y Reincidencias ya consumen la API real. La jornada
+de Actividades, Técnicos, Órdenes y Reincidencias ya consumen la API real. La jornada
 visual del resumen general todavía usa datos de demostración mientras avanza la
 fase 12.
 
@@ -254,9 +254,36 @@ npm test -- tests/orders
 npm run test:db -- tests/database/orders-read-persistence.test.ts tests/database/orders-mutation-persistence.test.ts tests/database/orders-operation-persistence.test.ts tests/orders/orders-http.test.ts
 ```
 
-Las pantallas de órdenes todavía no están conectadas. `initialWorks` se conserva
-exclusivamente como fuente temporal de la tabla “Actividad reciente” del
-Dashboard; el módulo de Actividades no lo importa ni lo modifica.
+La ruta `/ordenes` consume el catálogo de tipos de servicio y materiales, lista,
+detalle, historial y las 14 mutaciones de la API. Conserva en la URL búsqueda,
+estado, prioridad, atraso, cliente, sucursal, técnico, tipo de servicio, periodo,
+paginación y `orderId`. ADMIN y SUPERVISOR administran el ciclo completo con
+`ORDERS_VIEW_ALL` y `ORDERS_MANAGE`; TECHNICIAN ve su alcance histórico con
+`ORDERS_VIEW_OWN` y el principal activo opera su orden con
+`ORDERS_OPERATE_OWN`. Los permisos de evidencia continúan independientes.
+
+El detalle integra equipo, materiales con cantidad decimal y costo histórico,
+evidencia privada e historial paginado. Cada escritura parte exclusivamente de
+la `version` confirmada por la respuesta anterior: ante `VERSION_CONFLICT` el
+workspace refresca el detalle y mantiene la operación abierta sólo si aún es
+válida; no reintenta escrituras automáticamente. El ciclo principal verificado
+es `ASSIGNED → ON_ROUTE → IN_PROGRESS → PAUSED → IN_PROGRESS → COMPLETED`.
+Desde 1024 px se conserva tabla con panel lateral; por debajo se muestran
+tarjetas y detalle a pantalla completa, con navegación por pestañas y objetivos
+táctiles de 44 px.
+
+El flujo frontend integrado se verifica desde la raíz:
+
+```powershell
+npm test -- src/orders-flow.integration.test.tsx
+npm test -- --pool=threads --maxWorkers=1
+npm run lint
+npm run build
+```
+
+`initialWorks` se conserva exclusivamente como fuente temporal de la tabla
+“Actividad reciente” del Dashboard; el módulo de Órdenes no lo importa ni lo
+modifica.
 
 La API de actividades añade 13 endpoints. `ACTIVITIES_VIEW_ALL` permite a ADMIN
 y SUPERVISOR consultar catálogo, lista y detalle; un TECHNICIAN sólo ve sus
@@ -560,11 +587,12 @@ Las vistas utilizan URLs reales mediante una capa pequeña sobre la History API:
 - `/resumen`
 - `/actividades`
 - `/tecnicos`
+- `/ordenes`
 - `/reincidencias`
 
 React Router fue evaluado durante la Etapa 2, pero las versiones disponibles
 presentaban vulnerabilidades altas en la auditoría de dependencias. Para estas
-cuatro rutas se prefirió una implementación local pequeña y probada.
+cinco rutas se prefirió una implementación local pequeña y probada.
 
 ## Seguridad y limitaciones
 
@@ -574,8 +602,8 @@ sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 La SPA restaura sesiones con `GET /api/v1/auth/me`, usa la cookie opaca
 `gs_session` y obliga el cambio de contraseña provisional. Dashboard KPI,
-Actividades, Técnicos y Reincidencias aplican permisos y alcance desde la API.
-La gestión global de Evidencias, las pantallas de Órdenes y Clientes, los
+Actividades, Técnicos, Órdenes y Reincidencias aplican permisos y alcance desde
+la API. La gestión global de Evidencias, las pantallas de Clientes, los
 reportes/exportaciones y el despliegue HTTPS siguen pendientes; también quedan
 los mocks del Dashboard indicados arriba. No utilices el sistema para
 información sensible o datos personales reales hasta completar esas fases.

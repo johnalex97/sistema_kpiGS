@@ -214,11 +214,11 @@ Salida: indicadores reproducibles y explicables, verificados con
 Salida: interfaz existente conectada a datos persistentes.
 
 Estado: en progreso. Los subbloques de autenticación, KPI,
-Actividades/Jornada operativa, Técnicos y Reincidencias están completados. Actividades consume
+Actividades/Jornada operativa, Técnicos, Órdenes y Reincidencias están completados. Actividades consume
 catálogo, listado, detalle, búsquedas auxiliares y todas sus mutaciones desde la
 API, con URL, polling, control optimista y recuperación de conflictos. La
-jornada visual del Dashboard y las interfaces globales de Evidencias,
-Órdenes y Clientes continúan pendientes; por eso la fase 12 completa sigue
+jornada visual del Dashboard y las interfaces globales de Evidencias y
+Clientes continúan pendientes; por eso la fase 12 completa sigue
 abierta.
 
 Subbloque de autenticación frontend: completado. La SPA restaura la sesión con
@@ -238,6 +238,19 @@ lectura, `TECHNICIANS_MANAGE` habilita las mutaciones y
 La colección mock `technicians` permanece exclusivamente para la jornada visual
 del Dashboard hasta su migración posterior.
 
+Subbloque de Órdenes: completado. `/ordenes` consume catálogo, lista, detalle,
+historial y el conjunto de mutaciones administrativas y operativas. Sincroniza
+en URL búsqueda, estado, prioridad, atraso, cliente, sucursal, técnico, tipo de
+servicio, periodo, paginación y selección. ADMIN/SUPERVISOR gestionan el ciclo;
+TECHNICIAN ve su alcance histórico y el principal activo ejecuta
+`ASSIGNED → ON_ROUTE → IN_PROGRESS → PAUSED → IN_PROGRESS → COMPLETED`.
+Asignaciones, materiales, evidencias e historial conviven en el detalle; toda
+escritura usa la versión autoritativa devuelta por la API, no se reintenta y un
+conflicto refresca la orden. El diseño mantiene tabla/panel desde 1024 px y usa
+tarjetas y detalle a pantalla completa por debajo, con pestañas por teclado,
+anuncios `aria-live`, foco atrapado/restaurado en el retiro de materiales y
+controles de 44 px.
+
 Subbloque de Reincidencias: completado. `/reincidencias` consume catálogo,
 lista, `/api/v1/recurrences/summary`, detalle, reporte, análisis, corrección,
 visitas, notas, descarte, cierre, ajuste y evidencia desde la API. Sincroniza en
@@ -250,8 +263,17 @@ incremento. `recurrenceJobs`, `RecurrenceJob` y el contador lateral ficticio se
 retiraron. El diseño mantiene tabla y detalle lateral en escritorio, y tarjetas,
 filtros apilados, detalle y formularios a pantalla completa en móvil.
 
-Este subbloque no completa la gestión global de Evidencias, las pantallas de
-Órdenes o Clientes, reportes/exportaciones ni el despliegue. Su matriz exacta es
+Estos subbloques no completan la gestión global de Evidencias, las pantallas de
+Clientes, reportes/exportaciones ni el despliegue. La matriz exacta de Órdenes
+es `npm test -- src/orders-flow.integration.test.tsx`, seguida de
+`npm test -- --pool=threads --maxWorkers=1`, `npm run lint` y `npm run build` en
+la raíz; y, desde `server/`, `npm test -- tests/orders`,
+`npm run test:db -- tests/database/orders-read-persistence.test.ts
+tests/database/orders-mutation-persistence.test.ts
+tests/database/orders-operation-persistence.test.ts tests/orders/orders-http.test.ts`,
+`npm run typecheck`, `npm run lint` y `npm run build`.
+
+La matriz exacta de Reincidencias es
 `npm test -- --pool=threads --maxWorkers=1`, `npm run lint` y `npm run build` en
 la raíz; y, desde `server/`, `npm test -- tests/recurrences`,
 `npm run test:db -- tests/database/recurrences-read-persistence.test.ts

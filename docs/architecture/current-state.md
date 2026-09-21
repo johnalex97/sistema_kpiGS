@@ -1,13 +1,13 @@
 # Diagnóstico de arquitectura actual
 
-Fecha de actualización: 11 de septiembre de 2026.
+Fecha de actualización: 21 de septiembre de 2026.
 
 ## Resumen
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express,
 persistencia PostgreSQL mediante Prisma y autenticación con sesiones opacas. La
-SPA ya integra sesión, KPI y los flujos completos de Actividades, Técnicos y
-Reincidencias; la gestión global de Evidencias y la actividad reciente del
+SPA ya integra sesión, KPI y los flujos completos de Actividades, Técnicos,
+Órdenes y Reincidencias; la gestión global de Evidencias y la actividad reciente del
 Dashboard continúan en migración gradual.
 
 ## Estructura encontrada
@@ -16,7 +16,7 @@ Dashboard continúan en migración gradual.
 src/
 ├── api/          # Clientes HTTP tipados por recurso
 ├── auth/         # Sesión, permisos y rutas privadas
-├── components/   # Componentes comunes, dashboard, KPI y actividades
+├── components/   # Componentes comunes y módulos operativos
 ├── hooks/        # Consultas, URL, polling y comportamiento reutilizable
 ├── layouts/      # Menú y estructura visual
 ├── mocks/        # Datos simulados identificados
@@ -26,6 +26,7 @@ src/
 ├── test/         # Configuración de pruebas
 ├── App.tsx       # Composición de sesión y shell
 ├── activities-flow.integration.test.tsx
+├── orders-flow.integration.test.tsx
 ├── recurrences-flow.integration.test.tsx
 ├── main.tsx      # Punto de entrada de React
 └── styles.css    # Estilos visuales existentes
@@ -52,7 +53,7 @@ server/
 ```
 
 El frontend dispone de cliente HTTP con cookies, recuperación de sesión y
-fronteras API tipadas para KPI, Actividades, Técnicos y Reincidencias. El backend consume persistencia
+fronteras API tipadas para KPI, Actividades, Técnicos, Órdenes y Reincidencias. El backend consume persistencia
 para autenticación, técnicos, clientes, sucursales, contactos, órdenes,
 actividades, evidencias, reincidencias y KPI.
 
@@ -68,6 +69,8 @@ actividades, evidencias, reincidencias y KPI.
   ciclo laboral y selector de usuarios elegibles mediante API.
 - Reincidencias persistentes: resumen, filtros en URL, lista, detalle, flujo
   revisado completo y evidencia privada inmediata con descarga binaria.
+- Órdenes persistentes: catálogo, filtros y selección en URL, lista, detalle,
+  asignaciones, flujo administrativo y técnico, materiales, evidencias e historial.
 - Menú lateral adaptable a teléfonos.
 - Tablas con desplazamiento horizontal en pantallas estrechas.
 - Compilación de producción con TypeScript estricto.
@@ -75,7 +78,7 @@ actividades, evidencias, reincidencias y KPI.
 ## Funcionalidades únicamente visuales
 
 - Línea de jornada.
-- Gestión global de evidencias, órdenes y clientes.
+- Gestión global de evidencias y clientes.
 - Reportes, configuración y notificaciones no implementados.
 - Fechas, tiempos, costos y porcentajes mostrados.
 
@@ -89,7 +92,7 @@ Todos están declarados explícitamente en `src/mocks/data.ts`:
 | `initialWorks` | Actividad reciente de ejemplo | Sólo Dashboard |
 | `navItems` | Navegación principal | Menú lateral |
 
-Los módulos de Actividades, Técnicos y Reincidencias no importan estas
+Los módulos de Actividades, Técnicos, Órdenes y Reincidencias no importan estas
 colecciones como fuente de verdad. Sus escrituras se ejecutan contra PostgreSQL
 mediante la API; `recurrenceJobs` y `RecurrenceJob` fueron retirados.
 
@@ -97,7 +100,7 @@ mediante la API; `recurrenceJobs` y `RecurrenceJob` fueron retirados.
 
 1. La gestión global de Evidencias todavía no consume su API en la SPA.
 2. La jornada y actividad reciente del Dashboard aún usan datos locales.
-3. Las pantallas de Órdenes y Clientes todavía no están integradas.
+3. Las pantallas de Clientes todavía no están integradas.
 4. Los usuarios demo no pueden iniciar sesión; el administrador requiere
    variables privadas de seed.
 5. Algunos controles visuales fuera de Actividades todavía no ejecutan acciones.
@@ -110,7 +113,8 @@ mediante la API; `recurrenceJobs` y `RecurrenceJob` fueron retirados.
 | `npm run build` | Correcto; TypeScript y Vite compilan |
 | `npm run dev -- --host 127.0.0.1 --port 5173` | Correcto; respuesta HTTP 200 |
 | `npm run lint` | Correcto; 0 advertencias |
-| `npm test -- --pool=threads --maxWorkers=1` | Correcto; 419 pruebas en 46 archivos (suite frontend vigente, incluido el flujo integrado de Reincidencias) |
+| `npm test -- src/orders-flow.integration.test.tsx` | Correcto; 3 pruebas del flujo integrado de Órdenes |
+| `npm test -- --pool=threads --maxWorkers=1` | Correcto; 549 pruebas en 60 archivos |
 | `npm audit --audit-level=moderate` | 0 vulnerabilidades |
 
 Backend, ejecutado desde `server/`:
@@ -121,6 +125,8 @@ Backend, ejecutado desde `server/`:
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm test -- tests/evidences/evidences-reconciliation.test.ts` | Correcto; 8 pruebas de reconciliación pura |
 | `npm run evidences:verify` | Correcto con una raíz preaprovisionada: `Matched 0`, `Orphan files 0`, `Missing files 0`; una raíz explícita ausente terminó con código `1`, mensaje operacional redactado y sin crearla |
+| `npm test -- tests/orders` | Correcto; 64 pruebas en 4 archivos |
+| Matriz PostgreSQL y HTTP de Órdenes | Correcto; 111 pruebas en 4 archivos contra `schema=test` |
 | `npm test -- tests/recurrences` | Correcto; 70 pruebas en 5 archivos |
 | Matriz focal PostgreSQL y HTTP de Reincidencias | Correcto; 19 pruebas en 2 archivos contra `schema=test` |
 | Regresión HTTP de evidencias | Correcto; 8 pruebas |
@@ -180,8 +186,18 @@ TECHNICIAN solo consulta órdenes actuales o históricas asignadas y solo el
 principal activo puede operar su trabajo. Cada asignación es un intervalo
 append-only: la baja cierra la fila vigente, la reasignación crea otra y un
 índice único parcial impide dos filas abiertas para la misma orden y técnico sin
-perder los ciclos cerrados. Sus pantallas de gestión todavía no están conectadas
-en la SPA.
+perder los ciclos cerrados.
+
+La SPA conecta `/ordenes` con el catálogo, lista, detalle e historial. Mantiene
+en la URL búsqueda, estados, prioridades, atraso, cliente, sucursal, técnico,
+tipo de servicio, periodo, página y selección. ADMIN/SUPERVISOR administran;
+TECHNICIAN consulta su alcance histórico y sólo el principal activo opera. Las
+mutaciones usan la última `version` confirmada, nunca se reintentan en automático
+y los conflictos 409 refrescan el recurso antes de ofrecer una nueva acción.
+El detalle integra asignaciones, materiales con costo histórico, evidencias con
+permisos propios e historial paginado. La vista usa tabla y panel desde 1024 px,
+y tarjetas con detalle a pantalla completa por debajo; las pestañas admiten
+teclado y los cambios de estado/version se anuncian con `aria-live`.
 
 El módulo `activities` usa repositorios separados de lectura, mutación y
 operación. Su equipo exige un responsable, porcentajes que suman exactamente
@@ -288,7 +304,7 @@ límites locales.
 
 La SPA consume resumen, ranking e historial KPI real y ofrece metas,
 ponderaciones, cierre y recálculo según capacidades del usuario. Actividades,
-Técnicos y Reincidencias también son persistentes; los restantes paneles
+Técnicos, Órdenes y Reincidencias también son persistentes; los restantes paneles
 operativos conservan datos locales hasta completar la fase 12. El catálogo técnico permite
 `TECHNICIANS_VIEW`; el ciclo laboral y `GET /api/v1/technicians/eligible-users`
 requieren `TECHNICIANS_MANAGE`, mientras las métricas semanales requieren
@@ -300,7 +316,7 @@ raíz, `npm test -- --pool=threads --maxWorkers=1`, `npm run lint` y
 `npm run build`. PostgreSQL puede emitir la
 advertencia no bloqueante conocida de `pg` sobre `client.query()` concurrente.
 La matriz vigente distingue el alcance para no mezclar pruebas y archivos:
-frontend completo con 419 pruebas en 46 archivos; backend unitario
+frontend completo con 549 pruebas en 60 archivos; backend unitario
 focal con 30 pruebas en 2 archivos; y persistencia/HTTP con 13 pruebas en 2
 archivos contra `schema=test`. Estas cifras son la verificación actual del
 módulo, no totales históricos globales de otras fases.
