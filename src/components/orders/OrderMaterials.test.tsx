@@ -1,9 +1,10 @@
 import type { ComponentProps } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { OrderCatalog, OrderDetail } from "../../models/order";
 import { OrderMaterials } from "./OrderMaterials";
+import ordersCss from "./orders.css?raw";
 
 const catalog: OrderCatalog = {
   serviceTypes: [],
@@ -43,7 +44,7 @@ function renderMaterials(overrides: Partial<ComponentProps<typeof OrderMaterials
     onRemove: vi.fn(async () => true),
     ...overrides,
   };
-  return { ...render(<OrderMaterials {...props} />), props };
+  return { ...render(<div className="orders-workspace"><OrderMaterials {...props} /></div>), props };
 }
 
 describe("OrderMaterials", () => {
@@ -86,6 +87,60 @@ describe("OrderMaterials", () => {
     expect(onRemove).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Confirmar retiro" }));
     await waitFor(() => expect(onRemove).toHaveBeenCalledWith("usage-1"));
+  });
+
+  it("moves focus to the persistent materials heading after a successful removal", async () => {
+    const user = userEvent.setup();
+    const view = renderMaterials();
+
+    await user.click(screen.getByRole("button", { name: "Retirar Cable UTP" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Retirar material" })).getByRole("button", { name: "Confirmar retiro" }));
+    view.rerender(<div className="orders-workspace"><OrderMaterials
+      {...view.props}
+      order={{ ...order, materials: [] }}
+    /></div>);
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Retirar material" })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Materiales utilizados" })).toHaveFocus();
+  });
+
+  it("keeps keyboard focus inside the removal dialog while its controls are pending", async () => {
+    const user = userEvent.setup();
+    const view = renderMaterials();
+
+    await user.click(screen.getByRole("button", { name: "Retirar Cable UTP" }));
+    view.rerender(<div className="orders-workspace"><OrderMaterials {...view.props} pending /></div>);
+    const dialog = screen.getByRole("dialog", { name: "Retirar material" });
+    expect(within(dialog).getAllByRole("button").every((button) => button.hasAttribute("disabled"))).toBe(true);
+
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(dialog).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(dialog).toBeInTheDocument();
+
+    view.rerender(<div className="orders-workspace"><OrderMaterials {...view.props} pending={false} /></div>);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Retirar Cable UTP" })).toHaveFocus();
+  });
+
+  it("keeps every rendered material control at least 44 CSS pixels tall", () => {
+    renderMaterials();
+
+    const controls = screen.getAllByRole("button").concat(
+      screen.getAllByRole("combobox"),
+      screen.getAllByRole("textbox"),
+    );
+    const style = document.createElement("style");
+    style.textContent = ordersCss;
+    document.head.append(style);
+    try {
+      for (const control of controls) {
+        expect(Number.parseFloat(getComputedStyle(control).minHeight), control.getAttribute("aria-label") ?? control.textContent ?? control.tagName).toBeGreaterThanOrEqual(44);
+      }
+    } finally {
+      style.remove();
+    }
   });
 
   it("keeps closed orders and revoked material permission read-only", () => {

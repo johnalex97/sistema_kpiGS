@@ -1,9 +1,54 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { OrdersWorkspace } from "../hooks/useOrdersWorkspace";
 import type { OrderDetail } from "../models/order";
 import { OrdersPage } from "./OrdersPage";
+
+function mobileDeclaration(selector: string): CSSStyleDeclaration {
+  const mediaRules = Array.from(document.styleSheets)
+    .flatMap((sheet) => Array.from(sheet.cssRules))
+    .filter((candidate): candidate is CSSMediaRule => (
+      "conditionText" in candidate && candidate.conditionText === "(max-width: 1023px)"
+    ));
+  const styleRule = mediaRules
+    .flatMap((rule) => Array.from(rule.cssRules))
+    .find((candidate): candidate is CSSStyleRule => (
+      candidate instanceof CSSStyleRule
+      && candidate.selectorText.split(",").map((item) => item.trim()).includes(selector)
+    ));
+  if (!styleRule) throw new Error(`No se encontró el selector móvil ${selector}`);
+  return styleRule.style;
+}
+
+function mediaDeclaration(condition: string, selector: string): CSSStyleDeclaration {
+  const mediaRule = Array.from(document.styleSheets)
+    .flatMap((sheet) => Array.from(sheet.cssRules))
+    .find((candidate): candidate is CSSMediaRule => (
+      "conditionText" in candidate && candidate.conditionText === condition
+    ));
+  const styleRule = mediaRule && Array.from(mediaRule.cssRules)
+    .find((candidate): candidate is CSSStyleRule => (
+      candidate instanceof CSSStyleRule && candidate.selectorText === selector
+    ));
+  if (!styleRule) throw new Error(`No se encontró ${selector} dentro de ${condition}`);
+  return styleRule.style;
+}
+
+function applyMobileCascade(): HTMLStyleElement {
+  const cssText = Array.from(document.styleSheets)
+    .flatMap((sheet) => Array.from(sheet.cssRules))
+    .filter((candidate): candidate is CSSMediaRule => (
+      "conditionText" in candidate && candidate.conditionText === "(max-width: 1023px)"
+    ))
+    .flatMap((rule) => Array.from(rule.cssRules).map((nested) => nested.cssText))
+    .join("\n");
+  const style = document.createElement("style");
+  style.dataset.testMobileCascade = "true";
+  style.textContent = cssText;
+  document.head.append(style);
+  return style;
+}
 
 const detail: OrderDetail = {
   id: "order-1",
@@ -180,6 +225,78 @@ describe("OrdersPage", () => {
     expect(screen.getByText("En progreso", { selector: "[aria-current='step']" }))
       .toBeInTheDocument();
     expect(screen.getByText("Versión 3")).toBeInTheDocument();
+  });
+
+  it("keeps detail and assignments reachable in the mobile full-screen scroller", () => {
+    render(<OrdersPage search="" workspace={workspace({
+      selectedOrderId: detail.id,
+      detail: { status: "success", data: detail, error: null, stale: false },
+    })} />);
+
+    const assignments = screen.getByRole("region", { name: "Administrar equipo" });
+    const scroller = assignments.closest(".orders-register__detail");
+    expect(scroller).toContainElement(assignments);
+
+    const scrollerStyle = mobileDeclaration(".orders-register--detail .orders-register__detail");
+    expect(scrollerStyle.position).toBe("fixed");
+    expect(scrollerStyle.overflowY).toBe("auto");
+    expect(scrollerStyle.overscrollBehaviorY).toBe("contain");
+
+    const detailStyle = mobileDeclaration(".orders-register--detail .order-detail");
+    expect(detailStyle.height).toBe("auto");
+  });
+
+  it("stacks the operational route and material usage without horizontal scrolling on mobile", async () => {
+    const mobileStyle = applyMobileCascade();
+    const user = userEvent.setup();
+    const detailWithMaterial: OrderDetail = {
+      ...detail,
+      materials: [{
+        id: "usage-1",
+        material: { id: "material-1", code: "MAT-001", name: "Cable UTP", unit: "metro" },
+        quantity: "2.125",
+        historicalUnitCost: "18.75",
+        observation: "Tramo reemplazado",
+        createdAt: "2026-09-16T15:30:00.000Z",
+      }],
+    };
+
+    try {
+      render(<OrdersPage search="" workspace={workspace({
+        selectedOrderId: detail.id,
+        detail: { status: "success", data: detailWithMaterial, error: null, stale: false },
+        catalog: {
+          status: "success",
+          data: {
+            serviceTypes: [],
+            materials: [{ id: "material-1", code: "MAT-001", name: "Cable UTP", unit: "metro", referenceCost: "18.75" }],
+          },
+          error: null,
+          stale: false,
+        },
+      })} />);
+
+      const route = screen.getByLabelText("Ruta operativa de la orden");
+      const routeList = route.querySelector("ol") as HTMLOListElement;
+      expect(getComputedStyle(route).overflowX).toBe("visible");
+      expect(getComputedStyle(routeList).minWidth).toBe("0px");
+      expect(getComputedStyle(routeList).gridTemplateColumns).toBe("1fr");
+
+      await user.click(screen.getByRole("tab", { name: "Materiales" }));
+      const table = screen.getByRole("table", { name: "Materiales registrados" });
+      const wrapper = table.parentElement as HTMLElement;
+      expect(getComputedStyle(wrapper).overflowX).toBe("visible");
+      expect(getComputedStyle(table).minWidth).toBe("0px");
+      expect(getComputedStyle(table).display).toBe("block");
+      expect(within(table).getByRole("cell", { name: /Cable UTP/ })).toHaveAttribute("data-label", "Material");
+      expect(within(table).getByRole("cell", { name: "2.125" })).toHaveAttribute("data-label", "Cantidad");
+    } finally {
+      mobileStyle.remove();
+    }
+  });
+
+  it("stops the loading animation when reduced motion is requested", () => {
+    expect(mediaDeclaration("(prefers-reduced-motion: reduce)", ".orders-state > span").animation).toBe("none");
   });
 
   it("gives actionable empty and error states", async () => {

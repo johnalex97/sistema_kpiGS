@@ -6,7 +6,6 @@ import type { AuthUser } from "./models/auth";
 import type { Evidence } from "./models/evidence";
 import type { OrderDetail, OrderHistoryEntry, OrderStatus } from "./models/order";
 import { renderWithAuth } from "./test/auth-test-utils";
-import ordersCss from "./components/orders/orders.css?raw";
 
 const orderId = "order-14";
 const technicianId = "tech-14";
@@ -232,17 +231,6 @@ afterEach(() => {
 });
 
 describe("flujo integrado de órdenes", () => {
-  it("declara el corte responsive y objetivos táctiles completos del módulo", () => {
-    expect(ordersCss).toContain("@media (max-width: 1023px)");
-    expect(ordersCss).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(ordersCss).toMatch(
-      /\.orders-workspace button, \.orders-workspace input, \.orders-workspace select, \.orders-workspace textarea \{ min-height: 44px; \}/,
-    );
-    expect(ordersCss).toMatch(
-      /\.order-evidence \[role="group"\] button, \.order-history nav button, \.order-assignments li button \{ min-height: 44px; \}/,
-    );
-  });
-
   it("permite a administración crear, editar, asignar, cancelar y ajustar con la versión confirmada", async () => {
     const mutations = installAdminApi();
     const user = userEvent.setup();
