@@ -239,9 +239,11 @@ respuestas con una versión menor nunca degradarán el estado.
 ### Escritorio
 
 El área principal será maestro-detalle. La tabla mostrará código, nombre
-comercial, razón social o RTN disponible, contacto principal disponible,
-cantidad de sucursales/contactos activos y estado. El detalle lateral conservará
-el contexto del listado.
+comercial, razón social o RTN disponible, teléfono o correo institucional
+disponible, cantidad de sucursales/contactos activos y estado. El detalle
+lateral conservará el contexto del listado. El contacto principal se mostrará
+en la pestaña de contactos, donde existe la colección autorizada para resolverlo
+sin introducir consultas N+1 en el listado.
 
 ### Móvil
 
