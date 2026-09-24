@@ -36,6 +36,50 @@ function lookupApi(): OrderLookupApi {
 afterEach(() => vi.useRealTimers());
 
 describe("OrderAssignments", () => {
+  it("restaura foco al encabezado persistente después de retirar al técnico", async () => {
+    let resolve!: (saved: boolean) => void;
+    const props = { order, lookupApi: lookupApi(), pending: false, error: null, onAssign: vi.fn(), onUnassign: vi.fn(() => new Promise<boolean>((done) => { resolve = done; })) };
+    const view = render(<OrderAssignments {...props} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Retirar a Beatriz Apoyo" }));
+    await user.type(screen.getByLabelText("Motivo"), "Cambio de turno autorizado");
+    await user.click(screen.getByRole("button", { name: "Confirmar retiro" }));
+    view.rerender(<OrderAssignments {...props} order={{ ...order, participants: order.participants.filter((item) => item.id !== "tech-2") }} />);
+    await act(async () => resolve(true));
+    expect(screen.getByRole("heading", { name: "Asignaciones" })).toHaveFocus();
+  });
+  it("atrapa foco de retiro incluso pendiente y lo restaura con Escape", async () => {
+    const props = { order, lookupApi: lookupApi(), pending: false, error: null, onAssign: vi.fn(), onUnassign: vi.fn() };
+    const view = render(<OrderAssignments {...props} />);
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("button", { name: "Retirar a Beatriz Apoyo" });
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    within(dialog).getByRole("button", { name: "Confirmar retiro" }).focus();
+    await user.tab();
+    expect(within(dialog).getByRole("button", { name: "Cerrar retiro" })).toHaveFocus();
+    view.rerender(<OrderAssignments {...props} pending />);
+    await user.tab();
+    expect(dialog.contains(document.activeElement) || document.activeElement === dialog).toBe(true);
+    view.rerender(<OrderAssignments {...props} />);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("no consulta técnicos sin permiso y borra resultados al revocarlo", async () => {
+    const api = lookupApi();
+    const props = { order, lookupApi: api, pending: false, error: null, onAssign: vi.fn(), onUnassign: vi.fn() };
+    const view = render(<OrderAssignments {...props} canLookupTechnicians={false} />);
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(api.technicians).not.toHaveBeenCalled();
+    view.rerender(<OrderAssignments {...props} canLookupTechnicians />);
+    await userEvent.setup().type(screen.getByRole("searchbox"), "Diego");
+    expect(await screen.findByRole("option", { name: /Diego/ })).toBeInTheDocument();
+    view.rerender(<OrderAssignments {...props} canLookupTechnicians={false} />);
+    expect(screen.queryByRole("option", { name: /Diego/ })).not.toBeInTheDocument();
+  });
   it("shows active participants before historical participation", () => {
     render(<OrderAssignments order={order} lookupApi={lookupApi()} pending={false} error={null} onAssign={vi.fn()} onUnassign={vi.fn()} />);
     const items = within(screen.getByRole("list", { name: "Equipo de la orden" })).getAllByRole("listitem");

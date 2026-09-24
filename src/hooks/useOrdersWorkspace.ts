@@ -6,6 +6,7 @@ import { ApiClientError, type ApiFieldError } from "../api/http";
 import { useAuth } from "../auth/useAuth";
 import type {
   OrderCatalog,
+  Order,
   OrderDetail,
   OrderFilters,
   OrderHistoryPage,
@@ -61,6 +62,8 @@ export interface OrdersWorkspace {
   openCreate(): void;
   openEdit(): void;
   closeForm(): void;
+  reviewOrderConflict?(): void;
+  reloadOrderConflict?(): Promise<void>;
   submitOrder(input: CreateOrderInput | Omit<UpdateOrderInput, "version">): Promise<boolean>;
   assignTechnician(technicianId: string, role: OrderTechnicianRole): Promise<boolean>;
   unassignTechnician(technicianId: string, reason: string): Promise<boolean>;
@@ -76,6 +79,8 @@ export interface OrdersWorkspace {
   uploadEvidence?: (input: EvidenceUploadInput) => Promise<boolean>;
   downloadEvidence?: (evidence: Evidence) => Promise<boolean>;
   archiveEvidence?: (evidence: Evidence, reason: string) => Promise<boolean>;
+  invalidateEvidenceRead?: (status: 403 | 404) => void;
+  invalidateLookup?: (kind: "clients" | "technicians") => void;
 }
 
 export interface OrderAssignmentState {
@@ -103,6 +108,7 @@ export interface OrderFormState {
   error: string | null;
   fieldErrors: ApiFieldError[];
   conflict: boolean;
+  conflictOrder?: OrderDetail | null;
 }
 
 export interface UseOrdersWorkspaceOptions {
@@ -169,16 +175,7 @@ export function useOrdersWorkspace({
   const [evidenceViewForbidden, setEvidenceViewForbidden] = useState(false);
   const [evidenceUploadForbidden, setEvidenceUploadForbidden] = useState(false);
   const [evidenceManageForbidden, setEvidenceManageForbidden] = useState(false);
-  const capabilities = useMemo(() => ({
-    ...grantedCapabilities,
-    canView: grantedCapabilities.canView && !viewForbidden,
-    canViewAll: grantedCapabilities.canViewAll && !viewForbidden,
-    canManage: grantedCapabilities.canManage && !viewForbidden && !managementForbidden && !operationsForbidden,
-    canOperateOwn: grantedCapabilities.canOperateOwn && !viewForbidden && !operationsForbidden,
-    canViewEvidence: grantedCapabilities.canViewEvidence && !evidenceViewForbidden,
-    canUploadEvidence: grantedCapabilities.canUploadEvidence && !evidenceUploadForbidden,
-    canManageEvidence: grantedCapabilities.canManageEvidence && !evidenceManageForbidden,
-  }), [evidenceManageForbidden, evidenceUploadForbidden, evidenceViewForbidden, grantedCapabilities, managementForbidden, operationsForbidden, viewForbidden]);
+  const [lookupForbidden, setLookupForbidden] = useState({ clients: false, technicians: false });
   const initialRef = useRef(readOrderUrlState(window.location.search));
   const initialSearch = search.trim();
   const [filters, setFiltersState] = useState<OrderFilters>(() => ({
@@ -188,6 +185,19 @@ export function useOrdersWorkspace({
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(
     initialRef.current.orderId,
   );
+  const [evidenceMissingOrder, setEvidenceMissingOrder] = useState<string | null>(null);
+  const capabilities = useMemo(() => ({
+    ...grantedCapabilities,
+    canView: grantedCapabilities.canView && !viewForbidden,
+    canViewAll: grantedCapabilities.canViewAll && !viewForbidden,
+    canManage: grantedCapabilities.canManage && !viewForbidden && !managementForbidden && !operationsForbidden,
+    canOperateOwn: grantedCapabilities.canOperateOwn && !viewForbidden && !operationsForbidden,
+    canViewEvidence: grantedCapabilities.canViewEvidence && !evidenceViewForbidden && (!evidenceMissingOrder || evidenceMissingOrder !== selectedOrderId),
+    canUploadEvidence: grantedCapabilities.canUploadEvidence && !evidenceUploadForbidden,
+    canManageEvidence: grantedCapabilities.canManageEvidence && !evidenceManageForbidden,
+    canLookupClients: grantedCapabilities.canLookupClients && !lookupForbidden.clients,
+    canLookupTechnicians: grantedCapabilities.canLookupTechnicians && !lookupForbidden.technicians,
+  }), [evidenceMissingOrder, selectedOrderId, evidenceManageForbidden, evidenceUploadForbidden, evidenceViewForbidden, grantedCapabilities, lookupForbidden, managementForbidden, operationsForbidden, viewForbidden]);
   const [list, setList] = useState<OrderReadState<OrderPage>>(idleState);
   const [detail, setDetail] = useState<OrderReadState<OrderDetail>>(idleState);
   const [catalog, setCatalog] = useState<OrderReadState<OrderCatalog>>(idleState);
@@ -225,6 +235,30 @@ export function useOrdersWorkspace({
     history: null as AbortController | null,
   });
   const generations = useRef({ list: 0, detail: 0, catalog: 0, history: 0 });
+  const confirmedOrders = useRef(new Map<string, OrderDetail>());
+  const confirmedRows = useRef(new Map<string, Order>());
+
+  const acceptRow = useCallback((incoming: Order) => {
+    const confirmed = confirmedRows.current.get(incoming.id);
+    if (confirmed && confirmed.version > incoming.version) return confirmed;
+    confirmedRows.current.set(incoming.id, incoming);
+    return incoming;
+  }, []);
+
+  const acceptOrder = useCallback((incoming: OrderDetail) => {
+    const confirmed = confirmedOrders.current.get(incoming.id);
+    if (confirmed && confirmed.version > incoming.version) return confirmed;
+    confirmedOrders.current.set(incoming.id, incoming);
+    acceptRow(incoming);
+    return incoming;
+  }, [acceptRow]);
+
+  const invalidateOrderReads = useCallback(() => {
+    controllers.current.detail?.abort();
+    controllers.current.list?.abort();
+    generations.current.detail += 1;
+    generations.current.list += 1;
+  }, []);
 
   useEffect(() => { filtersRef.current = filters; }, [filters]);
   useEffect(() => { selectedIdRef.current = selectedOrderId; }, [selectedOrderId]);
@@ -290,7 +324,9 @@ export function useOrdersWorkspace({
     try {
       const data = await api.list(filtersRef.current, controller.signal);
       if (controller.signal.aborted || generation !== generations.current.list) return;
-      setList({ status: "success", data, error: null, stale: false });
+      const confirmed = { ...data, items: data.items.map(acceptRow) };
+      listRef.current = { status: "success", data: confirmed, error: null, stale: false };
+      setList(listRef.current);
     } catch (error: unknown) {
       if (controller.signal.aborted || isAbortError(error) || generation !== generations.current.list) return;
       if (error instanceof ApiClientError && error.status === 403) {
@@ -305,12 +341,12 @@ export function useOrdersWorkspace({
         stale: previous !== null,
       });
     }
-  }, [api, capabilities.canView]);
+  }, [acceptRow, api, capabilities.canView]);
 
   const loadDetail = useCallback(async (
     id: string,
     silent = false,
-  ): Promise<void> => {
+  ): Promise<OrderDetail | undefined> => {
     if (!capabilities.canView) return;
     controllers.current.detail?.abort();
     const controller = new AbortController();
@@ -320,14 +356,16 @@ export function useOrdersWorkspace({
       setDetail({ status: "loading", data: null, error: null, stale: false });
     }
     try {
-      const data = await api.detail(id, controller.signal);
+      const incoming = await api.detail(id, controller.signal);
       if (
         controller.signal.aborted
         || generation !== generations.current.detail
         || selectedIdRef.current !== id
       ) return;
+      const data = acceptOrder(incoming);
       detailRef.current = { status: "success", data, error: null, stale: false };
       setDetail(detailRef.current);
+      return data;
     } catch (error: unknown) {
       if (
         controller.signal.aborted
@@ -351,7 +389,7 @@ export function useOrdersWorkspace({
         stale: silent && previous !== null,
       });
     }
-  }, [api, capabilities.canView, clearSelectedOrder]);
+  }, [acceptOrder, api, capabilities.canView, clearSelectedOrder]);
 
   const loadCatalog = useCallback(async (): Promise<void> => {
     if (!capabilities.canView) return;
@@ -427,8 +465,8 @@ export function useOrdersWorkspace({
     if (id) await loadDetail(id, true);
   }, [loadDetail]);
   const refresh = useCallback(async (): Promise<void> => {
-    await Promise.all([loadList(), refreshDetail()]);
-  }, [loadList, refreshDetail]);
+    await Promise.all([loadList(), refreshDetail(), loadCatalog()]);
+  }, [loadCatalog, loadList, refreshDetail]);
 
   useEffect(() => {
     if (capabilities.canView) void loadList();
@@ -469,6 +507,7 @@ export function useOrdersWorkspace({
   useEffect(() => {
     const handlePopState = () => {
       const parsed = readOrderUrlState(window.location.search);
+      const sameOrder = parsed.orderId === selectedIdRef.current;
       controllers.current.detail?.abort();
       controllers.current.history?.abort();
       evidenceDownloadControllerRef.current?.abort();
@@ -497,10 +536,11 @@ export function useOrdersWorkspace({
       actionPendingRef.current = false;
       actionRef.current = idleOperation();
       setAction(actionRef.current);
+      if (sameOrder && parsed.orderId) void loadDetail(parsed.orderId);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [loadDetail]);
 
   useEffect(() => {
     if (capabilities.canView) return;
@@ -509,6 +549,8 @@ export function useOrdersWorkspace({
       generations.current[key as keyof typeof generations.current] += 1;
     });
     clearSelectedOrder(null, "replace");
+    confirmedOrders.current.clear();
+    confirmedRows.current.clear();
     setList(idleState());
     setCatalog(idleState());
   }, [capabilities.canView, clearSelectedOrder]);
@@ -535,6 +577,14 @@ export function useOrdersWorkspace({
     assignmentPendingRef.current = false;
     setAssignment({ pending: false, error: null });
   }, [capabilities.canManage]);
+
+  useEffect(() => {
+    if (capabilities.canLookupClients) return;
+    formGenerationRef.current += 1;
+    mutationPendingRef.current = false;
+    formRef.current = null;
+    setForm(null);
+  }, [capabilities.canLookupClients]);
 
   useEffect(() => {
     if (capabilities.canManage || capabilities.canOperateOwn) return;
@@ -623,10 +673,26 @@ export function useOrdersWorkspace({
     clearSelectedOrder(selectedIdRef.current, "push");
   }, [clearSelectedOrder]);
 
-  const openCreate = useCallback(() => {
-    if (!canManageRef.current) return;
-    setForm({ mode: "create", order: null, pending: false, error: null, fieldErrors: [], conflict: false });
+  const invalidateEvidenceRead = useCallback((status: 403 | 404) => {
+    evidenceDownloadControllerRef.current?.abort();
+    if (status === 403) setEvidenceViewForbidden(true);
+    else setEvidenceMissingOrder(selectedIdRef.current);
+    setEvidence({ pending: false, error: "La evidencia consultada ya no está disponible para tu perfil." });
   }, []);
+
+  const invalidateLookup = useCallback((kind: "clients" | "technicians") => {
+    setLookupForbidden((current) => ({ ...current, [kind]: true }));
+    if (kind === "clients") {
+      formGenerationRef.current += 1;
+      mutationPendingRef.current = false;
+      formRef.current = null; setForm(null);
+    }
+  }, []);
+
+  const openCreate = useCallback(() => {
+    if (!canManageRef.current || !catalog.data) return;
+    setForm({ mode: "create", order: null, pending: false, error: null, fieldErrors: [], conflict: false });
+  }, [catalog.data]);
 
   const openEdit = useCallback(() => {
     const current = detailRef.current.data;
@@ -640,11 +706,28 @@ export function useOrdersWorkspace({
     setForm(null);
   }, []);
 
+  const reviewOrderConflict = useCallback(() => {
+    const current = formRef.current;
+    if (!current?.conflict || !current.conflictOrder || mutationPendingRef.current) return;
+    formRef.current = { ...current, order: current.conflictOrder, conflict: false, conflictOrder: null };
+    setForm(formRef.current);
+  }, []);
+
+  const reloadOrderConflict = useCallback(async () => {
+    const current = formRef.current;
+    if (!current?.conflict || !current.order || mutationPendingRef.current) return;
+    const generation = formGenerationRef.current;
+    setForm((state) => state ? { ...state, pending: true } : null);
+    const fresh = await loadDetail(current.order.id, true);
+    if (generation !== formGenerationRef.current) return;
+    setForm((state) => state ? { ...state, pending: false, conflictOrder: fresh ?? null } : null);
+  }, [loadDetail]);
+
   const submitOrder = useCallback(async (
     input: CreateOrderInput | Omit<UpdateOrderInput, "version">,
   ): Promise<boolean> => {
     const currentForm = formRef.current;
-    if (!currentForm || !canManageRef.current || mutationPendingRef.current) return false;
+    if (!currentForm || currentForm.conflict || !canManageRef.current || mutationPendingRef.current) return false;
     const targetOrderId = currentForm.order?.id ?? null;
     const generation = ++formGenerationRef.current;
     const mutationIsCurrent = () => generation === formGenerationRef.current
@@ -657,19 +740,23 @@ export function useOrdersWorkspace({
       const incoming = currentForm.mode === "create"
         ? await api.create(input as CreateOrderInput)
         : currentDetail && currentDetail.id === currentForm.order?.id
-          ? await api.update(currentDetail.id, { ...input, version: currentDetail.version })
+          ? await api.update(currentDetail.id, { ...input, version: currentForm.order!.version })
           : null;
       if (!incoming || !mutationIsCurrent()) return false;
+      invalidateOrderReads();
+      const confirmed = acceptOrder(incoming);
       selectedIdRef.current = incoming.id;
       setSelectedOrderId(incoming.id);
-      setDetail({ status: "success", data: incoming, error: null, stale: false });
+      detailRef.current = { status: "success", data: confirmed, error: null, stale: false };
+      setDetail(detailRef.current);
       setList((current) => current.data ? {
         ...current,
+        status: "success",
         data: {
           ...current.data,
           items: current.data.items.some((item) => item.id === incoming.id)
-            ? current.data.items.map((item) => item.id === incoming.id ? incoming : item)
-            : [incoming, ...current.data.items],
+            ? current.data.items.map((item) => item.id === incoming.id ? acceptRow(confirmed) : item)
+            : [acceptRow(confirmed), ...current.data.items],
         },
       } : current);
       setForm(null);
@@ -700,7 +787,12 @@ export function useOrdersWorkspace({
         fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [],
         conflict,
       } : null);
-      if (conflict && currentForm.mode === "edit") await refreshDetail();
+      if (conflict && currentForm.mode === "edit") {
+        const refreshed = targetOrderId ? await loadDetail(targetOrderId, true) : undefined;
+        if (mutationIsCurrent() && refreshed?.id === targetOrderId) {
+          setForm((current) => current ? { ...current, conflictOrder: refreshed } : null);
+        }
+      }
       return false;
     } finally {
       if (generation === formGenerationRef.current) {
@@ -708,9 +800,11 @@ export function useOrdersWorkspace({
         setForm((current) => current ? { ...current, pending: false } : null);
       }
     }
-  }, [api, clearSelectedOrder, refreshDetail]);
+  }, [acceptOrder, acceptRow, api, clearSelectedOrder, invalidateOrderReads, loadDetail]);
 
   const applyOrderResult = useCallback((incoming: OrderDetail, targetOrderId: string, updateDetail = true) => {
+    invalidateOrderReads();
+    incoming = acceptOrder(incoming);
     if (updateDetail && selectedIdRef.current === targetOrderId && incoming.id === targetOrderId) {
       detailRef.current = { status: "success", data: incoming, error: null, stale: false };
       setDetail(detailRef.current);
@@ -719,12 +813,13 @@ export function useOrdersWorkspace({
       if (!current.data?.items.some((item) => item.id === incoming.id)) return current;
       const next = {
         ...current,
-        data: { ...current.data, items: current.data.items.map((item) => item.id === incoming.id ? incoming : item) },
+        status: "success" as const,
+        data: { ...current.data, items: current.data.items.map((item) => item.id === incoming.id ? acceptRow(incoming) : item) },
       };
       listRef.current = next;
       return next;
     });
-  }, []);
+  }, [acceptOrder, acceptRow, invalidateOrderReads]);
 
   const assignmentErrorMessage = useCallback((error: unknown): string => {
     if (!(error instanceof ApiClientError)) return errorMessage(error, "No fue posible actualizar el equipo");
@@ -1140,6 +1235,8 @@ export function useOrdersWorkspace({
     openCreate,
     openEdit,
     closeForm,
+    reviewOrderConflict,
+    reloadOrderConflict,
     submitOrder,
     assignTechnician,
     unassignTechnician,
@@ -1155,5 +1252,7 @@ export function useOrdersWorkspace({
     uploadEvidence,
     downloadEvidence,
     archiveEvidence,
+    invalidateEvidenceRead,
+    invalidateLookup,
   };
 }

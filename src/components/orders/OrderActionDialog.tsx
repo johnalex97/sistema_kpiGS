@@ -1,5 +1,6 @@
 import { AlertTriangle, X } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useOrderDialogFocus } from "./useOrderDialogFocus";
+import { useRef, useState, type FormEvent } from "react";
 import {
   fromTegucigalpaDateTimeInput,
   toTegucigalpaDateTimeInput,
@@ -39,7 +40,7 @@ export function OrderActionDialog({
   onSubmit,
 }: OrderActionDialogProps) {
   const panelRef = useRef<HTMLFormElement>(null);
-  const pendingRef = useRef(pending);
+  useOrderDialogFocus(panelRef, true, pending, onCancel);
   const [initialDates] = useState(() => ({
     scheduledFor: toTegucigalpaDateTimeInput(order.scheduledFor),
     startedAt: toTegucigalpaDateTimeInput(order.startedAt),
@@ -57,35 +58,6 @@ export function OrderActionDialog({
   const [endedAt, setEndedAt] = useState(initialDates.endedAt);
   const [estimatedMinutes, setEstimatedMinutes] = useState(order.estimatedMinutes?.toString() ?? "");
   const labels = copy[action];
-
-  useEffect(() => { pendingRef.current = pending; }, [pending]);
-
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const panel = panelRef.current;
-    panel?.querySelector<HTMLElement>("textarea:not(:disabled), input:not(:disabled), button:not(:disabled)")?.focus();
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pendingRef.current) onCancel();
-      if (event.key !== "Tab" || !panel) return;
-      const focusable = [...panel.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), textarea:not(:disabled)")];
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      if (previous?.isConnected) previous.focus();
-      else document.querySelector<HTMLElement>('[aria-label="Cerrar detalle"]')?.focus();
-    };
-  }, [onCancel]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -137,7 +109,7 @@ export function OrderActionDialog({
   };
 
   return <div className="order-action-backdrop" role="presentation">
-    <form ref={panelRef} className={`order-action-dialog order-action-dialog--${action}`} role="dialog" aria-modal="true" aria-labelledby="order-action-title" onSubmit={(event) => void submit(event)}>
+    <form tabIndex={-1} ref={panelRef} className={`order-action-dialog order-action-dialog--${action}`} role="dialog" aria-modal="true" aria-labelledby="order-action-title" onSubmit={(event) => void submit(event)}>
       <header>
         <div><span>{labels.eyebrow}</span><h2 id="order-action-title">{labels.title}</h2><p>{order.orderNumber} · versión {order.version}</p></div>
         <button type="button" aria-label="Cerrar" disabled={pending} onClick={onCancel}><X size={18} /></button>

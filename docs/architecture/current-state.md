@@ -1,6 +1,6 @@
 # Diagnóstico de arquitectura actual
 
-Fecha de actualización: 21 de septiembre de 2026.
+Fecha de actualización: 24 de septiembre de 2026.
 
 ## Resumen
 
@@ -21,7 +21,7 @@ src/
 ├── layouts/      # Menú y estructura visual
 ├── mocks/        # Datos simulados identificados
 ├── models/       # Contratos TypeScript
-├── pages/        # Composición de las cuatro vistas
+├── pages/        # Resumen, Actividades, Técnicos, Órdenes y Reincidencias
 ├── routes/       # Mapeo de URLs y páginas
 ├── test/         # Configuración de pruebas
 ├── App.tsx       # Composición de sesión y shell
@@ -59,7 +59,7 @@ actividades, evidencias, reincidencias y KPI.
 
 ## Funcionalidades que operan en el navegador
 
-- Navegación con URL entre Resumen, Actividades, Técnicos y Reincidencias.
+- Navegación con URL entre Resumen, Actividades, Técnicos, Órdenes y Reincidencias.
 - Búsqueda, filtros, URL, paginación y polling de actividades persistentes.
 - Creación programada/manual, edición pendiente y reemplazo de equipo.
 - Inicio, pausa, reanudación, finalización, cancelación y ajuste auditado.
@@ -113,11 +113,12 @@ mediante la API; `recurrenceJobs` y `RecurrenceJob` fueron retirados.
 | `npm run build` | Correcto; TypeScript y Vite compilan |
 | `npm run dev -- --host 127.0.0.1 --port 5173` | Correcto; respuesta HTTP 200 |
 | `npm run lint` | Correcto; 0 advertencias |
-| `npm test -- src/orders-flow.integration.test.tsx` | Correcto; 3 pruebas del flujo integrado de Órdenes |
-| `npm test -- --pool=threads --maxWorkers=1` | Correcto; 549 pruebas en 60 archivos |
+| `npm test -- src/orders-flow.integration.test.tsx` | Correcto; 3 pruebas integradas de Órdenes: limpieza de consulta y flujos administrativo/técnico con versiones no consecutivas |
+| `npm test -- --pool=threads --maxWorkers=1` | Correcto; 587 pruebas en 61 archivos, verificación frontend del 24 de septiembre |
 | `npm audit --audit-level=moderate` | 0 vulnerabilidades |
 
-Backend, ejecutado desde `server/`:
+Backend, evidencia de las fases anteriores ejecutada desde `server/` (no se
+modificó ni reejecutó en la ronda final frontend del 24 de septiembre):
 
 | Comando | Resultado |
 | --- | --- |
@@ -192,9 +193,11 @@ La SPA conecta `/ordenes` con el catálogo, lista, detalle e historial. Mantiene
 en la URL búsqueda, estados, prioridades, atraso, cliente, sucursal, técnico,
 tipo de servicio, periodo, página y selección. ADMIN/SUPERVISOR administran;
 TECHNICIAN consulta su alcance histórico y sólo el principal activo opera. Las
-mutaciones usan la última `version` confirmada, nunca se reintentan en automático
-y los conflictos 409 refrescan el recurso antes de ofrecer una nueva acción.
-El detalle integra asignaciones, materiales con costo histórico, evidencias con
+mutaciones usan versiones confirmadas por el servidor, nunca se reintentan en automático.
+La edición conserva la versión base de su borrador; ante 409 recarga los datos
+vigentes y exige revisión explícita antes de adoptar una nueva versión.
+El detalle integra equipo de solo lectura, asignaciones, agenda y tiempos reales,
+diagnóstico, resultado, cancelación, materiales con costo histórico, evidencias con
 permisos propios e historial paginado. La vista usa tabla y panel desde 1024 px,
 y tarjetas con detalle a pantalla completa por debajo; las pestañas admiten
 teclado y los cambios de estado/version se anuncian con `aria-live`.
@@ -316,7 +319,7 @@ raíz, `npm test -- --pool=threads --maxWorkers=1`, `npm run lint` y
 `npm run build`. PostgreSQL puede emitir la
 advertencia no bloqueante conocida de `pg` sobre `client.query()` concurrente.
 La matriz vigente distingue el alcance para no mezclar pruebas y archivos:
-frontend completo con 549 pruebas en 60 archivos; backend unitario
-focal con 30 pruebas en 2 archivos; y persistencia/HTTP con 13 pruebas en 2
-archivos contra `schema=test`. Estas cifras son la verificación actual del
-módulo, no totales históricos globales de otras fases.
+frontend completo con 587 pruebas en 61 archivos (24 de septiembre); la
+verificación previa focal de KPI conserva 30 pruebas unitarias en 2 archivos y
+13 de persistencia/HTTP en 2 archivos contra `schema=test`. Las cifras backend
+son del módulo KPI, no totales globales ni una reejecución de esta ronda de Órdenes.

@@ -14,9 +14,9 @@ import { canAccessPage, pageDescriptions } from "../routes/appRoutes";
 import { Sidebar } from "./Sidebar";
 import { AccessDeniedPage } from "../pages/AccessDeniedPage";
 
-function PageContent({ page, search, onGoRecurrence }: { page: Page; search: string; onGoRecurrence: () => void }) {
+function PageContent({ page, search, onGoRecurrence, onClearSearch }: { page: Page; search: string; onGoRecurrence: () => void; onClearSearch: () => void }) {
   switch (page) {
-    case "Órdenes": return <OrdersPage search={search} />;
+    case "Órdenes": return <OrdersPage search={search} onClearSearch={onClearSearch} />;
     case "Actividades": return <ActivitiesPage search={search} />;
     case "Técnicos": return <TechniciansPage search={search} />;
     case "Reincidencias": return <RecurrencesPage search={search} />;
@@ -55,7 +55,7 @@ export function AppShell() {
         <div className="page-wrap">
           {hasPageAccess ? <>
             <section className="page-heading"><div><p className="eyebrow">{page === "Resumen" ? "Lunes · 28 de julio" : "Centro de control"}</p><h1>{page === "Resumen" ? "Así opera Geek Solution hoy" : page}</h1><p>{page === "Resumen" ? "El equipo alcanzó el 79% de la meta diaria. Hay una reincidencia que requiere seguimiento." : pageDescriptions[page]}</p></div><div className="heading-actions"><button className="button button--ghost" type="button"><CalendarDays size={17} /> 28 jul — 3 ago <ChevronDown size={15} /></button></div></section>
-            <PageContent page={page} search={search} onGoRecurrence={() => changePage("Reincidencias")} />
+            <PageContent page={page} search={search} onGoRecurrence={() => changePage("Reincidencias")} onClearSearch={() => setSearch("")} />
           </> : <AccessDeniedPage fallbackPage={visiblePages[0]} onGoToFallback={() => visiblePages[0] && changePage(visiblePages[0])} />}
         </div>
       </main>

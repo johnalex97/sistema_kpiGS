@@ -137,6 +137,71 @@ function workspace(
 }
 
 describe("OrdersPage", () => {
+  it("Escape en retiro de material móvil no cierra el detalle subyacente", async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    try {
+      const state = workspace({ selectedOrderId: detail.id, detail: { status: "success", error: null, stale: false, data: { ...detail, materials: [{ id: "m1", material: { id: "m", code: "M", name: "Cable", unit: "m" }, quantity: "1", historicalUnitCost: "1", observation: null, createdAt: detail.createdAt }] } } });
+      render(<OrdersPage workspace={state} />);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("tab", { name: "Materiales" }));
+      await user.click(screen.getByRole("button", { name: "Retirar Cable" }));
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog", { name: "Retirar material" })).not.toBeInTheDocument();
+      expect(state.closeDetail).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Retirar Cable" })).toHaveFocus();
+    } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth }); }
+  });
+  it("muestra equipo histórico y resumen completo de una orden cerrada a lectores", async () => {
+    const closed = { ...detail, status: "CANCELLED" as const, diagnosis: "Cable dañado", result: "Enlace restaurado", cancellationReason: "Cancelación solicitada", endedAt: "2026-09-16T16:00:00Z", totalMinutes: 60, participants: [{ id: "tech-old", code: "T0", fullName: "Técnico histórico", role: "SUPPORT" as const, active: false, assignedAt: "2026-09-16T12:00:00Z", unassignedAt: "2026-09-16T14:00:00Z" }] };
+    render(<OrdersPage workspace={workspace({ capabilities: { ...workspace().capabilities, canManage: false }, selectedOrderId: closed.id, detail: { status: "success", data: closed, error: null, stale: false } })} />);
+    expect(screen.getByText("Cable dañado")).toBeInTheDocument();
+    expect(screen.getByText("Enlace restaurado")).toBeInTheDocument();
+    expect(screen.getByText("Cancelación solicitada")).toBeInTheDocument();
+    expect(screen.getByText("60 min reales")).toBeInTheDocument();
+    expect(screen.getByText(/9:00/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Equipo" }));
+    expect(screen.getByText("Técnico histórico")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retirar/ })).not.toBeInTheDocument();
+  });
+
+  it("muestra el error de catálogo y ofrece recuperación sin Nueva orden invisible", async () => {
+    const state = workspace({ catalog: { status: "error", data: null, error: "Sin conexión", stale: false } });
+    render(<OrdersPage workspace={state} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/catálogo/);
+    expect(screen.getByRole("button", { name: "Nueva orden" })).toBeDisabled();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Reintentar catálogo" }));
+    expect(state.refresh).toHaveBeenCalled();
+  });
+
+  it("representa filtros múltiples y limpia búsqueda y selección", async () => {
+    const state = workspace({ filters: { page: 2, pageSize: 20, search: "OT", statuses: ["ASSIGNED", "PAUSED"], priorities: ["HIGH", "CRITICAL"] } });
+    render(<OrdersPage workspace={state} />);
+    expect(screen.getByLabelText("Estado")).toHaveValue(["ASSIGNED", "PAUSED"]);
+    expect(screen.getByLabelText("Prioridad")).toHaveValue(["HIGH", "CRITICAL"]);
+    for (const label of ["Filtrar cliente", "Filtrar sucursal", "Filtrar técnico", "Filtrar servicio", "Agenda desde", "Agenda hasta"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Limpiar" }));
+    expect(state.setFilters).toHaveBeenCalledWith(expect.objectContaining({ search: undefined, statuses: undefined, priorities: undefined }));
+    expect(state.closeDetail).toHaveBeenCalled();
+  });
+
+  it("en móvil enfoca el detalle, aísla el fondo y restaura foco al cerrar", async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    const state = workspace();
+    const view = render(<OrdersPage workspace={state} />);
+    const trigger = screen.getAllByRole("button", { name: /OT-2026-0042/ })[0];
+    trigger.focus();
+    view.rerender(<OrdersPage workspace={{ ...state, selectedOrderId: detail.id, detail: { status: "success", data: detail, error: null, stale: false } }} />);
+    const dialog = screen.getByRole("dialog", { name: /Detalle/ });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(trigger.closest("[inert]")).not.toBeNull();
+    await userEvent.setup().keyboard("{Escape}");
+    expect(state.closeDetail).toHaveBeenCalled();
+    view.rerender(<OrdersPage workspace={state} />);
+    expect(trigger).toHaveFocus();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+  });
   it("opens creation only through the management capability", async () => {
     const state = workspace();
     const user = userEvent.setup();
@@ -205,7 +270,7 @@ describe("OrdersPage", () => {
     const user = userEvent.setup();
     render(<OrdersPage search="" workspace={state} />);
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Estado" }), "PAUSED");
+    await user.selectOptions(screen.getByRole("listbox", { name: "Estado" }), "PAUSED");
     await user.click(screen.getByRole("button", { name: "Abrir OT-2026-0042" }));
 
     expect(state.setFilters).toHaveBeenCalledWith({ statuses: ["PAUSED"] });

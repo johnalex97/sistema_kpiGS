@@ -8,6 +8,15 @@ const entry = { id: "h-1", previousStatus: "ASSIGNED" as const, newStatus: "IN_P
 const page = { items: [entry], pagination: { page: 1, pageSize: 20, totalItems: 2, totalPages: 2 } };
 
 describe("OrderHistory", () => {
+  it("muestra hora hondureña aunque el dispositivo tenga otra zona", async () => {
+    const original = Date.prototype.toLocaleString;
+    const spy = vi.spyOn(Date.prototype, "toLocaleString").mockImplementation(function (this: Date, locales, options) {
+      return original.call(this, locales, { timeZone: "Asia/Tokyo", ...options });
+    });
+    render(<OrderHistory orderId="order-1" api={{ history: vi.fn().mockResolvedValue(page) }} canView />);
+    expect(await screen.findByText(/6:00:00/)).toBeInTheDocument();
+    spy.mockRestore();
+  });
   it("loads history only when the history area is rendered and owns its pagination", async () => {
     const history = vi.fn().mockResolvedValueOnce(page).mockResolvedValueOnce({ ...page, items: [{ ...entry, id: "h-2", action: "PAUSE" }], pagination: { ...page.pagination, page: 2 } });
     const user = userEvent.setup();

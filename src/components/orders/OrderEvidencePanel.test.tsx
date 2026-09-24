@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OrderEvidenceApi } from "../../api/evidences";
 import type { Evidence } from "../../models/evidence";
 import { OrderEvidencePanel } from "./OrderEvidencePanel";
+import { ApiClientError } from "../../api/http";
 
 const evidence: Evidence = { id: "e-1", originalName: "foto.png", mimeType: "image/png", fileExtension: "png", sizeBytes: 100, description: null, accessLevel: "TECHNICIAN", uploadedBy: { id: "u-1", displayName: "Ana" }, resourceType: "ORDER", resourceId: "order-1", checksumSha256: "private", version: 1, createdAt: "2026-09-16T12:00:00Z", updatedAt: "2026-09-16T12:00:00Z" };
 const page = { items: [evidence], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } };
@@ -11,6 +12,17 @@ const reader = (listOrder = vi.fn().mockResolvedValue(page)): Pick<OrderEvidence
 const props = (overrides: Partial<React.ComponentProps<typeof OrderEvidencePanel>> = {}) => ({ orderId: "order-1", orderNumber: "OT-1", evidenceApi: reader(), canView: true, canUpload: true, canManage: false, onUpload: vi.fn(async () => true), onDownload: vi.fn(async () => true), onArchive: vi.fn(async () => true), onClose: vi.fn(), ...overrides });
 
 describe("OrderEvidencePanel", () => {
+  it.each([403, 404])("borra nombres y descargas tras %s sin retirar carga independiente", async (status) => {
+    const listOrder = vi.fn().mockResolvedValueOnce({ items: [{ ...evidence, originalName: "private.pdf" }], pagination: { ...page.pagination, totalPages: 2 } }).mockRejectedValueOnce(new ApiClientError(status, "FORBIDDEN", "No disponible"));
+    const invalidated = vi.fn();
+    render(<OrderEvidencePanel {...props({ evidenceApi: reader(listOrder) })} onReadInvalidated={invalidated} />);
+    expect(await screen.findByText("private.pdf")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Cargar más evidencias" }));
+    await waitFor(() => expect(screen.queryByText("private.pdf")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Descargar private.pdf" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Subir evidencia" })).toBeInTheDocument();
+    expect(invalidated).toHaveBeenCalledWith(status);
+  });
   it("loads order evidence when the area is activated", async () => {
     const listOrder = vi.fn().mockResolvedValue(page);
     render(<OrderEvidencePanel {...props({ evidenceApi: reader(listOrder) })} />);

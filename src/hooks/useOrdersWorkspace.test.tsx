@@ -113,6 +113,178 @@ afterEach(() => {
 });
 
 describe("useOrdersWorkspace", () => {
+  it("no adopta la versión vieja si falla la recarga del conflicto y permite reintentar lectura", async () => {
+    const api = apiMock({ detail: vi.fn().mockResolvedValueOnce({ ...order, version: 3 }).mockRejectedValueOnce(new Error("Sin conexión")).mockResolvedValue({ ...order, version: 9 }), update: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "Conflicto")) });
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "CLIENTS_VIEW"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    await act(async () => { await result.current.submitOrder({ description: "Mi borrador" }); });
+    expect(result.current.form?.conflictOrder ?? null).toBeNull();
+    act(() => result.current.reviewOrderConflict?.());
+    expect(result.current.form?.conflict).toBe(true);
+    await act(async () => { await result.current.reloadOrderConflict?.(); });
+    expect(result.current.form?.conflictOrder?.version).toBe(9);
+    expect(api.update).toHaveBeenCalledTimes(1);
+  });
+  it("403 auxiliar cierra borrador y desactiva sólo la consulta afectada", async () => {
+    const api = apiMock(); const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "CLIENTS_VIEW", "TECHNICIANS_VIEW"])) });
+    await waitFor(() => expect(result.current.catalog.status).toBe("success"));
+    act(() => result.current.openCreate());
+    act(() => result.current.invalidateLookup?.("clients"));
+    expect(result.current.form).toBeNull();
+    expect(result.current.capabilities.canLookupClients).toBe(false);
+    expect(result.current.capabilities.canLookupTechnicians).toBe(true);
+    expect(result.current.capabilities.canManage).toBe(true);
+  });
+
+  it("403 de evidencia no revoca carga ni gestión ni lectura de órdenes", async () => {
+    const api = apiMock(); const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_UPLOAD", "EVIDENCES_MANAGE"])) });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.invalidateEvidenceRead?.(403));
+    expect(result.current.capabilities.canViewEvidence).toBe(false);
+    expect(result.current.capabilities.canUploadEvidence).toBe(true);
+    expect(result.current.capabilities.canManageEvidence).toBe(true);
+    expect(result.current.capabilities.canView).toBe(true);
+  });
+
+  it("404 de evidencia invalida sólo la orden consultada", async () => {
+    const api = apiMock({ detail: vi.fn(async (id) => ({ ...order, id })) }); const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "EVIDENCES_VIEW", "EVIDENCES_UPLOAD"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe(order.id));
+    act(() => result.current.invalidateEvidenceRead?.(404));
+    expect(result.current.capabilities.canViewEvidence).toBe(false);
+    expect(result.current.capabilities.canUploadEvidence).toBe(true);
+    act(() => result.current.selectOrder("order-2"));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe("order-2"));
+    expect(result.current.capabilities.canViewEvidence).toBe(true);
+  });
+  it("no retrocede la lista v17 por respuesta de mutación v9", async () => {
+    const api = apiMock({ list: vi.fn().mockResolvedValueOnce(page).mockResolvedValue({ ...page, items: [{ ...order, version: 17 }] }), detail: vi.fn().mockResolvedValue({ ...order, version: 3 }), assign: vi.fn().mockResolvedValue({ ...order, version: 9 }) });
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    await act(async () => { await result.current.refreshList(); });
+    expect(result.current.list.data?.items[0].version).toBe(17);
+    await act(async () => { await result.current.assignTechnician("tech-2", "SUPPORT"); });
+    expect(result.current.list.data?.items[0].version).toBe(17);
+  });
+  it("no permite reintentar edición conflictiva hasta revisar explícitamente v9", async () => {
+    const update = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "Conflicto")).mockResolvedValue({ ...order, version: 17 });
+    const api = apiMock({ detail: vi.fn().mockResolvedValueOnce({ ...order, version: 3 }).mockResolvedValue({ ...order, version: 9 }), update });
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "CLIENTS_VIEW"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    await act(async () => { await result.current.submitOrder({ description: "Mi borrador" }); });
+    expect(result.current.form?.order?.version).toBe(3);
+    expect(result.current.form?.conflictOrder?.version).toBe(9);
+    await act(async () => { await result.current.submitOrder({ description: "Mi borrador" }); });
+    expect(update).toHaveBeenCalledTimes(1);
+    act(() => result.current.reviewOrderConflict?.());
+    await act(async () => { await result.current.submitOrder({ description: "Mi borrador" }); });
+    expect(update).toHaveBeenLastCalledWith(order.id, { description: "Mi borrador", version: 9 });
+    expect(result.current.detail.data?.version).toBe(17);
+  });
+
+  it("invalida una edición pendiente al perder permiso de clientes", async () => {
+    const pending = deferred<OrderDetail>();
+    const api = apiMock({ update: vi.fn(() => pending.promise) }); const lookupApi = lookupMock();
+    let currentUser = user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "CLIENTS_VIEW"]);
+    const { result, rerender } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => currentUser) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data).toEqual(order));
+    act(() => result.current.openEdit());
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.submitOrder({ description: "Privado" }); });
+    currentUser = user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"]); rerender();
+    expect(result.current.form).toBeNull();
+    await act(async () => { pending.resolve({ ...order, version: 9 }); await mutation; });
+    expect(result.current.detail.data?.version).toBe(1);
+  });
+
+  it("rechaza una respuesta cruzada de asignación v9 tras material v17", async () => {
+    const late = deferred<OrderDetail>();
+    const operating = { ...order, version: 3, status: "IN_PROGRESS" as const };
+    const api = apiMock({ detail: vi.fn().mockResolvedValue(operating), assign: vi.fn(() => late.promise), addMaterial: vi.fn().mockResolvedValue({ ...operating, version: 17 }) }); const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    let assigning!: Promise<boolean>;
+    act(() => { assigning = result.current.assignTechnician("tech-2", "SUPPORT"); });
+    await act(async () => { await result.current.addMaterial({ materialId: "material-1", quantity: "1" }); });
+    await act(async () => { late.resolve({ ...operating, version: 9 }); await assigning; });
+    expect(result.current.detail.data?.version).toBe(17);
+    expect(result.current.list.data?.items[0].version).toBe(17);
+  });
+  it("no retrocede de v9 a v3 por GET pendiente ni por lista antigua", async () => {
+    const stale = deferred<OrderDetail>();
+    const api = apiMock({ detail: vi.fn().mockResolvedValueOnce({ ...order, version: 3 }).mockImplementationOnce(() => stale.promise), assign: vi.fn().mockResolvedValue({ ...order, version: 9 }) });
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    let reading!: Promise<void>;
+    act(() => { reading = result.current.refreshDetail(); });
+    await act(async () => { await result.current.assignTechnician("tech-2", "SUPPORT"); });
+    await act(async () => { stale.resolve({ ...order, version: 3 }); await reading; await result.current.refreshList(); });
+    expect(result.current.detail.data?.version).toBe(9);
+    expect(result.current.list.data?.items[0].version).toBe(9);
+  });
+
+  it("conserva v3 como base del borrador aunque una lectura publique v10", async () => {
+    const update = vi.fn().mockResolvedValue({ ...order, version: 17 });
+    const api = apiMock({ detail: vi.fn().mockResolvedValueOnce({ ...order, version: 3 }).mockResolvedValue({ ...order, version: 10 }), update });
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    await act(async () => { await result.current.refreshDetail(); });
+    await act(async () => { await result.current.submitOrder({ reportedProblem: "Borrador propio" }); });
+    expect(update).toHaveBeenCalledWith(order.id, { reportedProblem: "Borrador propio", version: 3 });
+    expect(result.current.detail.data?.version).toBe(17);
+  });
+
+  it("recarga atrás y adelante cuando orderId no cambia", async () => {
+    const api = apiMock(); const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe(order.id));
+    act(() => { window.history.replaceState({}, "", `/ordenes?orderId=${order.id}&page=2`); window.dispatchEvent(new PopStateEvent("popstate")); });
+    await waitFor(() => expect(result.current.detail.data?.id).toBe(order.id));
+  });
+
+  it("no abre un formulario invisible sin catálogo y Actualizar recupera el catálogo", async () => {
+    const api = apiMock(); const lookupApi = lookupMock({ catalog: vi.fn().mockRejectedValueOnce(new Error("Sin conexión")).mockResolvedValue(catalog) });
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"])) });
+    await waitFor(() => expect(result.current.catalog.status).toBe("error"));
+    act(() => result.current.openCreate());
+    expect(result.current.form).toBeNull();
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.catalog.status).toBe("success");
+  });
+
+  it("mantiene polling visible después de fallar el catálogo y rechazar Nueva orden", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const api = apiMock(); const lookupApi = lookupMock({ catalog: vi.fn().mockRejectedValueOnce(new Error("Sin conexión")).mockResolvedValue(catalog) });
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi, pollIntervalMs: 1_000 }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE", "CLIENTS_VIEW"])) });
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.catalog.status).toBe("error");
+    act(() => result.current.openCreate());
+    expect(result.current.form).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(result.current.list.status).toBe("success");
+    expect(result.current.catalog.status).toBe("success");
+    expect(api.list).toHaveBeenCalledTimes(2);
+  });
   it("uploads and downloads order evidence only with the independent evidence permissions", async () => {
     Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: vi.fn(() => "blob:order") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: vi.fn() });
@@ -1119,7 +1291,7 @@ describe("useOrdersWorkspace", () => {
     const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper });
     await waitFor(() => expect(result.current.list.status).toBe("success"));
     act(() => result.current.openCreate());
-    expect(result.current.form?.mode).toBe("create");
+    expect(result.current.form).toBeNull();
 
     await act(async () => {
       pendingCatalog.reject(new ApiClientError(403, "FORBIDDEN", "Prohibido"));

@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./layouts/AppShell";
@@ -114,27 +114,27 @@ function installAdminApi() {
 
     if (method === "POST" && path === "/orders") {
       mutations.push({ method, path, version: body?.version as number | undefined });
-      current = { ...order("PENDING", 1), primaryTechnician: null, participants: [] };
+      current = { ...order("PENDING", 3), primaryTechnician: null, participants: [] };
       return json(current);
     }
     if (method === "PATCH" && path === `/orders/${orderId}` && current) {
       mutations.push({ method, path, version: body?.version as number | undefined });
-      current = { ...current, description: String(body?.description), version: 2 };
+      current = { ...current, description: String(body?.description), version: 9 };
       return json(current);
     }
     if (method === "POST" && path === `/orders/${orderId}/assignments` && current) {
       mutations.push({ method, path, version: body?.version as number | undefined });
-      current = order("ASSIGNED", 3);
+      current = order("ASSIGNED", 17);
       return json(current);
     }
     if (method === "POST" && path === `/orders/${orderId}/cancel` && current) {
       mutations.push({ method, path, version: body?.version as number | undefined });
-      current = { ...order("CANCELLED", 4), cancellationReason: String(body?.cancellationReason) };
+      current = { ...order("CANCELLED", 25), cancellationReason: String(body?.cancellationReason) };
       return json(current);
     }
     if (method === "POST" && path === `/orders/${orderId}/adjustments` && current) {
       mutations.push({ method, path, version: body?.version as number | undefined });
-      current = { ...current, description: String(body?.description), version: 5 };
+      current = { ...current, description: String(body?.description), version: 42 };
       return json(current);
     }
     throw new Error(`Solicitud administrativa no prevista: ${method} ${path}`);
@@ -143,7 +143,7 @@ function installAdminApi() {
 }
 
 function installTechnicianApi() {
-  let current = order("ASSIGNED", 10);
+  let current = order("ASSIGNED", 51);
   let evidences: Evidence[] = [];
   const mutations: MutationCall[] = [];
   const history: OrderHistoryEntry[] = [{
@@ -172,16 +172,16 @@ function installTechnicianApi() {
     if (method === "GET" && path === "/orders/catalog") return json({ serviceTypes: [serviceType], materials: [material] });
     if (method === "GET" && path === "/orders") return json(list(current));
     if (method === "GET" && path === `/orders/${orderId}`) return json(current);
-    if (method === "POST" && path === `/orders/${orderId}/on-route`) return transition("ON_ROUTE", 11, body, method, path);
-    if (method === "POST" && path === `/orders/${orderId}/start`) return transition("IN_PROGRESS", 12, body, method, path);
-    if (method === "POST" && path === `/orders/${orderId}/pause`) return transition("PAUSED", 14, body, method, path);
-    if (method === "POST" && path === `/orders/${orderId}/resume`) return transition("IN_PROGRESS", 15, body, method, path);
-    if (method === "POST" && path === `/orders/${orderId}/complete`) return transition("COMPLETED", 16, body, method, path);
+    if (method === "POST" && path === `/orders/${orderId}/on-route`) return transition("ON_ROUTE", 63, body, method, path);
+    if (method === "POST" && path === `/orders/${orderId}/start`) return transition("IN_PROGRESS", 78, body, method, path);
+    if (method === "POST" && path === `/orders/${orderId}/pause`) return transition("PAUSED", 105, body, method, path);
+    if (method === "POST" && path === `/orders/${orderId}/resume`) return transition("IN_PROGRESS", 122, body, method, path);
+    if (method === "POST" && path === `/orders/${orderId}/complete`) return transition("COMPLETED", 140, body, method, path);
     if (method === "POST" && path === `/orders/${orderId}/materials`) {
       mutations.push({ method, path, version: body?.version as number | undefined });
       current = {
         ...current,
-        version: 13,
+        version: 91,
         materials: [{
           id: "usage-1",
           material: { id: material.id, code: material.code, name: material.name, unit: material.unit },
@@ -195,7 +195,7 @@ function installTechnicianApi() {
     }
     if (method === "DELETE" && path === `/orders/${orderId}/materials/usage-1`) {
       mutations.push({ method, path, version: body?.version as number | undefined });
-      current = { ...current, version: current.version + 1, materials: [] };
+      current = { ...current, version: 99, materials: [] };
       return json(current);
     }
     if (method === "GET" && path === `/orders/${orderId}/evidences`) return json({ items: evidences, pagination: { page: 1, pageSize: 20, totalItems: evidences.length, totalPages: evidences.length ? 1 : 0 } });
@@ -212,7 +212,7 @@ function installTechnicianApi() {
         resourceType: "ORDER",
         resourceId: orderId,
         checksumSha256: "checksum",
-        version: 1,
+        version: 3,
         createdAt: "2026-09-18T15:30:00.000Z",
         updatedAt: "2026-09-18T15:30:00.000Z",
       }];
@@ -231,6 +231,19 @@ afterEach(() => {
 });
 
 describe("flujo integrado de órdenes", () => {
+  it("limpia búsqueda visible, consulta URL y selección conjuntamente", async () => {
+    installAdminApi();
+    window.history.replaceState({}, "", "/ordenes");
+    renderWithAuth(<AppShell />, { user: adminUser });
+    const user = userEvent.setup();
+    const search = screen.getByLabelText("Buscar orden, cliente o técnico");
+    await user.type(search, "OT");
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("search")).toBe("OT"));
+    await user.click(screen.getByRole("button", { name: "Limpiar" }));
+    expect(search).toHaveValue("");
+    await waitFor(() => expect(new URLSearchParams(window.location.search).has("search")).toBe(false));
+    expect(new URLSearchParams(window.location.search).has("orderId")).toBe(false);
+  });
   it("permite a administración crear, editar, asignar, cancelar y ajustar con la versión confirmada", async () => {
     const mutations = installAdminApi();
     const user = userEvent.setup();
@@ -239,31 +252,32 @@ describe("flujo integrado de órdenes", () => {
 
     await screen.findByText("No hay órdenes para estos filtros");
     await user.click(screen.getByRole("button", { name: "Nueva orden" }));
-    await user.type(screen.getByLabelText("Cliente"), "Farmacia");
+    const createDialog = screen.getByRole("dialog", { name: "Nueva orden" });
+    await user.type(within(createDialog).getByLabelText("Cliente"), "Farmacia");
     await user.click(await screen.findByText("Farmacia Central"));
-    await user.selectOptions(screen.getByLabelText("Sucursal"), "branch-1");
+    await user.selectOptions(within(createDialog).getByLabelText("Sucursal"), "branch-1");
     await user.selectOptions(screen.getByLabelText("Tipo de servicio"), "service-1");
     await user.type(screen.getByLabelText("Problema reportado"), "Enlace principal sin servicio");
     await user.type(screen.getByLabelText("Descripción"), "Revisar cableado del rack");
     await user.click(screen.getByText("Crear orden"));
 
-    expect(await screen.findByText("Versión 1")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 3")).toBeInTheDocument();
     await user.click(screen.getByLabelText("Editar orden"));
     const editDialog = (await screen.findByText(/Editar OT-2026-0014/)).closest("[role='dialog']") as HTMLElement;
     await user.clear(within(editDialog).getByLabelText("Descripción"));
     await user.type(within(editDialog).getByLabelText("Descripción"), "Rack y patch panel revisados");
     await user.click(within(editDialog).getByText("Guardar cambios"));
-    expect(await screen.findByText("Versión 2")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 9")).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Buscar técnico"), "Ana");
     await user.click(await screen.findByText("Ana López"));
     await user.click(screen.getByText("Asignar técnico"));
-    expect(await screen.findByText("Versión 3")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 17")).toBeInTheDocument();
 
     await user.click(screen.getByText("Cancelar orden"));
     await user.type(screen.getByLabelText("Motivo de cancelación"), "Solicitud administrativa confirmada");
     await user.click(screen.getByText("Cancelar definitivamente"));
-    expect(await screen.findByText("Versión 4")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 25")).toBeInTheDocument();
 
     await user.click(screen.getByText("Ajustar orden"));
     await user.type(screen.getByLabelText("Motivo del ajuste"), "Corrección autorizada por supervisión");
@@ -271,14 +285,14 @@ describe("flujo integrado de órdenes", () => {
     await user.clear(within(adjustDialog).getByLabelText("Descripción"));
     await user.type(within(adjustDialog).getByLabelText("Descripción"), "Cierre administrativo documentado");
     await user.click(within(adjustDialog).getByText("Guardar ajuste"));
-    expect(await screen.findByText("Versión 5")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 42")).toBeInTheDocument();
 
     expect(mutations).toEqual([
       { method: "POST", path: "/orders", version: undefined },
-      { method: "PATCH", path: `/orders/${orderId}`, version: 1 },
-      { method: "POST", path: `/orders/${orderId}/assignments`, version: 2 },
-      { method: "POST", path: `/orders/${orderId}/cancel`, version: 3 },
-      { method: "POST", path: `/orders/${orderId}/adjustments`, version: 4 },
+      { method: "PATCH", path: `/orders/${orderId}`, version: 3 },
+      { method: "POST", path: `/orders/${orderId}/assignments`, version: 9 },
+      { method: "POST", path: `/orders/${orderId}/cancel`, version: 17 },
+      { method: "POST", path: `/orders/${orderId}/adjustments`, version: 25 },
     ]);
   }, 15_000);
 
@@ -289,7 +303,7 @@ describe("flujo integrado de órdenes", () => {
     renderWithAuth(<AppShell />, { user: technicianUser });
 
     await user.click(await screen.findByRole("button", { name: "Abrir OT-2026-0014" }));
-    expect(await screen.findByText("Versión 10")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 51")).toBeInTheDocument();
     const route = screen.getByLabelText("Ruta operativa de la orden");
     expect(within(route).getByText("Asignada")).toHaveAttribute("aria-current", "step");
     expect(route.querySelectorAll('i[aria-hidden="true"]')).toHaveLength(6);
@@ -297,6 +311,8 @@ describe("flujo integrado de órdenes", () => {
     const summaryTab = within(tabs).getByRole("tab", { name: "Resumen" });
     const materialsTab = within(tabs).getByRole("tab", { name: "Materiales" });
     summaryTab.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(within(tabs).getByRole("tab", { name: "Equipo" })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(materialsTab).toHaveFocus();
     const materialsPanel = screen.getByRole("tabpanel", { name: "Materiales" });
@@ -309,17 +325,17 @@ describe("flujo integrado de órdenes", () => {
     expect(within(tabs).getByRole("tab", { name: "Historial" })).toHaveFocus();
 
     await user.click(screen.getByRole("button", { name: "Salir en camino" }));
-    expect(await screen.findByText("Versión 11")).toBeInTheDocument();
-    expect(screen.getByText("OT-2026-0014: En camino. Versión 11.", { selector: "[aria-live='polite']" })).toBeInTheDocument();
+    expect(await screen.findByText("Versión 63")).toBeInTheDocument();
+    expect(screen.getByText("OT-2026-0014: En camino. Versión 63.", { selector: "[aria-live='polite']" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Iniciar trabajo" }));
-    expect(await screen.findByText("Versión 12")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 78")).toBeInTheDocument();
 
     await user.click(screen.getByText("Materiales"));
     await user.selectOptions(screen.getByLabelText("Material"), material.id);
     await user.type(screen.getByLabelText("Cantidad"), "2.125");
     await user.type(screen.getByLabelText("Observación"), "Tramo reemplazado");
     await user.click(screen.getByText("Registrar material", { selector: "button[type='submit']" }));
-    expect(await screen.findByText("Versión 13")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 91")).toBeInTheDocument();
     expect(screen.getByText("Cable UTP")).toBeInTheDocument();
 
     const removeButton = screen.getByLabelText("Retirar Cable UTP");
@@ -345,23 +361,23 @@ describe("flujo integrado de órdenes", () => {
     await user.click(screen.getByText("Pausar trabajo"));
     await user.type(screen.getByLabelText("Comentario"), "Esperando acceso al rack");
     await user.click(screen.getByText("Pausar orden", { selector: "button[type='submit']" }));
-    expect(await screen.findByText("Versión 14")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 105")).toBeInTheDocument();
     await user.click(screen.getByText("Reanudar trabajo"));
-    expect(await screen.findByText("Versión 15")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 122")).toBeInTheDocument();
     await user.click(screen.getByText("Finalizar orden"));
     await user.type(screen.getByLabelText("Diagnóstico"), "Conector dañado");
     await user.type(screen.getByLabelText("Resultado"), "Enlace restablecido");
     await user.click(screen.getByText("Finalizar orden", { selector: "button[type='submit']" }));
-    expect(await screen.findByText("Versión 16")).toBeInTheDocument();
+    expect(await screen.findByText("Versión 140")).toBeInTheDocument();
     expect(screen.getByText("Finalizada", { selector: "[aria-current='step']" })).toBeInTheDocument();
 
     expect(mutations).toEqual([
-      { method: "POST", path: `/orders/${orderId}/on-route`, version: 10 },
-      { method: "POST", path: `/orders/${orderId}/start`, version: 11 },
-      { method: "POST", path: `/orders/${orderId}/materials`, version: 12 },
-      { method: "POST", path: `/orders/${orderId}/pause`, version: 13 },
-      { method: "POST", path: `/orders/${orderId}/resume`, version: 14 },
-      { method: "POST", path: `/orders/${orderId}/complete`, version: 15 },
+      { method: "POST", path: `/orders/${orderId}/on-route`, version: 51 },
+      { method: "POST", path: `/orders/${orderId}/start`, version: 63 },
+      { method: "POST", path: `/orders/${orderId}/materials`, version: 78 },
+      { method: "POST", path: `/orders/${orderId}/pause`, version: 91 },
+      { method: "POST", path: `/orders/${orderId}/resume`, version: 105 },
+      { method: "POST", path: `/orders/${orderId}/complete`, version: 122 },
     ]);
   }, 15_000);
 });

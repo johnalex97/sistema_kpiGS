@@ -1,14 +1,14 @@
 import {
   type FormEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useId,
   useRef,
   useState,
 } from "react";
+import { useOrderDialogFocus } from "./useOrderDialogFocus";
 import { AlertTriangle, Search, X } from "lucide-react";
 import type { OrderLookupApi } from "../../api/order-lookups";
-import type { ApiFieldError } from "../../api/http";
+import { ApiClientError, type ApiFieldError } from "../../api/http";
 import type {
   CreateOrderInput,
   OrderBranchOption,
@@ -26,6 +26,12 @@ interface OrderFormProps {
   order?: OrderDetail;
   catalog: OrderCatalog;
   lookupApi: OrderLookupApi;
+  canLookupClients?: boolean;
+  onLookupForbidden?: (kind: "clients" | "technicians") => void;
+  conflict?: boolean;
+  conflictOrder?: OrderDetail | null;
+  onReviewConflict?: () => void;
+  onReloadConflict?: () => Promise<void>;
   pending: boolean;
   error: string | null;
   fieldErrors: ApiFieldError[];
@@ -58,7 +64,7 @@ function fieldMessage(errors: ApiFieldError[], field: string): string | null {
 }
 
 export function OrderForm(props: OrderFormProps) {
-  const { lookupApi, onCancel } = props;
+  const { lookupApi, onCancel, canLookupClients = true, onLookupForbidden } = props;
   const initial = props.mode === "edit" ? props.order : undefined;
   const parentsLocked = initial?.status === "ASSIGNED";
   const [client, setClient] = useState<OrderClientOption | null>(initial ? initial.client : null);
@@ -74,63 +80,54 @@ export function OrderForm(props: OrderFormProps) {
   const [estimatedMinutes, setEstimatedMinutes] = useState(initial?.estimatedMinutes?.toString() ?? "");
   const [validationError, setValidationError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const pendingRef = useRef(props.pending);
+  useOrderDialogFocus(formRef, true, props.pending, onCancel);
   const errorId = useId();
+  const [lookupError, setLookupError] = useState<string | null>(null);
 
-  useEffect(() => { pendingRef.current = props.pending; }, [props.pending]);
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    formRef.current?.querySelector<HTMLElement>("input:not([disabled]), button:not([disabled])")?.focus();
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !pendingRef.current) onCancel(); };
-    document.addEventListener("keydown", close);
-    return () => { document.removeEventListener("keydown", close); previous?.focus(); };
-  }, [onCancel]);
+  const [lastPermission, setLastPermission] = useState(canLookupClients);
+  if (lastPermission !== canLookupClients) {
+    setLastPermission(canLookupClients);
+    if (!canLookupClients) { setClients([]); setBranches([]); setBranchId(""); setClient(null); }
+  }
+  useEffect(() => { if (!canLookupClients) onCancel(); }, [canLookupClients, onCancel]);
 
   useEffect(() => {
-    if (parentsLocked || clientSearch.trim().length < 2) return;
+    if (!canLookupClients || parentsLocked || clientSearch.trim().length < 2) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void lookupApi.clients(clientSearch, 1, controller.signal)
         .then((page) => { if (!controller.signal.aborted) setClients(page.items); })
-        .catch(() => { if (!controller.signal.aborted) setClients([]); });
+        .catch((error: unknown) => { if (!controller.signal.aborted) { setClients([]); setLookupError("No fue posible consultar clientes."); if (error instanceof ApiClientError && error.status === 403) { onLookupForbidden?.("clients"); onCancel(); } } });
     }, 200);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [clientSearch, lookupApi, parentsLocked]);
+  }, [canLookupClients, clientSearch, lookupApi, onCancel, onLookupForbidden, parentsLocked]);
 
   useEffect(() => {
-    if (!initial?.client.id || parentsLocked) return;
+    if (!canLookupClients || !client?.id || parentsLocked) return;
     const controller = new AbortController();
-    void lookupApi.branches(initial.client.id, controller.signal)
+    void lookupApi.branches(client.id, controller.signal)
       .then((items) => { if (!controller.signal.aborted) setBranches(items); })
-      .catch(() => undefined);
+      .catch((error: unknown) => { if (!controller.signal.aborted) { setBranches([]); setLookupError("No fue posible consultar sucursales."); if (error instanceof ApiClientError && error.status === 403) { onLookupForbidden?.("clients"); onCancel(); } } });
     return () => controller.abort();
-  }, [initial?.client.id, lookupApi, parentsLocked]);
+  }, [canLookupClients, client?.id, lookupApi, onCancel, onLookupForbidden, parentsLocked]);
 
-  const chooseClient = async (next: OrderClientOption) => {
+  const chooseClient = (next: OrderClientOption) => {
+    if (next.id === client?.id) { setClients([]); return; }
     setClient(next);
     setClientSearch(next.tradeName);
     setClients([]);
     setBranchId("");
     setBranches([]);
-    const controller = new AbortController();
-    try { setBranches(await lookupApi.branches(next.id, controller.signal)); } catch { setBranches([]); }
-  };
-
-  const trapFocus = (event: ReactKeyboardEvent<HTMLFormElement>) => {
-    if (event.key !== "Tab" || !formRef.current) return;
-    const controls = Array.from(formRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
-    const first = controls[0];
-    const last = controls[controls.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    setLookupError(null);
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const minutes = estimatedMinutes === "" ? null : Number(estimatedMinutes);
     let issue: string | null = null;
+    if (!canLookupClients || props.conflict) return;
     if (!client) issue = "Selecciona un cliente.";
-    else if (!branchId) issue = "Selecciona una sucursal.";
+    else if (!branchId || !branches.some((branch) => branch.id === branchId && branch.isEffectivelyActive)) issue = "Selecciona una sucursal del cliente vigente.";
     else if (!serviceTypeId) issue = "Selecciona un tipo de servicio.";
     else if (reportedProblem.trim().length < 3) issue = "El problema reportado debe tener al menos 3 caracteres.";
     else if (reportedProblem.trim().length > 10_000) issue = "El problema reportado no puede exceder 10000 caracteres.";
@@ -151,14 +148,15 @@ export function OrderForm(props: OrderFormProps) {
   };
 
   const serverProblem = fieldMessage(props.fieldErrors, "reportedProblem");
-  const displayedError = validationError ?? props.error;
+  const displayedError = validationError ?? lookupError ?? props.error;
   return <div className="order-form-backdrop">
-    <form className="order-form" role="dialog" aria-modal="true" aria-labelledby="order-form-title" noValidate ref={formRef} onSubmit={submit} onKeyDown={trapFocus}>
+    <form className="order-form" role="dialog" aria-modal="true" aria-labelledby="order-form-title" noValidate ref={formRef} tabIndex={-1} onSubmit={submit}>
       <header><div><span>CONTROL DE DESPACHO</span><h2 id="order-form-title">{props.mode === "create" ? "Nueva orden" : `Editar ${initial?.orderNumber}`}</h2><p>{props.mode === "create" ? "Define el trabajo antes de asignarlo." : "Actualiza únicamente los campos permitidos por el estado actual."}</p></div><button type="button" aria-label="Cerrar formulario" disabled={props.pending} onClick={props.onCancel}><X size={18} /></button></header>
+      {props.conflict && <section className="order-form__conflict" aria-label="Revisión de conflicto"><h3>Revisa los datos confirmados antes de volver a guardar</h3>{props.conflictOrder ? <><p>Versión {props.conflictOrder.version} · {props.conflictOrder.client.tradeName} · {props.conflictOrder.branch.name}</p><dl>{[["Servicio", props.conflictOrder.serviceType.name], ["Prioridad", props.conflictOrder.priority], ["Problema", props.conflictOrder.reportedProblem], ["Descripción actual", props.conflictOrder.description], ["Agenda actual", toHondurasLocal(props.conflictOrder.scheduledFor)], ["Minutos estimados", props.conflictOrder.estimatedMinutes?.toString()]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}</dl><p>Tu borrador permanece abajo. Ajusta los campos que deban conservar los cambios ajenos.</p><button type="button" disabled={props.pending} onClick={props.onReviewConflict}>Revisé la versión actual</button></> : <><p>{props.pending ? "Recargando la versión actual…" : "No fue posible obtener la versión actual. Tu borrador sigue disponible."}</p><button type="button" disabled={props.pending} onClick={() => void props.onReloadConflict?.()}>Reintentar versión actual</button></>}</section>}
       <fieldset disabled={props.pending}>
         <legend className="sr-only">Datos de la orden</legend>
         <div className="order-form__grid">
-          <label className="order-form__client"><span>Cliente</span><div className="order-form__search"><Search size={15} /><input type="search" aria-label="Cliente" value={clientSearch} disabled={parentsLocked} autoComplete="off" onChange={(event) => { const value = event.target.value; setClientSearch(value); if (value !== client?.tradeName) setClient(null); if (value.trim().length < 2) setClients([]); }} /></div>{clients.length > 0 && <div className="order-form__results" role="listbox" aria-label="Resultados de clientes">{clients.map((item) => <button key={item.id} type="button" role="option" aria-selected={client?.id === item.id} onClick={() => void chooseClient(item)}><b>{item.tradeName}</b><small>{item.code}</small></button>)}</div>}</label>
+          <label className="order-form__client"><span>Cliente</span><div className="order-form__search"><Search size={15} /><input type="search" aria-label="Cliente" value={clientSearch} disabled={parentsLocked || !canLookupClients} autoComplete="off" onChange={(event) => { const value = event.target.value; setClientSearch(value); if (value !== client?.tradeName) { setClient(null); setBranchId(""); setBranches([]); } if (value.trim().length < 2) setClients([]); }} /></div>{clients.length > 0 && <div className="order-form__results" role="listbox" aria-label="Resultados de clientes">{clients.map((item) => <button key={item.id} type="button" role="option" aria-selected={client?.id === item.id} onClick={() => chooseClient(item)}><b>{item.tradeName}</b><small>{item.code}</small></button>)}</div>}</label>
           <label><span>Sucursal</span><select aria-label="Sucursal" value={branchId} disabled={parentsLocked || !client} onChange={(event) => setBranchId(event.target.value)}><option value="">Seleccionar</option>{branches.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label><span>Tipo de servicio</span><select aria-label="Tipo de servicio" value={serviceTypeId} disabled={parentsLocked} onChange={(event) => setServiceTypeId(event.target.value)}><option value="">Seleccionar</option>{props.catalog.serviceTypes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label><span>Prioridad</span><select aria-label="Prioridad" value={priority} onChange={(event) => setPriority(event.target.value as OrderPriority)}>{priorities.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -169,7 +167,7 @@ export function OrderForm(props: OrderFormProps) {
         </div>
         {displayedError && <p id={errorId} className="order-form__error" role="alert"><AlertTriangle size={15} />{displayedError}</p>}
       </fieldset>
-      <footer><button type="button" className="button button--ghost" disabled={props.pending} onClick={props.onCancel}>Cancelar</button><button type="submit" className="button button--primary" disabled={props.pending}>{props.pending ? "Guardando…" : props.mode === "create" ? "Crear orden" : "Guardar cambios"}</button></footer>
+      <footer><button type="button" className="button button--ghost" disabled={props.pending} onClick={props.onCancel}>Cancelar</button><button type="submit" className="button button--primary" disabled={props.pending || props.conflict}>{props.pending ? "Guardando…" : props.mode === "create" ? "Crear orden" : "Guardar cambios"}</button></footer>
     </form>
   </div>;
 }

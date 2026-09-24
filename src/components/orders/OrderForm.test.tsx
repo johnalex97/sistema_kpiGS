@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { OrderLookupApi } from "../../api/order-lookups";
@@ -52,6 +52,60 @@ async function completeCreateForm(api: OrderLookupApi) {
 }
 
 describe("OrderForm", () => {
+  it("conserva la sucursal al volver a elegir el cliente vigente", async () => {
+    const api = lookupApi();
+    render(<OrderForm mode="create" catalog={catalog} lookupApi={api} pending={false} error={null} fieldErrors={[]} onCancel={vi.fn()} onSubmit={vi.fn(async () => true)} />);
+    const user = await completeCreateForm(api);
+    await user.click(await screen.findByRole("option", { name: /Farmacia Central/ }));
+    expect(screen.getByRole("combobox", { name: "Sucursal" })).toHaveValue("branch-1");
+    expect(screen.getByRole("option", { name: "Sucursal Centro" })).toBeInTheDocument();
+  });
+  it("exige revisar el conflicto sin sustituir el texto del borrador y conserva foco pendiente", async () => {
+    const props = { mode: "edit" as const, order, catalog, lookupApi: lookupApi(), pending: false, error: null, fieldErrors: [], onCancel: vi.fn(), onSubmit: vi.fn(), onReviewConflict: vi.fn() };
+    const view = render(<OrderForm {...props} />);
+    const user = userEvent.setup();
+    await user.clear(screen.getByLabelText("Descripción"));
+    await user.type(screen.getByLabelText("Descripción"), "Mi borrador");
+    view.rerender(<OrderForm {...props} conflict conflictOrder={{ ...order, version: 9, description: "Cambio ajeno" }} />);
+    expect(screen.getByLabelText("Descripción")).toHaveValue("Mi borrador");
+    expect(screen.getByText("Cambio ajeno")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Revisé la versión actual" }));
+    expect(props.onReviewConflict).toHaveBeenCalled();
+    view.rerender(<OrderForm {...props} pending />);
+    await user.tab();
+    const dialog = screen.getByRole("dialog");
+    expect(document.activeElement === dialog || dialog.contains(document.activeElement)).toBe(true);
+  });
+  it("descarta sucursales de A cuando B responde antes y cancela al perder permiso", async () => {
+    const api = lookupApi();
+    let resolveA!: (items: Awaited<ReturnType<OrderLookupApi["branches"]>>) => void;
+    vi.mocked(api.clients).mockResolvedValue({ items: [order.client, { id: "client-2", code: "B", tradeName: "Cliente B" }], pagination: { page: 1, pageSize: 20, totalItems: 2, totalPages: 1 } });
+    vi.mocked(api.branches).mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; })).mockResolvedValue([{ id: "branch-2", code: "B", name: "Sucursal B", address: "", isEffectivelyActive: true }]);
+    const cancel = vi.fn();
+    const props = { mode: "create" as const, catalog, lookupApi: api, pending: false, error: null, fieldErrors: [], onCancel: cancel, onSubmit: vi.fn(async () => true) };
+    const view = render(<OrderForm {...props} canLookupClients />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox", { name: "Cliente" }), "Cliente");
+    await user.click(await screen.findByRole("option", { name: /Farmacia Central/ }));
+    await user.clear(screen.getByRole("searchbox", { name: "Cliente" }));
+    await user.type(screen.getByRole("searchbox", { name: "Cliente" }), "Cliente B");
+    await user.click(await screen.findByRole("option", { name: /Cliente B/ }));
+    expect(await screen.findByRole("option", { name: "Sucursal B" })).toBeInTheDocument();
+    await act(async () => resolveA([{ id: "branch-1", code: "A", name: "Sucursal A", address: "", isEffectivelyActive: true }]));
+    expect(screen.queryByRole("option", { name: "Sucursal A" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Sucursal B" })).toBeInTheDocument();
+    view.rerender(<OrderForm {...props} canLookupClients={false} />);
+    expect(cancel).toHaveBeenCalled();
+    expect(screen.queryByRole("option", { name: "Sucursal B" })).not.toBeInTheDocument();
+  });
+
+  it("no consulta clientes sin permiso auxiliar", async () => {
+    const api = lookupApi();
+    render(<OrderForm mode="create" canLookupClients={false} catalog={catalog} lookupApi={api} pending={false} error={null} fieldErrors={[]} onCancel={vi.fn()} onSubmit={vi.fn()} />);
+    expect(screen.getByRole("searchbox", { name: "Cliente" })).toBeDisabled();
+    expect(api.clients).not.toHaveBeenCalled();
+  });
   it("resolves client branches and converts Honduras local time before create", async () => {
     const api = lookupApi();
     const onSubmit = vi.fn(async () => true);

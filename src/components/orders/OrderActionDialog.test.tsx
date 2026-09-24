@@ -19,6 +19,14 @@ const order: OrderDetail = {
 };
 
 describe("OrderActionDialog", () => {
+  it("mantiene foco contenido cuando todos los controles están pendientes", async () => {
+    const props = { action: "pause" as const, order, pending: false, error: null, onCancel: vi.fn(), onSubmit: vi.fn() };
+    const view = render(<><button>Fondo</button><OrderActionDialog {...props} /></>);
+    view.rerender(<><button>Fondo</button><OrderActionDialog {...props} pending /></>);
+    const dialog = screen.getByRole("dialog");
+    await userEvent.setup().tab();
+    expect(document.activeElement === dialog || dialog.contains(document.activeElement)).toBe(true);
+  });
   it("requires a ten-character comment before pausing", async () => {
     const onSubmit = vi.fn(async () => true);
     const user = userEvent.setup();

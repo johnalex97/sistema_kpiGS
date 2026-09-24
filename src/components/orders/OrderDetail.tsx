@@ -39,11 +39,12 @@ const statusLabels: Record<Detail["status"], string> = {
   CANCELLED: "Cancelada",
 };
 
-const detailAreas = ["summary", "materials", "evidence", "history"] as const;
+const detailAreas = ["summary", "team", "materials", "evidence", "history"] as const;
 type DetailArea = typeof detailAreas[number];
 
 const areaLabels: Record<DetailArea, string> = {
   summary: "Resumen",
+  team: "Equipo",
   materials: "Materiales",
   evidence: "Evidencias",
   history: "Historial",
@@ -76,9 +77,10 @@ interface OrderDetailProps {
   onUploadEvidence?: (input: EvidenceUploadInput) => Promise<boolean>;
   onDownloadEvidence?: (evidence: Evidence) => Promise<boolean>;
   onArchiveEvidence?: (evidence: Evidence, reason: string) => Promise<boolean>;
+  onEvidenceReadInvalidated?: (status: 403 | 404) => void;
 }
 
-export function OrderDetail({ order, actions = [], actionPending = false, actionError = null, onClose, onEdit, onAction, materialCatalog, materialCanManage = false, materialPending = false, materialError = null, onAddMaterial, onUpdateMaterial, onRemoveMaterial, ordersApi, historyState, onLoadHistory, evidenceApi, canViewEvidence = false, canUploadEvidence = false, canManageEvidence = false, evidenceError = null, onUploadEvidence, onDownloadEvidence, onArchiveEvidence }: OrderDetailProps) {
+export function OrderDetail({ order, actions = [], actionPending = false, actionError = null, onClose, onEdit, onAction, materialCatalog, materialCanManage = false, materialPending = false, materialError = null, onAddMaterial, onUpdateMaterial, onRemoveMaterial, ordersApi, historyState, onLoadHistory, evidenceApi, canViewEvidence = false, canUploadEvidence = false, canManageEvidence = false, evidenceError = null, onUploadEvidence, onDownloadEvidence, onArchiveEvidence, onEvidenceReadInvalidated }: OrderDetailProps) {
   const [area, setArea] = useState<DetailArea>("summary");
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const actionable = actions.filter((action) => labels[action]);
@@ -119,9 +121,14 @@ export function OrderDetail({ order, actions = [], actionPending = false, action
         <div className="order-detail__identity"><span><Building2 size={15} />{order.client.tradeName}</span><span><MapPin size={15} />{order.branch.name}</span><span><UserRound size={15} />{order.primaryTechnician?.fullName ?? "Sin responsable"}</span><span><Clock3 size={15} />{order.estimatedMinutes ? `${order.estimatedMinutes} min estimados` : "Sin estimación"}</span></div>
         <section><span className="order-detail__label">Problema reportado</span><h3>{order.reportedProblem}</h3>{order.description && <p>{order.description}</p>}</section>
         <section><span className="order-detail__label">Servicio</span><h3>{order.serviceType.name}</h3><p>Prioridad {order.priority.toLowerCase()} · {order.overdue ? "Agenda atrasada" : "Dentro de agenda"}</p></section>
+        <section aria-label="Agenda y tiempos"><h3>Agenda y tiempos</h3>{([["Agenda", order.scheduledFor], ["Inicio real", order.startedAt], ["Fin real", order.endedAt]] as const).map(([label, value]) => <p key={label}>{label}: {value ? new Date(value).toLocaleString("es-HN", { timeZone: "America/Tegucigalpa" }) : "Sin registrar"}</p>)}<p>{order.totalMinutes === null ? "Sin duración real" : `${order.totalMinutes} min reales`}</p></section>
+        {order.diagnosis && <section><h3>Diagnóstico</h3><p>{order.diagnosis}</p></section>}
+        {order.result && <section><h3>Resultado</h3><p>{order.result}</p></section>}
+        {order.cancellationReason && <section><h3>Motivo de cancelación</h3><p>{order.cancellationReason}</p></section>}
       </>}
+      {area === "team" && <section aria-label="Equipo de la orden"><h3>Equipo</h3><p>Principal: {order.primaryTechnician?.fullName ?? "Sin responsable"}</p>{order.participants.length === 0 ? <p>Sin participaciones registradas.</p> : <ul>{order.participants.map((participant) => <li key={`${participant.id}-${participant.assignedAt}`}><strong>{participant.fullName}</strong><p>{participant.role === "PRIMARY" ? "Principal" : "Apoyo"} · {participant.active ? "Activo" : "Histórico"}</p></li>)}</ul>}</section>}
       {area === "materials" && materialCatalog && onAddMaterial && onUpdateMaterial && onRemoveMaterial && <OrderMaterials order={order} catalog={materialCatalog} canManage={materialCanManage} pending={materialPending} error={materialError} onAdd={onAddMaterial} onUpdate={onUpdateMaterial} onRemove={onRemoveMaterial} />}
-      {area === "evidence" && evidenceApi && onUploadEvidence && onDownloadEvidence && onArchiveEvidence && <OrderEvidencePanel orderId={order.id} orderNumber={order.orderNumber} evidenceApi={evidenceApi} canView={canViewEvidence} canUpload={canUploadEvidence} canManage={canManageEvidence} error={evidenceError} onUpload={onUploadEvidence} onDownload={onDownloadEvidence} onArchive={onArchiveEvidence} />}
+      {area === "evidence" && evidenceApi && onUploadEvidence && onDownloadEvidence && onArchiveEvidence && <OrderEvidencePanel onReadInvalidated={onEvidenceReadInvalidated} orderId={order.id} orderNumber={order.orderNumber} evidenceApi={evidenceApi} canView={canViewEvidence} canUpload={canUploadEvidence} canManage={canManageEvidence} error={evidenceError} onUpload={onUploadEvidence} onDownload={onDownloadEvidence} onArchive={onArchiveEvidence} />}
       {area === "history" && ordersApi && <OrderHistory orderId={order.id} api={ordersApi} canView={true} historyState={historyState} onLoadHistory={onLoadHistory} />}
     </div>
     {actionError && <p className="order-detail__action-error" role="alert"><AlertTriangle size={15} />{actionError}</p>}

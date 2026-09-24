@@ -1,6 +1,7 @@
 import { AlertTriangle, Archive, Download, FileText, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { OrderEvidenceApi } from "../../api/evidences";
+import { ApiClientError } from "../../api/http";
 import type { Evidence, EvidenceAccessLevel, EvidenceUploadInput } from "../../models/evidence";
 
 const acceptedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
@@ -19,6 +20,7 @@ export interface OrderEvidencePanelProps {
   onDownload(evidence: Evidence): Promise<boolean>;
   onArchive(evidence: Evidence, reason: string): Promise<boolean>;
   onClose?: () => void;
+  onReadInvalidated?: (status: 403 | 404) => void;
 }
 
 function fileError(file: File | null): string | null {
@@ -34,7 +36,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
-export function OrderEvidencePanel({ orderId, orderNumber, evidenceApi, canView, canUpload, canManage, error = null, onUpload, onDownload, onArchive, onClose }: OrderEvidencePanelProps) {
+export function OrderEvidencePanel({ orderId, orderNumber, evidenceApi, canView, canUpload, canManage, error = null, onUpload, onDownload, onArchive, onClose, onReadInvalidated }: OrderEvidencePanelProps) {
   const initial: ListState = { items: [], status: canView ? "loading" : "idle", page: 1, totalPages: 1 };
   const [list, setList] = useState<ListState>(initial);
   const [file, setFile] = useState<File | null>(null);
@@ -76,6 +78,14 @@ export function OrderEvidencePanel({ orderId, orderNumber, evidenceApi, canView,
       setList(next);
     } catch (loadError: unknown) {
       if (controller.signal.aborted || generation !== generationRef.current || loadError instanceof Error && loadError.name === "AbortError") return;
+      if (loadError instanceof ApiClientError && (loadError.status === 403 || loadError.status === 404)) {
+        listRef.current = { items: [], status: "error", page: 1, totalPages: 1 };
+        setList(listRef.current);
+        setArchiveTarget(null); setArchiveReason("");
+        refreshRequestedRef.current = false;
+        onReadInvalidated?.(loadError.status);
+        return;
+      }
       listRef.current = { ...listRef.current, status: "error" };
       setList(listRef.current);
     } finally {
@@ -87,7 +97,7 @@ export function OrderEvidencePanel({ orderId, orderNumber, evidenceApi, canView,
         }
       }
     }
-  }, [canView, evidenceApi, orderId]);
+  }, [canView, evidenceApi, onReadInvalidated, orderId]);
 
   useEffect(() => {
     loadRef.current = load;

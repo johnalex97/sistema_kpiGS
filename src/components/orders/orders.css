@@ -8,7 +8,14 @@
 .orders-toolbar .button--ghost { border-color: rgba(255,255,255,.25); color: #fff; background: rgba(255,255,255,.08); }
 .order-filters { padding: 13px 15px; display: grid; grid-template-columns: repeat(3, minmax(130px, 190px)) 1fr; align-items: end; gap: 10px; border-bottom: 1px solid #dbe5e9; background: #fff; }
 .order-filters label { display: grid; gap: 6px; color: #587181; font-size: 10px; font-weight: 700; }
-.order-filters select { min-height: 40px; padding: 0 10px; border: 1px solid #cfdee3; border-radius: 6px; color: #29485d; background: #fff; font: 11px "Segoe UI Variable", "Segoe UI", sans-serif; }
+.order-filters select, .order-filters input { min-width: 0; width: 100%; box-sizing: border-box; min-height: 44px; padding: 8px 10px; border: 1px solid #cfdee3; border-radius: 6px; color: #29485d; background: #fff; font: 11px "Segoe UI Variable", "Segoe UI", sans-serif; }
+.order-filters > * { min-width: 0; }
+.order-filters select[multiple] { min-height: 104px; }
+.order-filters option { padding: 6px 2px; }
+.order-filter-lookup { display: grid; gap: 6px; font-size: 10px; overflow-wrap: anywhere; }
+.order-filter-lookup [role="listbox"] { display: grid; gap: 4px; }
+.order-filter-lookup button { min-height: 44px; text-align: left; border: 1px solid #cfdee3; border-radius: 6px; background: #f1f6f7; color: #29485d; }
+.order-filters input:focus-visible { outline: 3px solid rgba(9,174,180,.45); outline-offset: 2px; }
 .order-filters__clear { justify-self: end; min-height: 40px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d4e1e5; border-radius: 6px; color: #526f7e; background: #f6f9fa; cursor: pointer; }
 .orders-notice { margin: 12px 15px 0; padding: 9px 11px; display: flex; align-items: center; gap: 7px; border-left: 4px solid #d99426; color: #76511a; background: #fff6e6; font-size: 11px; }
 .orders-notice button { margin-left: auto; border: 0; color: inherit; background: transparent; font-weight: 700; text-decoration: underline; cursor: pointer; }
@@ -122,7 +129,10 @@
 .order-material-dialog__danger { border-color: #a43c31; color: #fff; background: #b84a3d; }
 .order-filters select:focus-visible, .order-filters button:focus-visible, .order-table button:focus-visible, .order-card button:focus-visible, .order-detail button:focus-visible, .order-materials input:focus-visible, .order-materials select:focus-visible { outline: 3px solid rgba(9,174,180,.25); outline-offset: 2px; }
 .order-form-backdrop { position: fixed; inset: 0; z-index: 80; padding: 24px; display: grid; place-items: center; background: rgba(5,25,42,.7); backdrop-filter: blur(3px); }
-.order-form { width: min(760px, 100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; border: 1px solid #bcd5da; border-top: 5px solid #09aeb4; border-radius: 10px; background: #fff; box-shadow: 0 28px 80px rgba(3,24,40,.35); overflow: hidden; }
+.order-form { width: 760px; max-width: 100%; box-sizing: border-box; max-height: calc(100vh - 48px); display: flex; flex-direction: column; border: 1px solid #bcd5da; border-top: 5px solid #09aeb4; border-radius: 10px; background: #fff; box-shadow: 0 28px 80px rgba(3,24,40,.35); overflow-y: auto; }
+.order-form__conflict { margin: 16px 20px; padding: 12px; border-left: 4px solid #d99426; background: #fff6e6; color: #76511a; font-size: 12px; }
+.order-form__conflict dl { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.order-form__conflict dd { margin: 4px 0; overflow-wrap: anywhere; }
 .order-form > header { padding: 17px 20px; display: flex; justify-content: space-between; gap: 16px; color: #fff; background: linear-gradient(110deg, #092743, #114762); }
 .order-form > header span { color: #8bd2d5; font: 700 9px "Consolas", monospace; letter-spacing: .12em; }
 .order-form > header h2 { margin: 5px 0; font: 700 21px "Bahnschrift", sans-serif; } .order-form > header p { margin: 0; color: #c8dce5; font-size: 11px; }
