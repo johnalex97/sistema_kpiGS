@@ -89,3 +89,20 @@ mismo ID; Equipo y tiempos en órdenes cerradas; filtros múltiples y limpieza;
 revocación auxiliar; foco pendiente, retiro y móvil; catálogo faltante; zona de
 historial ajena al dispositivo. Las variantes adicionales verdes extienden esas
 regresiones, sin presentarlas como rojos nuevos.
+
+Final: re-revisión acotada del commit `4a6ef9b`: 12/13 hallazgos abordados.
+Hallazgo 9 permanece abierto y el diff introdujo otra regresión Important.
+
+Final: Ruling: no se declara la rama lista para integrar — Escape durante un retiro
+de material pendiente puede propagarse al overlay móvil y cerrar el detalle — costo
+si se difiere: pérdida de contexto visual mientras la mutación continúa y ciclo de
+foco incompleto para teclado.
+
+Final: Ruling: no se declara la rama lista para integrar — confirmar una asignación
+puede abortar el listado solicitado por filtros nuevos sin iniciar un reemplazo,
+dejando filas anteriores o estado de carga hasta polling/refresco — costo si se
+difiere: vista operativa temporalmente incoherente con la URL y los filtros visibles.
+
+Final: la única ola de corrección y su re-revisión ya se consumieron. Los dos
+residuales anteriores son reales y bloquean el cierre; requieren una nueva decisión
+del usuario antes de exceder el límite del flujo de revisión final.
