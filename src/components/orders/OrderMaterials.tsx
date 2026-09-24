@@ -64,9 +64,10 @@ export function OrderMaterials({ order, catalog, canManage, pending, error, onAd
   };
 
   const trapRemovalFocus = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === "Escape" && !pending) {
+    if (event.key === "Escape") {
       event.preventDefault();
-      closeRemoval();
+      event.stopPropagation();
+      if (!pending) closeRemoval();
       return;
     }
     if (event.key !== "Tab" || !removalDialogRef.current) return;

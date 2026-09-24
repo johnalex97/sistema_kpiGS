@@ -849,6 +849,7 @@ export function useOrdersWorkspace({
       const incoming = await operation(current);
       if (!mutationIsCurrent()) return false;
       applyOrderResult(incoming, targetOrderId);
+      void loadList();
       setAssignment({ pending: false, error: null });
       return true;
     } catch (error: unknown) {
@@ -873,7 +874,7 @@ export function useOrdersWorkspace({
         setAssignment((currentState) => ({ ...currentState, pending: false }));
       }
     }
-  }, [applyOrderResult, assignmentErrorMessage, clearSelectedOrder, refreshDetail]);
+  }, [applyOrderResult, assignmentErrorMessage, clearSelectedOrder, loadList, refreshDetail]);
 
   const assignTechnician = useCallback((technicianId: string, role: OrderTechnicianRole) => executeAssignment(
     (current) => api.assign(current.id, { technicianId, role, version: current.version }),

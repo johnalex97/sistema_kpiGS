@@ -113,6 +113,40 @@ afterEach(() => {
 });
 
 describe("useOrdersWorkspace", () => {
+  it.each([true, false])("residual B: asignación repone la consulta de filtros nuevos (fila presente: %s)", async (rowPresent) => {
+    const assigning = deferred<OrderDetail>();
+    const interruptedList = deferred<OrderPage>();
+    const filteredOrder = { ...order, id: "filtered-order", status: "PAUSED" as const, version: 17 };
+    let filteredReads = 0;
+    let interruptedSignal: AbortSignal | undefined;
+    const api = apiMock({
+      list: vi.fn(async (filters, signal) => {
+        if (!filters.statuses?.includes("PAUSED")) return { ...page, items: [{ ...order, id: rowPresent ? order.id : "another-order" }] };
+        filteredReads += 1;
+        if (filteredReads === 1) { interruptedSignal = signal; return interruptedList.promise; }
+        return { ...page, items: [filteredOrder] };
+      }),
+      assign: vi.fn(() => assigning.promise),
+    });
+    const lookupApi = lookupMock();
+    const { result } = renderHook(() => useOrdersWorkspace({ api, lookupApi }), { wrapper: wrapperFor(() => user(["ORDERS_VIEW_ALL", "ORDERS_MANAGE"])) });
+    act(() => result.current.selectOrder(order.id));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe(order.id));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = result.current.assignTechnician("tech-2", "SUPPORT"); });
+    act(() => result.current.setFilters({ statuses: ["PAUSED"] }));
+    await waitFor(() => expect(filteredReads).toBe(1));
+    expect(result.current.list.status).toBe("loading");
+    await act(async () => { assigning.resolve({ ...order, version: 9 }); await mutation; });
+    await waitFor(() => expect(result.current.list.data?.items.map((item) => item.id)).toEqual(["filtered-order"]));
+    expect(result.current.list.status).toBe("success");
+    expect(result.current.filters.statuses).toEqual(["PAUSED"]);
+    expect(interruptedSignal?.aborted).toBe(true);
+    await act(async () => { interruptedList.resolve({ ...page, items: [{ ...filteredOrder, version: 3 }] }); await interruptedList.promise; });
+    expect(result.current.list.data?.items[0].version).toBe(17);
+    expect(result.current.detail.data?.version).toBe(9);
+    expect(api.assign).toHaveBeenCalledOnce();
+  });
   it("no adopta la versión vieja si falla la recarga del conflicto y permite reintentar lectura", async () => {
     const api = apiMock({ detail: vi.fn().mockResolvedValueOnce({ ...order, version: 3 }).mockRejectedValueOnce(new Error("Sin conexión")).mockResolvedValue({ ...order, version: 9 }), update: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "Conflicto")) });
     const lookupApi = lookupMock();

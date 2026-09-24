@@ -106,3 +106,32 @@ difiere: vista operativa temporalmente incoherente con la URL y los filtros visi
 Final: la única ola de corrección y su re-revisión ya se consumieron. Los dos
 residuales anteriores son reales y bloquean el cierre; requieren una nueva decisión
 del usuario antes de exceder el límite del flujo de revisión final.
+
+## Ronda excepcional autorizada — 24 de septiembre de 2026
+
+Excepción: el usuario autorizó explícitamente una ronda adicional limitada a los
+dos residuales Important A/B. Esta autorización supera la restricción de la única
+ola anterior; se conserva arriba el historial de la decisión y los bloqueos.
+Base `25516034bee74fa80305a739f0109cd3744528cf`; implementador único, sin subagentes.
+
+A: raíz confirmada en Escape no consumido por el diálogo de retiro mientras
+pending; RED esperado 0 cierres de detalle, observado 1. Se consume el evento
+siempre, sin cerrar el retiro pendiente. GREEN verifica diálogos, foco, Tab,
+Shift+Tab, restauración y Escape normal al concluir la espera.
+
+B: raíz confirmada en GET de lista abortado al aplicar asignación sin iniciar
+reemplazo. Dos RED mostraron filas anteriores bajo filtros nuevos. Se relanza
+la lectura con filtros vigentes, preservando la autoridad de versiones y sin
+reintentar mutaciones. GREEN comprueba ambas variantes, estado success y respuesta
+tardía v3 que no sustituye v17.
+
+Estado final de la excepción: **A y B cerrados; ambos bloqueos de la re-revisión
+quedan superados**. Focal de página/workspace/materiales: **83/83**. Suite completa
+fresca posterior a todos los cambios: **590/590 en 61 archivos**, 266.41 s.
+Lint sin errores/advertencias; build correcto; diff-check de trabajo/índice y
+escaneos storage/Bearer/mocks limpios. No hubo cambios backend/dependencias.
+
+Se conserva el historial anterior y se limita la excepción a cuatro archivos de
+código/tests y este informe/ledger. El commit separado que contiene esta sección
+no incluye push ni merge. Observaciones no bloqueantes: `act(...)`, navegación
+jsdom, chunk Vite 512.20 kB y LF→CRLF. Evidencia detallada en `task-14-report.md`.

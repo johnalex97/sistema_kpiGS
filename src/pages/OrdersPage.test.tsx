@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { OrdersWorkspace } from "../hooks/useOrdersWorkspace";
@@ -137,6 +138,52 @@ function workspace(
 }
 
 describe("OrdersPage", () => {
+  it("residual A: Escape durante retiro pendiente conserva los dos diálogos y el foco", async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    let finishRemoval!: (result: boolean) => void;
+    const removal = new Promise<boolean>((resolve) => { finishRemoval = resolve; });
+    const closeDetail = vi.fn();
+    function PendingRemovalPage() {
+      const [pending, setPending] = useState(false);
+      const [selected, setSelected] = useState(true);
+      return <OrdersPage workspace={workspace({
+        selectedOrderId: selected ? detail.id : null,
+        detail: { status: "success", error: null, stale: false, data: { ...detail, materials: [{ id: "m1", material: { id: "m", code: "M", name: "Cable", unit: "m" }, quantity: "1", historicalUnitCost: "1", observation: null, createdAt: detail.createdAt }] } },
+        material: { pending, error: null },
+        closeDetail: () => { closeDetail(); setSelected(false); },
+        removeMaterial: async () => { setPending(true); const result = await removal; setPending(false); return result; },
+      })} />;
+    }
+    try {
+      render(<PendingRemovalPage />);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("tab", { name: "Materiales" }));
+      const detailDialog = screen.getByRole("dialog", { name: /Detalle de/ });
+      const trigger = screen.getByRole("button", { name: "Retirar Cable" });
+      await user.click(trigger);
+      await user.click(screen.getByRole("button", { name: "Confirmar retiro", hidden: true }));
+      const dialog = screen.getByRole("dialog", { name: "Retirar material", hidden: true });
+      expect(screen.getByRole("button", { name: "Confirmar retiro", hidden: true })).toBeDisabled();
+      await user.keyboard("{Escape}");
+      expect(closeDetail).not.toHaveBeenCalled();
+      expect(detailDialog).toBeInTheDocument();
+      expect(dialog).toBeInTheDocument();
+      expect(dialog).toHaveFocus();
+      await user.tab();
+      expect(dialog).toHaveFocus();
+      await user.tab({ shift: true });
+      expect(dialog).toHaveFocus();
+      await act(async () => { finishRemoval(false); await removal; });
+      await user.keyboard("{Escape}");
+      expect(dialog).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+      expect(closeDetail).not.toHaveBeenCalled();
+      await user.keyboard("{Escape}");
+      expect(detailDialog).not.toBeInTheDocument();
+      expect(closeDetail).toHaveBeenCalledOnce();
+    } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth }); }
+  });
   it("Escape en retiro de material móvil no cierra el detalle subyacente", async () => {
     const previousWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });

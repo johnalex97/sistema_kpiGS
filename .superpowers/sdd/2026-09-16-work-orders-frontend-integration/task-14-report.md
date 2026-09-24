@@ -298,3 +298,94 @@ Documentación:
 - `docs/architecture/current-state.md`
 - `.superpowers/sdd/2026-09-16-work-orders-frontend-integration/task-14-report.md`
 - `.superpowers/sdd/2026-09-16-work-orders-frontend-integration/progress.md`
+
+## Ronda excepcional autorizada — residuales A/B (24 de septiembre de 2026)
+
+El usuario autorizó explícitamente exceder la única ola de corrección después
+de la re-revisión. Base: `25516034bee74fa80305a739f0109cd3744528cf`.
+Implementador único, sin subagentes. Se preservó el WIP tras la interrupción.
+El alcance de esta ronda se limita a los dos residuales Important; el historial
+de cierre anterior y de bloqueos del ledger no se elimina.
+
+### Investigación, hipótesis y RED
+
+**A — Escape durante retiro de material pendiente.** El evento nace en el
+diálogo de retiro y llega al listener de documento del detalle móvil. El
+handler de `OrderMaterials` consumía Escape sólo bajo `!pending`; durante la
+mutación lo dejaba pasar. El overlay exterior permite Escape y por eso cerraba
+el detalle. La hipótesis fue que consumir el evento siempre en el diálogo que
+lo recibe, aunque se posponga el cierre hasta terminar la mutación, evita ese
+escape de ámbito sin cambiar el ciclo de foco.
+
+La prueba monta los componentes reales `OrdersPage`, `OrderDetail`,
+`OrderMaterials` y su gestión de foco, inicia un retiro con respuesta pendiente
+y pulsa Escape. RED observado: **cero cierres esperados, uno recibido**. El
+test también comprueba que ambos diálogos sigan montados, el foco quede en el
+retiro, Tab/Shift+Tab permanezcan dentro, y que tras concluir la espera Escape
+cierre sólo el retiro/restaure el disparador y luego pueda cerrar el detalle.
+
+Antes del RED válido, algunas consultas de rol recorrieron estilos que jsdom
+no pudo resolver (`resolveLengthInPixels`, `object null is not iterable`). Esos
+errores de infraestructura no se contaron como reproducción. Se usaron consultas
+de rol con `hidden: true` para los controles anidados y referencias DOM ya
+obtenidas para comprobar montaje/desmontaje, conservando componentes y teclado
+reales. No se cambiaron estilos de producción para acomodar el test.
+
+**B — Asignación y lista filtrada.** `applyOrderResult` invalida lecturas previas
+al publicar la escritura confirmada. `executeAssignment`, a diferencia de
+`executeMaterial`, no volvía a consultar la lista. Si cambian los filtros durante
+la asignación, abortaba el GET nuevo y dejaba los datos anteriores (o loading
+si la fila mutada no estaba). La hipótesis fue reponer esa lectura con los
+filtros vigentes después de aplicar el resultado, manteniendo la cancelación y
+reconciliación por versión que impiden retrocesos.
+
+Dos variantes RED mantienen el GET de filtros `PAUSED` pendiente y resuelven
+primero la asignación. Esperaban `filtered-order`, pero recibieron `order-1` y
+`another-order`, respectivamente. El hook es real; sólo la frontera API usa
+promesas controladas. El test comprueba estado final success, filtros vigentes,
+aborto de la lectura antigua, versión 17 resistente a respuesta tardía 3 y una
+única llamada de mutación.
+
+### Correcciones mínimas y GREEN
+
+- A: Escape siempre ejecuta `preventDefault`/`stopPropagation`; sólo cierra el
+  retiro cuando no está pendiente. Sin refactor de overlays ni cambio de estilos.
+- B: `executeAssignment` inicia `loadList()` tras aplicar la respuesta exitosa,
+  como las otras clases de mutación. Se añade su dependencia al callback. No se
+  reintenta ninguna mutación automáticamente.
+- GREEN: prueba A **1/1**; ambas variantes B **2/2**. Focal completo de página,
+  workspace y materiales: **83/83 en tres archivos**.
+
+### Verificación final de esta ronda
+
+| Comando | Resultado fresco |
+| --- | --- |
+| `npm test -- src/pages/OrdersPage.test.tsx src/hooks/useOrdersWorkspace.test.tsx src/components/orders/OrderMaterials.test.tsx --pool=threads --maxWorkers=1 --reporter=dot` | PASS, **83/83**, tres archivos |
+| `npm test -- --pool=threads --maxWorkers=1 --reporter=dot` | PASS, **590/590**, 61 archivos, 266.41 s; posterior a todos los cambios de código y tests |
+| `npm run lint` | PASS, cero errores y advertencias |
+| `npm run build` | PASS, TypeScript y Vite; JS 512.20 kB |
+| `git diff --check` y `git diff --cached --check` | Limpios |
+| Escaneo `localStorage`, `sessionStorage`, `document.cookie`, `Authorization.*Bearer` en `src` y `server/src` | Sin coincidencias |
+| Escaneo `from .*mocks` en API/workspace/componentes/página de Órdenes | Sin coincidencias |
+| `rg -n credentials src/api/http.ts` | Línea 47 conserva `credentials: "include"` |
+| `git diff --name-only -- server package.json package-lock.json` | Sin cambios |
+
+Estado final de la excepción: **A y B cerrados; los dos bloqueos de la
+re-revisión quedan superados por esta evidencia**, sin borrar su historial.
+Se conserva la autoridad de versiones y no se reintentan mutaciones. No se
+modificaron contratos/backend: siguen aplicando las evidencias previas 64/64
+backend y 111/111 PostgreSQL/HTTP, sin presentarlas como reejecuciones.
+
+Observaciones no bloqueantes: avisos conocidos de React `act(...)`, navegación
+no implementada de jsdom, chunk Vite mayor de 500 kB y avisos LF → CRLF.
+No hubo cambios de dependencias/router ni nueva validación visual en navegador.
+Esta ronda se entrega en un commit separado en español, sin push ni merge.
+
+Archivos de esta ronda:
+
+- `src/components/orders/OrderMaterials.tsx`
+- `src/hooks/useOrdersWorkspace.ts`
+- `src/hooks/useOrdersWorkspace.test.tsx`
+- `src/pages/OrdersPage.test.tsx`
+- `.superpowers/sdd/2026-09-16-work-orders-frontend-integration/task-14-report.md`
+- `.superpowers/sdd/2026-09-16-work-orders-frontend-integration/progress.md`
