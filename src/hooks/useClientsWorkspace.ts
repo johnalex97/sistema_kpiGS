@@ -204,7 +204,9 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const setClientFilters = useCallback((patch: Partial<ClientListFilters>) => {
     const current = queryRef.current;
     const clients = { ...current.clients, ...patch, page: patch.page ?? 1 };
-    clients.includeInactive = clients.isActive === false || clients.includeInactive;
+    if (clients.isActive === false) clients.includeInactive = true;
+    else if (Object.prototype.hasOwnProperty.call(patch, "isActive")
+      && !Object.prototype.hasOwnProperty.call(patch, "includeInactive")) clients.includeInactive = false;
     const next: ClientQueryState = {
       ...current,
       clients,

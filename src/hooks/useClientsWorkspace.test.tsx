@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientsApi } from "../api/clients";
-import type { ClientDetail, ClientPage, ClientSummary } from "../models/client";
+import type { ClientDetail, ClientListFilters, ClientPage, ClientSummary } from "../models/client";
 import { useClientsWorkspace } from "./useClientsWorkspace";
 
 const clientA: ClientSummary = {
@@ -214,6 +214,34 @@ describe("useClientsWorkspace", () => {
     expect(result.current.query.clients).toMatchObject({ isActive: false, includeInactive: true });
     await waitFor(() => expect(api.getClient).toHaveBeenCalledTimes(2));
     expect(api.getClient).toHaveBeenLastCalledWith("client-a", true, expect.any(AbortSignal));
+  });
+
+  it.each([
+    ["true", true],
+    ["undefined", undefined],
+  ])("restablece includeInactive al cambiar isActive de false a %s", async (_label, isActive) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith();
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    await act(async () => result.current.setClientFilters({ isActive: false }));
+    expect(result.current.query.clients.includeInactive).toBe(true);
+
+    const patch = { isActive } as Partial<ClientListFilters>;
+    await act(async () => result.current.setClientFilters(patch));
+    expect(result.current.query.clients.includeInactive).toBe(false);
+    expect(new URLSearchParams(window.location.search).get("includeInactive")).toBe("false");
+    await waitFor(() => expect(api.getClient).toHaveBeenCalledTimes(3));
+    expect(api.getClient).toHaveBeenLastCalledWith("client-a", false, expect.any(AbortSignal));
+  });
+
+  it("respeta includeInactive:true explícito al salir de isActive=false", async () => {
+    const api = apiWith();
+    const { result } = renderHook(() => useWorkspace(api));
+    act(() => result.current.setClientFilters({ isActive: false }));
+    act(() => result.current.setClientFilters({ isActive: true, includeInactive: true }));
+    expect(result.current.query.clients).toMatchObject({ isActive: true, includeInactive: true });
+    expect(new URLSearchParams(window.location.search).get("includeInactive")).toBe("true");
   });
 
   it("conserva filtros hijos al volver a seleccionar el mismo cliente", async () => {
