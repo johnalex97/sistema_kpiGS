@@ -10,6 +10,7 @@ import { DashboardPage } from "../pages/DashboardPage";
 import { RecurrencesPage } from "../pages/RecurrencesPage";
 import { OrdersPage } from "../pages/OrdersPage";
 import { TechniciansPage } from "../pages/TechniciansPage";
+import { ClientsPage } from "../pages/ClientsPage";
 import { canAccessPage, pageDescriptions } from "../routes/appRoutes";
 import { Sidebar } from "./Sidebar";
 import { AccessDeniedPage } from "../pages/AccessDeniedPage";
@@ -20,6 +21,7 @@ function PageContent({ page, search, onGoRecurrence, onClearSearch }: { page: Pa
     case "Actividades": return <ActivitiesPage search={search} />;
     case "Técnicos": return <TechniciansPage search={search} />;
     case "Reincidencias": return <RecurrencesPage search={search} />;
+    case "Clientes": return <ClientsPage search={search} onClearSearch={onClearSearch} />;
     default: return <DashboardPage works={initialWorks} onGoRecurrence={onGoRecurrence} />;
   }
 }
@@ -29,7 +31,7 @@ export function AppShell() {
   const { page, navigate } = useAppRoute();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const visiblePages = useMemo(() => user ? (["Resumen", "Órdenes", "Actividades", "Técnicos", "Reincidencias"] as Page[])
+  const visiblePages = useMemo(() => user ? (["Resumen", "Órdenes", "Actividades", "Técnicos", "Reincidencias", "Clientes"] as Page[])
     .filter((candidate) => canAccessPage(candidate, user.permissions)) : [], [user]);
   const hasPageAccess = user ? canAccessPage(page, user.permissions) : false;
 

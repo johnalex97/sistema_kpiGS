@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 
 describe("Sidebar", () => {
+  it("muestra Clientes como navegación activa cuando está autorizado", () => {
+    render(<Sidebar page="Clientes" visiblePages={["Clientes"]} open={false} onChange={vi.fn()} onClose={vi.fn()} />);
+
+    const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+    expect(within(navigation).getByRole("button", { name: "Clientes" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("shows the orders workspace when it is authorized", () => {
     render(<Sidebar
       page="Órdenes"

@@ -6,6 +6,7 @@ export const pageDescriptions: Record<Page, string> = {
   Actividades: "Consulta y filtra todo el trabajo registrado por el equipo.",
   Técnicos: "Compara productividad, cumplimiento y calidad por técnico.",
   Reincidencias: "Detecta trabajos repetidos, causas y técnicos participantes.",
+  Clientes: "Consulta empresas, ubicaciones y contactos para atender cada servicio.",
 };
 
 const pageByPath: Record<PagePath, Page> = {
@@ -14,6 +15,7 @@ const pageByPath: Record<PagePath, Page> = {
   "/actividades": "Actividades",
   "/tecnicos": "Técnicos",
   "/reincidencias": "Reincidencias",
+  "/clientes": "Clientes",
 };
 
 export const pagePermissions: Record<Page, string[]> = {
@@ -22,6 +24,7 @@ export const pagePermissions: Record<Page, string[]> = {
   Actividades: ["ACTIVITIES_VIEW_ALL", "ACTIVITIES_CREATE_OWN"],
   Técnicos: ["TECHNICIANS_VIEW"],
   Reincidencias: ["RECURRENCES_VIEW_ALL", "RECURRENCES_VIEW_OWN"],
+  Clientes: ["CLIENTS_VIEW"],
 };
 
 export function canAccessPage(page: Page, permissions: string[]) {

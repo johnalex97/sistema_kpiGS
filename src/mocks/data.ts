@@ -1,6 +1,7 @@
 import {
   ClipboardList,
   ClipboardCheck,
+  Building2,
   LayoutDashboard,
   RefreshCw,
   Users,
@@ -33,4 +34,5 @@ export const navItems: NavigationItem[] = [
   { label: "Actividades", path: "/actividades", icon: ClipboardList },
   { label: "Técnicos", path: "/tecnicos", icon: Users },
   { label: "Reincidencias", path: "/reincidencias", icon: RefreshCw },
+  { label: "Clientes", path: "/clientes", icon: Building2 },
 ];

@@ -16,6 +16,29 @@ afterEach(() => {
 });
 
 describe("AppShell", () => {
+  it("abre el listado persistente de Clientes desde la navegación autorizada", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ data: {
+      items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
+    } }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    renderWithAuth(<AppShell />, { user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } });
+
+    await user.click(screen.getByRole("button", { name: "Clientes" }));
+
+    expect(window.location.pathname).toBe("/clientes");
+    expect(screen.getByRole("heading", { level: 1, name: "Clientes" })).toBeInTheDocument();
+    expect(await screen.findByText("No hay clientes para estos filtros")).toBeInTheDocument();
+  });
+
+  it("no muestra Clientes ni permite entrar sin CLIENTS_VIEW", () => {
+    const first = renderWithAuth(<AppShell />, { user: { ...limitedUser, permissions: ["ORDERS_VIEW_ALL"] } });
+    expect(screen.queryByRole("button", { name: "Clientes" })).not.toBeInTheDocument();
+    first.unmount();
+    window.history.replaceState({}, "", "/clientes");
+    renderWithAuth(<AppShell />, { user: { ...limitedUser, permissions: ["ORDERS_VIEW_ALL"] } });
+    expect(screen.getByRole("heading", { name: "Acceso denegado" })).toBeInTheDocument();
+  });
+
   it("navigates to the persistent orders workspace", async () => {
     const orderUser = {
       ...limitedUser,

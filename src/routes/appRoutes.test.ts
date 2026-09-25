@@ -16,3 +16,13 @@ describe("orders application route", () => {
     expect(canAccessPage("Órdenes", [])).toBe(false);
   });
 });
+
+describe("clients application route", () => {
+  it("maps /clientes and grants access only with CLIENTS_VIEW", () => {
+    expect(getPageFromPath("/clientes")).toBe("Clientes");
+    expect(getPathFromPage("Clientes")).toBe("/clientes");
+    expect(isKnownInternalPath("/clientes")).toBe(true);
+    expect(canAccessPage("Clientes", ["CLIENTS_VIEW"])).toBe(true);
+    expect(canAccessPage("Clientes", ["ORDERS_VIEW_ALL"])).toBe(false);
+  });
+});
