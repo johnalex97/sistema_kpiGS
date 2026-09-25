@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientsApi } from "../api/clients";
 import type { ClientDetail, ClientPage, ClientSummary } from "../models/client";
 import { useClientsWorkspace } from "./useClientsWorkspace";
@@ -36,6 +36,7 @@ const useWorkspace = (api: ClientsApi, search = "", permissions = ["CLIENTS_VIEW
   useClientsWorkspace({ api, search, permissions });
 
 beforeEach(() => window.history.replaceState({}, "", "/clientes"));
+afterEach(() => vi.useRealTimers());
 
 describe("useClientsWorkspace", () => {
   it("carga lista y detalle seleccionado, y guarda la selección en el historial", async () => {
@@ -73,6 +74,21 @@ describe("useClientsWorkspace", () => {
     expect(result.current.detail.data).toEqual(detailB);
   });
 
+  it("no reconcilia el detalle A cargado como si fuera B cuando B responde en el mismo batch", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith();
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe("client-a"));
+
+    await act(async () => {
+      result.current.selectClient("client-b");
+      await Promise.resolve();
+    });
+
+    expect(result.current.query.clientId).toBe("client-b");
+    expect(result.current.detail.data).toEqual(detailB);
+  });
+
   it("popstate reconstruye y recarga incluso con el mismo clientId", async () => {
     window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=branches&source=shell");
     const api = apiWith();
@@ -86,6 +102,19 @@ describe("useClientsWorkspace", () => {
     expect(result.current.query.tab).toBe("contacts");
     expect(result.current.detail.status).toBe("success");
     expect(window.location.search).toContain("source=shell");
+  });
+
+  it("cancela una búsqueda superior pendiente al restaurar una URL histórica", async () => {
+    const api = apiWith();
+    const { result, rerender } = renderHook(({ search }) => useWorkspace(api, search), { initialProps: { search: "" } });
+    vi.useFakeTimers();
+    rerender({ search: "nueva" });
+    window.history.pushState({}, "", "/clientes?search=historica&page=2");
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(result.current.query.clients).toMatchObject({ search: "historica", page: 2 });
+    expect(new URLSearchParams(window.location.search).get("search")).toBe("historica");
   });
 
   it("aborta lista y detalle al desmontar y no publica respuestas tardías", async () => {
@@ -173,6 +202,18 @@ describe("useClientsWorkspace", () => {
     expect(push).toHaveBeenCalled();
     replace.mockRestore();
     push.mockRestore();
+  });
+
+  it("isActive=false normaliza includeInactive en estado y recarga detalle con inactivos", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith();
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    act(() => result.current.setClientFilters({ isActive: false }));
+
+    expect(result.current.query.clients).toMatchObject({ isActive: false, includeInactive: true });
+    await waitFor(() => expect(api.getClient).toHaveBeenCalledTimes(2));
+    expect(api.getClient).toHaveBeenLastCalledWith("client-a", true, expect.any(AbortSignal));
   });
 
   it("conserva filtros hijos al volver a seleccionar el mismo cliente", async () => {
