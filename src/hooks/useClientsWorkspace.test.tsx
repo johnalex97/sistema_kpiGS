@@ -339,6 +339,28 @@ describe("edición y ciclo de vida del cliente", () => {
     expect(api.updateClient).toHaveBeenCalledTimes(2);
   });
 
+  it("mantiene edición pendiente y Cancelar inoperable sólo mientras espera el GET automático", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const latest = deferred<ClientDetail>();
+    const getClient = vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValueOnce({ ...detailA, version: 9 }).mockImplementationOnce(() => latest.promise);
+    const api = apiWith({ getClient, updateClient: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    await act(async () => result.current.reviewClientConflict());
+    let submit!: Promise<void>;
+    act(() => { submit = result.current.submitClientEdit({ tradeName: "Borrador" }); });
+    await waitFor(() => expect(getClient).toHaveBeenCalledTimes(3));
+    expect(result.current.edit.pending).toBe(true);
+    act(() => result.current.closeForm());
+    expect(result.current.edit.open).toBe(true);
+    await act(async () => { latest.resolve({ ...detailA, version: 11 }); await submit; });
+    expect(result.current.edit).toMatchObject({ pending: false, open: true, draft: { conflict: { version: 11 } } });
+    act(() => result.current.closeForm());
+    expect(result.current.edit.open).toBe(false);
+  });
+
   it("mantiene revisión de lifecycle tras ajustar motivo después de 409", async () => {
     window.history.replaceState({}, "", "/clientes?clientId=client-a");
     const api = apiWith({ deactivateClient: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")) });
@@ -382,6 +404,28 @@ describe("edición y ciclo de vida del cliente", () => {
     await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
     expect(result.current.lifecycle).toMatchObject({ versionConflict: true, baseVersion: 3, reason: "Cierre administrativo", conflict: { version: 11 } });
     expect(api.deactivateClient).toHaveBeenCalledTimes(2);
+  });
+
+  it("mantiene lifecycle pendiente y Cancelar inoperable sólo mientras espera el GET automático", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const latest = deferred<ClientDetail>();
+    const getClient = vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValueOnce({ ...detailA, version: 9 }).mockImplementationOnce(() => latest.promise);
+    const api = apiWith({ getClient, deactivateClient: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
+    await act(async () => result.current.reviewClientConflict());
+    let submit!: Promise<void>;
+    act(() => { submit = result.current.submitClientLifecycle("Cierre administrativo"); });
+    await waitFor(() => expect(getClient).toHaveBeenCalledTimes(3));
+    expect(result.current.lifecycle.pending).toBe(true);
+    act(() => result.current.closeForm());
+    expect(result.current.lifecycle.open).toBe(true);
+    await act(async () => { latest.resolve({ ...detailA, version: 11 }); await submit; });
+    expect(result.current.lifecycle).toMatchObject({ pending: false, open: true, conflict: { version: 11 } });
+    act(() => result.current.closeForm());
+    expect(result.current.lifecycle.open).toBe(false);
   });
 
   it("expone validación API del motivo sin cerrar lifecycle", async () => {

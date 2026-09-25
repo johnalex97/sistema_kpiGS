@@ -469,7 +469,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       const fieldErrors = error instanceof ApiClientError ? error.fieldErrors : [];
       const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
       const reviewed = editRef.current.draft?.conflict;
-      updateEdit({ ...editRef.current, pending: false, error: clientMutationError(error, "No fue posible actualizar el cliente."), fieldErrors,
+      updateEdit({ ...editRef.current, pending: Boolean(versionConflict && reviewed), error: clientMutationError(error, "No fue posible actualizar el cliente."), fieldErrors,
         versionConflict: editRef.current.versionConflict || versionConflict });
       if (versionConflict && reviewed) {
         try {
@@ -484,7 +484,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
           }
         }
       }
-    } finally { editPendingRef.current = false; }
+    } finally {
+      editPendingRef.current = false;
+      if (editRef.current.pending) updateEdit({ ...editRef.current, pending: false });
+    }
   }, [api, handleMissingClient, reconcileMutation, refreshDetail, refreshList, updateEdit, withConfirmedDetail]);
 
   const openClientLifecycle = useCallback((action: "deactivate" | "reactivate") => {
@@ -535,7 +538,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (error instanceof ApiClientError && (error.status === 401 || error.status === 403)) { updateLifecycle(emptyLifecycle()); return; }
       const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
       const reviewed = lifecycleRef.current.conflict;
-      updateLifecycle({ ...lifecycleRef.current, pending: false, error: clientMutationError(error, "No fue posible cambiar el estado del cliente."),
+      updateLifecycle({ ...lifecycleRef.current, pending: Boolean(versionConflict && reviewed), error: clientMutationError(error, "No fue posible cambiar el estado del cliente."),
         fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [],
         versionConflict: lifecycleRef.current.versionConflict || versionConflict });
       if (versionConflict && reviewed) {
@@ -551,7 +554,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
           }
         }
       }
-    } finally { lifecyclePendingRef.current = false; }
+    } finally {
+      lifecyclePendingRef.current = false;
+      if (lifecycleRef.current.pending) updateLifecycle({ ...lifecycleRef.current, pending: false });
+    }
   }, [api, commitQuery, handleMissingClient, reconcileMutation, refreshDetail, refreshList, updateLifecycle, withConfirmedDetail]);
 
   const reviewClientConflict = useCallback(async (): Promise<void> => {
