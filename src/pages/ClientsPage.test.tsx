@@ -34,6 +34,22 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
+  it("conserva el contacto institucional en tarjetas móviles con respaldo y ausencia explícita", () => {
+    const byEmail = { ...client, id: "client-2", code: "CLI-002", tradeName: "Ferretería Norte", phone: null, email: "ventas@norte.test" };
+    const withoutContact = { ...client, id: "client-3", code: "CLI-003", tradeName: "Taller del Sur", phone: null, email: null };
+    const current = workspace({ list: { status: "success", data: {
+      items: [client, byEmail, withoutContact],
+      pagination: { page: 1, pageSize: 20, totalItems: 3, totalPages: 1 },
+    }, error: null, stale: false } });
+    const { container } = renderPage(current);
+    const cards = container.querySelectorAll(".clients-card");
+
+    expect(cards).toHaveLength(3);
+    expect(within(cards[0] as HTMLElement).getByText("2222-3333")).toBeInTheDocument();
+    expect(within(cards[1] as HTMLElement).getByText("ventas@norte.test")).toBeInTheDocument();
+    expect(within(cards[2] as HTMLElement).getByText("Sin teléfono ni correo")).toBeInTheDocument();
+  });
+
   it("muestra total, identidad, métricas y estado sin crear en solo lectura", () => {
     renderPage(workspace());
     expect(screen.getByText("1 cliente")).toBeInTheDocument();
