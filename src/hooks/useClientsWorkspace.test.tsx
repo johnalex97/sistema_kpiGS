@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientsApi } from "../api/clients";
 import type { ClientDetail, ClientListFilters, ClientPage, ClientSummary, CreateClientInput } from "../models/client";
 import { useClientsWorkspace } from "./useClientsWorkspace";
+import { ApiClientError } from "../api/http";
 
 const clientA: ClientSummary = {
   id: "client-a", code: "CLI-001", tradeName: "Acme", legalName: null, taxId: null,
@@ -17,6 +18,207 @@ const page = (items: ClientSummary[]): ClientPage => ({
   items, pagination: { page: 1, pageSize: 20, totalItems: items.length, totalPages: 1 },
 });
 
+describe("edición y ciclo de vida del cliente", () => {
+  const manageable = ["CLIENTS_VIEW", "CLIENTS_MANAGE"];
+
+  it("mantiene la versión base v3 y el borrador cuando una lectura posterior trae v9", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const background = deferred<ClientDetail>();
+    const updateClient = vi.fn(async () => ({ ...detailA, version: 10, tradeName: "Borrador" }));
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockImplementationOnce(() => background.promise).mockResolvedValue({ ...detailA, version: 9, tradeName: "Servidor" }), updateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    act(() => result.current.changeClientEdit({ tradeName: "Borrador" }));
+    expect(result.current.edit?.draft?.baseVersion).toBe(3);
+    let refresh!: Promise<void>;
+    act(() => { refresh = result.current.refreshDetail(); });
+    await act(async () => background.resolve({ ...detailA, version: 9, tradeName: "Servidor" }));
+    await refresh;
+    expect(result.current.detail.data?.version).toBe(9);
+    expect(result.current.edit?.draft?.values.tradeName).toBe("Borrador");
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    expect(updateClient).toHaveBeenCalledWith(clientA.id, { version: 3, tradeName: "Borrador" });
+    expect(result.current.detail.data?.version).toBe(10);
+  });
+
+  it("conserva borrador tras 409, revisa vigente y sólo adopta su versión explícitamente", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const updateClient = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "interno")).mockResolvedValueOnce({ ...detailA, version: 10, tradeName: "Borrador" });
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValue({ ...detailA, version: 9, tradeName: "Servidor" }), updateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    act(() => result.current.changeClientEdit({ tradeName: "Borrador" }));
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    expect(result.current.edit?.draft).toMatchObject({ baseVersion: 3, values: { tradeName: "Borrador" }, conflict: null });
+    expect(result.current.edit?.error).toMatch(/cambió|versión/i);
+    expect(updateClient).toHaveBeenCalledTimes(1);
+    await act(async () => result.current.reviewClientConflict());
+    expect(result.current.edit?.draft?.conflict).toMatchObject({ version: 9, tradeName: "Servidor" });
+    expect(result.current.edit?.draft?.values.tradeName).toBe("Borrador");
+    act(() => result.current.adoptClientConflict());
+    expect(result.current.edit?.draft).toMatchObject({ baseVersion: 9, values: { tradeName: "Borrador" }, conflict: null });
+    expect(updateClient).toHaveBeenCalledTimes(1);
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    expect(updateClient).toHaveBeenLastCalledWith(clientA.id, { version: 9, tradeName: "Borrador" });
+  });
+
+  it.each([
+    ["TAX_ID_ALREADY_EXISTS", "RTN"],
+    ["RESOURCE_INACTIVE", "inactivo"],
+  ])("mantiene edición y mensaje operativo para %s", async (code, visible) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith({ updateClient: vi.fn().mockRejectedValue(new ApiClientError(409, code, "interno")) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openEdit());
+    act(() => result.current.changeClientEdit({ tradeName: "Borrador" }));
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    expect(result.current.edit?.open).toBe(true);
+    expect(result.current.edit?.draft?.values.tradeName).toBe("Borrador");
+    expect(result.current.edit?.error).toContain(visible);
+  });
+
+  it("desactiva y reactiva con motivo recortado y versión base sin reescribir hijos", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const child = { id: "branch-1", clientId: clientA.id, code: "S-1", name: "Principal", address: "Centro", city: null, region: null, country: "HN", lat: null, long: null, locationReference: null, isActive: true, isEffectivelyActive: true, createdAt: clientA.createdAt, updatedAt: clientA.updatedAt, version: 2 };
+    const active = { ...detailA, version: 3, branches: [child] };
+    const inactive = { ...active, version: 7, isActive: false };
+    const restored = { ...active, version: 11 };
+    const deactivateClient = vi.fn(async () => inactive);
+    const reactivateClient = vi.fn(async () => restored);
+    const api = apiWith({ getClient: vi.fn(async () => active), deactivateClient, reactivateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("  Cierre administrativo  "));
+    expect(deactivateClient).toHaveBeenCalledWith(clientA.id, { version: 3, reason: "Cierre administrativo" });
+    expect(result.current.detail.data?.version).toBe(7);
+    expect(result.current.detail.data?.branches[0]?.isActive).toBe(true);
+    act(() => result.current.openClientLifecycle("reactivate"));
+    await act(async () => result.current.submitClientLifecycle("  Apertura solicitada  "));
+    expect(reactivateClient).toHaveBeenCalledWith(clientA.id, { version: 7, reason: "Apertura solicitada" });
+    expect(result.current.detail.data?.version).toBe(11);
+  });
+
+  it("rechaza 9/501 caracteres, bloquea doble envío y preserva motivo ante trabajo activo", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const pending = deferred<ClientDetail>();
+    const deactivateClient = vi.fn().mockImplementationOnce(() => pending.promise).mockRejectedValueOnce(new ApiClientError(409, "CLIENT_HAS_ACTIVE_WORK", "interno"));
+    const api = apiWith({ deactivateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("123456789"));
+    await act(async () => result.current.submitClientLifecycle("x".repeat(501)));
+    expect(deactivateClient).not.toHaveBeenCalled();
+    let first!: Promise<void>;
+    act(() => { first = result.current.submitClientLifecycle("Cierre administrativo"); });
+    await act(async () => result.current.submitClientLifecycle("Segundo intento"));
+    expect(deactivateClient).toHaveBeenCalledTimes(1);
+    await act(async () => pending.reject(new ApiClientError(409, "CLIENT_HAS_ACTIVE_WORK", "interno")));
+    await first;
+    expect(result.current.lifecycle?.open).toBe(true);
+    expect(result.current.lifecycle?.reason).toBe("Cierre administrativo");
+    expect(result.current.lifecycle?.error).toContain("trabajo activo");
+  });
+
+  it("404 cierra sólo el cliente afectado y refresca lista", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const listClients = vi.fn(async () => page([clientB]));
+    const api = apiWith({ listClients, updateClient: vi.fn().mockRejectedValue(new ApiClientError(404, "NOT_FOUND", "interno")) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openEdit());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    expect(result.current.query.clientId).toBeNull();
+    expect(result.current.edit?.open).toBe(false);
+    await waitFor(() => expect(listClients).toHaveBeenCalledTimes(2));
+  });
+
+  it("no ofrece mutaciones sin permiso y cierra borrador al revocarse la gestión", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith({ updateClient: vi.fn() });
+    const { result, rerender } = renderHook(({ permissions }) => useWorkspace(api, "", permissions), { initialProps: { permissions: manageable } });
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openEdit());
+    expect(result.current.edit?.open).toBe(true);
+    rerender({ permissions: ["CLIENTS_VIEW"] });
+    await waitFor(() => expect(result.current.edit?.open).toBe(false));
+    act(() => result.current.openEdit());
+    await act(async () => result.current.submitClientEdit({ tradeName: "No autorizado" }));
+    expect(api.updateClient).not.toHaveBeenCalled();
+  });
+
+  it("descarta borradores al limpiar la selección y al perder vista aunque gestión permanezca", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith({ updateClient: vi.fn() });
+    const { result, rerender } = renderHook(({ permissions }) => useWorkspace(api, "", permissions), { initialProps: { permissions: manageable } });
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openEdit());
+    act(() => result.current.changeClientEdit({ tradeName: "Privado" }));
+    act(() => result.current.clearClientFilters());
+    expect(result.current.edit.draft).toBeNull();
+    act(() => result.current.selectClient("client-a"));
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openEdit());
+    rerender({ permissions: ["CLIENTS_MANAGE"] });
+    await waitFor(() => expect(result.current.edit.draft).toBeNull());
+    expect(api.updateClient).not.toHaveBeenCalled();
+  });
+
+  it("no abre edición ni desactivación para un cliente inactivo", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const inactive = { ...detailA, isActive: false, version: 7 };
+    const api = apiWith({ getClient: vi.fn(async () => inactive), updateClient: vi.fn(), deactivateClient: vi.fn() });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(7));
+    act(() => result.current.openEdit());
+    act(() => result.current.openClientLifecycle("deactivate"));
+    expect(result.current.edit.open).toBe(false);
+    expect(result.current.lifecycle.open).toBe(false);
+    expect(api.updateClient).not.toHaveBeenCalled();
+    expect(api.deactivateClient).not.toHaveBeenCalled();
+  });
+
+  it("mantiene motivo y versión base de lifecycle durante 409 hasta adoptar la vigente", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const deactivateClient = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "interno")).mockResolvedValueOnce({ ...detailA, version: 12, isActive: false });
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValue({ ...detailA, version: 9 }), deactivateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
+    expect(result.current.lifecycle).toMatchObject({ open: true, baseVersion: 3, reason: "Cierre administrativo" });
+    expect(deactivateClient).toHaveBeenCalledTimes(1);
+    await act(async () => result.current.reviewClientConflict());
+    expect(result.current.lifecycle.conflict?.version).toBe(9);
+    expect(result.current.lifecycle.reason).toBe("Cierre administrativo");
+    act(() => result.current.adoptClientConflict());
+    expect(result.current.lifecycle).toMatchObject({ baseVersion: 9, reason: "Cierre administrativo", conflict: null });
+    await act(async () => result.current.submitClientLifecycle(result.current.lifecycle.reason));
+    expect(deactivateClient).toHaveBeenLastCalledWith(clientA.id, { version: 9, reason: "Cierre administrativo" });
+  });
+
+  it("no degrada versión confirmada al incluir inactivos y recibir GET anteriores", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const confirmed = { ...detailA, version: 7, isActive: false };
+    const listClients = vi.fn(async () => page([clientA]));
+    const getClient = vi.fn(async () => ({ ...detailA, version: 3 }));
+    const api = apiWith({ listClients, getClient, deactivateClient: vi.fn(async () => confirmed) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
+    await waitFor(() => expect(getClient).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(listClients).toHaveBeenCalledTimes(2));
+    expect(result.current.query.clients.includeInactive).toBe(true);
+    expect(result.current.detail.data).toMatchObject({ version: 7, isActive: false });
+    expect(result.current.list.data?.items[0]).toMatchObject({ version: 7, isActive: false });
+  });
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -24,7 +226,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function apiWith(overrides: Partial<Pick<ClientsApi, "listClients" | "getClient" | "createClient">> = {}): ClientsApi {
+function apiWith(overrides: Partial<Pick<ClientsApi, "listClients" | "getClient" | "createClient" | "updateClient" | "deactivateClient" | "reactivateClient">> = {}): ClientsApi {
   return {
     listClients: vi.fn(async () => page([clientA, clientB])),
     getClient: vi.fn(async (id: string) => id === clientA.id ? detailA : detailB),

@@ -7,6 +7,9 @@ interface ClientDetailProps {
   tab: ClientTab;
   onTabChange(tab: ClientTab): void;
   onClose(): void;
+  canManage?: boolean;
+  onEdit?(): void;
+  onLifecycle?(action: "deactivate" | "reactivate"): void;
 }
 
 const tabs: { id: ClientTab; label: string }[] = [
@@ -18,7 +21,7 @@ const tabs: { id: ClientTab; label: string }[] = [
 function value(text: string | null) { return text || "No registrado"; }
 function date(text: string) { return new Intl.DateTimeFormat("es-HN", { dateStyle: "medium" }).format(new Date(text)); }
 
-export function ClientDetail({ client, tab, onTabChange, onClose }: ClientDetailProps) {
+export function ClientDetail({ client, tab, onTabChange, onClose, canManage, onEdit, onLifecycle }: ClientDetailProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeRef.current?.focus(); }, [client.id]);
 
@@ -56,6 +59,10 @@ export function ClientDetail({ client, tab, onTabChange, onClose }: ClientDetail
         <div><dt>Creado</dt><dd>{date(client.createdAt)}</dd></div>
         <div><dt>Actualizado</dt><dd>{date(client.updatedAt)}</dd></div>
       </dl>
+      {canManage && <div className="clients-wizard__actions">
+        {client.isActive && <button className="button button--ghost" type="button" onClick={onEdit}>Editar cliente</button>}
+        <button className="button button--ghost" type="button" onClick={() => onLifecycle?.(client.isActive ? "deactivate" : "reactivate")}>{client.isActive ? "Desactivar cliente" : "Reactivar cliente"}</button>
+      </div>}
     </section>
     <section role="tabpanel" id="client-panel-branches" aria-labelledby="client-tab-branches" tabIndex={0} hidden={tab !== "branches"} className="clients-detail__body"><p className="clients-detail__next">La consulta de sucursales estará disponible en esta sección.</p></section>
     <section role="tabpanel" id="client-panel-contacts" aria-labelledby="client-tab-contacts" tabIndex={0} hidden={tab !== "contacts"} className="clients-detail__body"><p className="clients-detail__next">La consulta de contactos estará disponible en esta sección.</p></section>

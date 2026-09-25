@@ -3,6 +3,8 @@ import { AlertTriangle, RefreshCw, Search, UserRoundPlus } from "lucide-react";
 import { createClientsApi, type ClientsApi } from "../api/clients";
 import { useAuth } from "../auth/useAuth";
 import { ClientDetail } from "../components/clients/ClientDetail";
+import { ClientForm } from "../components/clients/ClientForm";
+import { ClientLifecycleDialog } from "../components/clients/ClientLifecycleDialog";
 import { ClientFilters } from "../components/clients/ClientFilters";
 import { ClientTable } from "../components/clients/ClientTable";
 import { ClientWizard } from "../components/clients/ClientWizard";
@@ -65,7 +67,7 @@ function ClientsWorkspaceView({ workspace, onClearSearch }: { workspace: Clients
       {hasDetail && <div className="clients-detail-region">
         {selected && detail.stale && <div className="clients-notice clients-detail-notice" role="status"><AlertTriangle size={16} aria-hidden="true" /><span>Ficha posiblemente desactualizada. {detail.error}</span><button type="button" onClick={() => void workspace.refreshDetail()}>Reintentar ficha</button></div>}
         {selected && detail.status === "loading" && <p className="clients-detail-loading" role="status">Actualizando ficha del cliente…</p>}
-        {selected && <ClientDetail client={selected} tab={query.tab} onTabChange={workspace.setTab} onClose={close} />}
+        {selected && <ClientDetail client={selected} tab={query.tab} onTabChange={workspace.setTab} onClose={close} canManage={canManage && Boolean(workspace.openEdit && workspace.openClientLifecycle)} onEdit={() => workspace.openEdit?.()} onLifecycle={(action) => workspace.openClientLifecycle?.(action)} />}
         {!selected && <div className="clients-detail-state" role={detail.status === "error" ? "alert" : "status"}>
           <strong>{detail.status === "error" ? "No fue posible cargar la ficha" : "Cargando ficha del cliente…"}</strong>
           {detail.status === "error" && <><p>{detail.error}</p><button className="button button--ghost" type="button" onClick={() => void workspace.refreshDetail()}>Reintentar ficha</button></>}
@@ -74,5 +76,7 @@ function ClientsWorkspaceView({ workspace, onClearSearch }: { workspace: Clients
       </div>}
     </div>
     {canManage && workspace.create?.open && <ClientWizard pending={workspace.create.pending} error={workspace.create.error} fieldErrors={workspace.create.fieldErrors} onSubmit={workspace.submitCreate ?? (async () => {})} onClose={() => workspace.closeForm?.()} />}
+    {canManage && selected && workspace.edit?.open && workspace.edit.draft && <ClientForm client={selected} draft={workspace.edit.draft} pending={workspace.edit.pending} reviewPending={workspace.edit.reviewPending} error={workspace.edit.error} reviewError={workspace.edit.reviewError} fieldErrors={workspace.edit.fieldErrors} onChange={(patch) => workspace.changeClientEdit?.(patch)} onSubmit={async (values) => workspace.submitClientEdit?.(values)} onClose={() => workspace.closeForm?.()} onReview={async () => workspace.reviewClientConflict?.()} onAdopt={() => workspace.adoptClientConflict?.()} />}
+    {canManage && selected && workspace.lifecycle?.open && <ClientLifecycleDialog client={selected} action={workspace.lifecycle.action} baseVersion={workspace.lifecycle.baseVersion} reason={workspace.lifecycle.reason} pending={workspace.lifecycle.pending} reviewPending={workspace.lifecycle.reviewPending} error={workspace.lifecycle.error} reviewError={workspace.lifecycle.reviewError} conflict={workspace.lifecycle.conflict} onReasonChange={(reason) => workspace.changeClientLifecycleReason?.(reason)} onSubmit={async (reason) => workspace.submitClientLifecycle?.(reason)} onClose={() => workspace.closeForm?.()} onReview={async () => workspace.reviewClientConflict?.()} onAdopt={() => workspace.adoptClientConflict?.()} />}
   </section>;
 }

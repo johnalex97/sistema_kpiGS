@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientsApi } from "../api/clients";
-import type { ApiFieldError } from "../api/http";
-import type { ClientDetail, ClientListFilters, ClientPage, ClientTab, CreateClientInput } from "../models/client";
+import { ApiClientError, type ApiFieldError } from "../api/http";
+import type { ClientDetail, ClientListFilters, ClientPage, ClientTab, CreateClientInput, UpdateClientInput } from "../models/client";
 import {
   deriveClientCapabilities,
   parseClientSearch,
@@ -24,9 +24,19 @@ export interface ClientsWorkspace {
   list: AsyncState<ClientPage>;
   detail: AsyncState<ClientDetail>;
   create?: { open: boolean; pending: boolean; error: string | null; fieldErrors: ApiFieldError[] };
+  edit?: ClientEditState;
+  lifecycle?: ClientLifecycleState;
   openCreate?(): void;
   closeForm?(): void;
   submitCreate?(input: CreateClientInput): Promise<void>;
+  openEdit?(): void;
+  changeClientEdit?(patch: Omit<UpdateClientInput, "version">): void;
+  submitClientEdit?(values: Omit<UpdateClientInput, "version">): Promise<void>;
+  openClientLifecycle?(action: "deactivate" | "reactivate"): void;
+  changeClientLifecycleReason?(reason: string): void;
+  submitClientLifecycle?(reason: string): Promise<void>;
+  reviewClientConflict?(): Promise<void>;
+  adoptClientConflict?(): void;
   setClientFilters(patch: Partial<ClientListFilters>): void;
   clearClientFilters(): void;
   selectClient(id: string): void;
@@ -35,6 +45,36 @@ export interface ClientsWorkspace {
   refreshList(): Promise<void>;
   refreshDetail(): Promise<void>;
   refresh(): Promise<void>;
+}
+
+export interface ClientEditDraft {
+  clientId: string;
+  baseVersion: number;
+  values: Omit<UpdateClientInput, "version">;
+  conflict: ClientDetail | null;
+}
+
+export interface ClientEditState {
+  open: boolean;
+  pending: boolean;
+  error: string | null;
+  fieldErrors: ApiFieldError[];
+  reviewPending: boolean;
+  reviewError: string | null;
+  draft: ClientEditDraft | null;
+}
+
+export interface ClientLifecycleState {
+  open: boolean;
+  action: "deactivate" | "reactivate";
+  clientId: string;
+  baseVersion: number;
+  reason: string;
+  pending: boolean;
+  error: string | null;
+  reviewPending: boolean;
+  reviewError: string | null;
+  conflict: ClientDetail | null;
 }
 
 export interface UseClientsWorkspaceOptions {
@@ -49,6 +89,26 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function clientMutationError(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiClientError)) return errorMessage(error, fallback);
+  const messages: Record<string, string> = {
+    VERSION_CONFLICT: "El cliente cambió en el servidor. Revisa la versión vigente antes de volver a guardar.",
+    CLIENT_HAS_ACTIVE_WORK: "El cliente tiene trabajo activo. Resuélvelo antes de desactivarlo.",
+    TAX_ID_ALREADY_EXISTS: "El RTN ya pertenece a otro cliente. Revisa el dato ingresado.",
+    RESOURCE_INACTIVE: "El cliente está inactivo. Revisa su estado antes de continuar.",
+    VALIDATION_ERROR: "Revisa los campos señalados antes de continuar.",
+  };
+  return messages[error.code] ?? (error.status === 403 ? "Ya no tienes permiso para administrar este cliente." : fallback);
+}
+
+function clientValues(client: ClientDetail): Omit<UpdateClientInput, "version"> {
+  return { tradeName: client.tradeName, legalName: client.legalName, taxId: client.taxId,
+    phone: client.phone, email: client.email, notes: client.notes };
+}
+
+const emptyEdit = (): ClientEditState => ({ open: false, pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, draft: null });
+const emptyLifecycle = (): ClientLifecycleState => ({ open: false, action: "deactivate", clientId: "", baseVersion: 0, reason: "", pending: false, error: null, reviewPending: false, reviewError: null, conflict: null });
+
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
@@ -58,7 +118,7 @@ function urlWith(search: URLSearchParams): string {
   return `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
 }
 
-export function useClientsWorkspace({ api, permissions, search }: UseClientsWorkspaceOptions): ClientsWorkspace {
+export function useClientsWorkspace({ api, permissions, search }: UseClientsWorkspaceOptions) {
   const capabilities = deriveClientCapabilities(permissions);
   const [query, setQuery] = useState<ClientQueryState>(() => {
     const parsed = parseClientSearch(window.location.search);
@@ -76,7 +136,20 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   }));
   const detail = detailSnapshot.state;
   const [create, setCreate] = useState<NonNullable<ClientsWorkspace["create"]>>({ open: false, pending: false, error: null, fieldErrors: [] });
+  const [edit, setEdit] = useState<ClientEditState>(emptyEdit);
+  const [lifecycle, setLifecycle] = useState<ClientLifecycleState>(emptyLifecycle);
   const createPendingRef = useRef(false);
+  const editPendingRef = useRef(false);
+  const lifecyclePendingRef = useRef(false);
+  const editRef = useRef(edit);
+  const lifecycleRef = useRef(lifecycle);
+  const detailRef = useRef(detail);
+  editRef.current = edit;
+  lifecycleRef.current = lifecycle;
+  detailRef.current = detail;
+
+  const updateEdit = useCallback((next: ClientEditState) => { editRef.current = next; setEdit(next); }, []);
+  const updateLifecycle = useCallback((next: ClientLifecycleState) => { lifecycleRef.current = next; setLifecycle(next); }, []);
 
   const queryRef = useRef(query);
   const canViewRef = useRef(capabilities.canView);
@@ -88,8 +161,24 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const listGenerationRef = useRef(0);
   const detailGenerationRef = useRef(0);
   const listDataKeyRef = useRef<string | null>(null);
+  const confirmedClientsRef = useRef<Map<string, ClientDetail>>(new Map());
   const searchTimerRef = useRef<number | null>(null);
   const searchGenerationRef = useRef(0);
+
+  const withConfirmedDetail = useCallback((incoming: ClientDetail): ClientDetail => {
+    const confirmed = confirmedClientsRef.current.get(incoming.id);
+    if (confirmed && confirmed.version > incoming.version) return confirmed;
+    if (confirmed && incoming.version > confirmed.version) confirmedClientsRef.current.set(incoming.id, incoming);
+    return incoming;
+  }, []);
+
+  const withConfirmedSummary = useCallback((incoming: ClientPage["items"][number]): ClientPage["items"][number] => {
+    const confirmed = confirmedClientsRef.current.get(incoming.id);
+    if (!confirmed || confirmed.version <= incoming.version) return incoming;
+    return { ...incoming, tradeName: confirmed.tradeName, legalName: confirmed.legalName, taxId: confirmed.taxId,
+      phone: confirmed.phone, email: confirmed.email, isActive: confirmed.isActive,
+      createdAt: confirmed.createdAt, updatedAt: confirmed.updatedAt, version: confirmed.version };
+  }, []);
 
   canViewRef.current = capabilities.canView;
   canManageRef.current = capabilities.canManage;
@@ -126,11 +215,12 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       setList((current) => ({
         status: "success",
         data: current.data && sameDataKey
-          ? { ...incoming, items: incoming.items.map((item) => {
+          ? { ...incoming, items: incoming.items.map((raw) => {
+            const item = withConfirmedSummary(raw);
             const previous = current.data?.items.find((candidate) => candidate.id === item.id);
             return previous ? reconcileClient(previous, item) : item;
           }) }
-          : incoming,
+          : { ...incoming, items: incoming.items.map(withConfirmedSummary) },
         error: null,
         stale: false,
       }));
@@ -145,7 +235,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     } finally {
       if (listControllerRef.current === controller) listControllerRef.current = null;
     }
-  }, [api, invalidateList]);
+  }, [api, invalidateList, withConfirmedSummary]);
 
   const refreshDetail = useCallback(async (): Promise<void> => {
     invalidateDetail();
@@ -169,11 +259,12 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted
         || generation !== detailGenerationRef.current || queryRef.current.clientId !== clientId
         || queryRef.current.clients.includeInactive !== clients.includeInactive) return;
+      const authoritative = withConfirmedDetail(incoming);
       setDetailSnapshot((current) => ({
         key,
         state: {
           status: "success",
-          data: current.key === key && current.state.data ? reconcileClient(current.state.data, incoming) : incoming,
+          data: current.key === key && current.state.data ? reconcileClient(current.state.data, authoritative) : authoritative,
           error: null,
           stale: false,
         },
@@ -195,7 +286,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     } finally {
       if (detailControllerRef.current === controller) detailControllerRef.current = null;
     }
-  }, [api, invalidateDetail]);
+  }, [api, invalidateDetail, withConfirmedDetail]);
 
   const refresh = useCallback(async (): Promise<void> => {
     await Promise.all([refreshList(), refreshDetail()]);
@@ -228,6 +319,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   }, [commitQuery, refreshDetail, refreshList]);
 
   const clearClientFilters = useCallback(() => {
+    updateEdit(emptyEdit());
+    updateLifecycle(emptyLifecycle());
     searchGenerationRef.current += 1;
     if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
     searchTimerRef.current = null;
@@ -236,7 +329,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     const defaults = parseClientSearch("");
     commitQuery({ ...defaults, clients: defaults.clients }, "replace");
     void refreshList();
-  }, [commitQuery, invalidateDetail, refreshList]);
+  }, [commitQuery, invalidateDetail, refreshList, updateEdit, updateLifecycle]);
 
   const selectClient = useCallback((id: string) => {
     if (!canViewRef.current || !id.trim()) return;
@@ -245,19 +338,23 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       void refreshDetail();
       return;
     }
+    updateEdit(emptyEdit());
+    updateLifecycle(emptyLifecycle());
     const defaults = parseClientSearch("");
     commitQuery({ ...current, clientId: id.trim(), tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
     void refreshDetail();
-  }, [commitQuery, refreshDetail]);
+  }, [commitQuery, refreshDetail, updateEdit, updateLifecycle]);
 
   const closeDetail = useCallback(() => {
     const current = queryRef.current;
     if (!current.clientId) return;
+    updateEdit(emptyEdit());
+    updateLifecycle(emptyLifecycle());
     invalidateDetail();
     const defaults = parseClientSearch("");
     setDetailSnapshot({ key: null, state: idle<ClientDetail>() });
     commitQuery({ ...current, clientId: null, tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
-  }, [commitQuery, invalidateDetail]);
+  }, [commitQuery, invalidateDetail, updateEdit, updateLifecycle]);
 
   const setTab = useCallback((tab: ClientTab) => {
     commitQuery({ ...queryRef.current, tab }, "replace");
@@ -296,6 +393,150 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     }
   }, [api, commitQuery, invalidateDetail, refreshList]);
 
+  const closeClientForms = useCallback(() => {
+    if (editPendingRef.current || lifecyclePendingRef.current) return;
+    updateEdit(emptyEdit());
+    updateLifecycle(emptyLifecycle());
+  }, [updateEdit, updateLifecycle]);
+
+  const openEdit = useCallback(() => {
+    const client = detailRef.current.data;
+    if (!canViewRef.current || !canManageRef.current || !client || client.id !== queryRef.current.clientId || !client.isActive || editPendingRef.current || lifecyclePendingRef.current) return;
+    updateLifecycle(emptyLifecycle());
+    updateEdit({ ...emptyEdit(), open: true, draft: { clientId: client.id, baseVersion: client.version, values: clientValues(client), conflict: null } });
+  }, [updateEdit, updateLifecycle]);
+
+  const changeClientEdit = useCallback((patch: Omit<UpdateClientInput, "version">) => {
+    const current = editRef.current;
+    if (!current.open || !current.draft || editPendingRef.current) return;
+    updateEdit({ ...current, error: null, fieldErrors: [], draft: { ...current.draft, values: { ...current.draft.values, ...patch } } });
+  }, [updateEdit]);
+
+  const reconcileMutation = useCallback((incoming: ClientDetail) => {
+    if (incoming.id !== queryRef.current.clientId) return;
+    const confirmed = confirmedClientsRef.current.get(incoming.id);
+    if (!confirmed || incoming.version > confirmed.version) confirmedClientsRef.current.set(incoming.id, incoming);
+    setDetailSnapshot((current) => current.state.data?.id === incoming.id
+      ? { ...current, state: { status: "success", data: reconcileClient(current.state.data, incoming), error: null, stale: false } }
+      : current);
+    setList((current) => current.data ? { ...current, data: { ...current.data, items: current.data.items.map((item) => item.id === incoming.id ? reconcileClient(item, { ...incoming, activeBranchCount: item.activeBranchCount, activeContactCount: item.activeContactCount }) : item) } } : current);
+  }, []);
+
+  const handleMissingClient = useCallback(() => {
+    closeDetail();
+    void refreshList();
+  }, [closeDetail, refreshList]);
+
+  const submitClientEdit = useCallback(async (values: Omit<UpdateClientInput, "version">): Promise<void> => {
+    const current = editRef.current;
+    if (!canViewRef.current || !canManageRef.current || !current.open || !current.draft || editPendingRef.current || current.draft.clientId !== queryRef.current.clientId) return;
+    editPendingRef.current = true;
+    const draft = { ...current.draft, values: { ...current.draft.values, ...values } };
+    updateEdit({ ...current, pending: true, error: null, fieldErrors: [], draft });
+    try {
+      const updated = await api.updateClient(draft.clientId, { version: draft.baseVersion, ...values });
+      if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      reconcileMutation(updated);
+      updateEdit(emptyEdit());
+      void refreshList();
+      void refreshDetail();
+    } catch (error: unknown) {
+      if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
+      if (error instanceof ApiClientError && (error.status === 401 || error.status === 403)) { updateEdit(emptyEdit()); return; }
+      const fieldErrors = error instanceof ApiClientError ? error.fieldErrors : [];
+      updateEdit({ ...editRef.current, pending: false, error: clientMutationError(error, "No fue posible actualizar el cliente."), fieldErrors });
+    } finally { editPendingRef.current = false; }
+  }, [api, handleMissingClient, reconcileMutation, refreshDetail, refreshList, updateEdit]);
+
+  const openClientLifecycle = useCallback((action: "deactivate" | "reactivate") => {
+    const client = detailRef.current.data;
+    if (!canViewRef.current || !canManageRef.current || !client || client.id !== queryRef.current.clientId || client.isActive !== (action === "deactivate") || editPendingRef.current || lifecyclePendingRef.current) return;
+    updateEdit(emptyEdit());
+    updateLifecycle({ ...emptyLifecycle(), open: true, action, clientId: client.id, baseVersion: client.version });
+  }, [updateEdit, updateLifecycle]);
+
+  const changeClientLifecycleReason = useCallback((reason: string) => {
+    const current = lifecycleRef.current;
+    if (!current.open || lifecyclePendingRef.current) return;
+    updateLifecycle({ ...current, reason, error: null });
+  }, [updateLifecycle]);
+
+  const submitClientLifecycle = useCallback(async (reason: string): Promise<void> => {
+    const current = lifecycleRef.current;
+    if (!canViewRef.current || !canManageRef.current || !current.open || lifecyclePendingRef.current || current.clientId !== queryRef.current.clientId) return;
+    const normalized = reason.trim();
+    if (normalized.length < 10 || normalized.length > 500) {
+      updateLifecycle({ ...current, reason, error: "El motivo debe tener entre 10 y 500 caracteres." });
+      return;
+    }
+    lifecyclePendingRef.current = true;
+    updateLifecycle({ ...current, reason, pending: true, error: null });
+    try {
+      const updated = await (current.action === "deactivate" ? api.deactivateClient : api.reactivateClient)(current.clientId, { version: current.baseVersion, reason: normalized });
+      if (!mountedRef.current || queryRef.current.clientId !== current.clientId) return;
+      reconcileMutation(updated);
+      updateLifecycle(emptyLifecycle());
+      if (!updated.isActive && !queryRef.current.clients.includeInactive) {
+        const query = queryRef.current;
+        commitQuery({ ...query, clients: { ...query.clients, includeInactive: true } }, "replace");
+      }
+      void refreshList();
+      void refreshDetail();
+    } catch (error: unknown) {
+      if (!mountedRef.current || queryRef.current.clientId !== current.clientId) return;
+      if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
+      if (error instanceof ApiClientError && (error.status === 401 || error.status === 403)) { updateLifecycle(emptyLifecycle()); return; }
+      updateLifecycle({ ...lifecycleRef.current, pending: false, error: clientMutationError(error, "No fue posible cambiar el estado del cliente.") });
+    } finally { lifecyclePendingRef.current = false; }
+  }, [api, commitQuery, handleMissingClient, reconcileMutation, refreshDetail, refreshList, updateLifecycle]);
+
+  const reviewClientConflict = useCallback(async (): Promise<void> => {
+    const editNow = editRef.current;
+    const lifeNow = lifecycleRef.current;
+    const clientId = editNow.open ? editNow.draft?.clientId : lifeNow.open ? lifeNow.clientId : null;
+    if (!clientId || !canViewRef.current || clientId !== queryRef.current.clientId || editNow.reviewPending || lifeNow.reviewPending) return;
+    if (editNow.open) updateEdit({ ...editNow, reviewPending: true, reviewError: null });
+    else updateLifecycle({ ...lifeNow, reviewPending: true, reviewError: null });
+    try {
+      const current = await api.getClient(clientId, true);
+      if (!mountedRef.current || queryRef.current.clientId !== clientId) return;
+      if (editRef.current.open && editRef.current.draft?.clientId === clientId) {
+        const state = editRef.current;
+        const draft = state.draft;
+        if (!draft) return;
+        updateEdit({ ...state, reviewPending: false, draft: { ...draft, conflict: current.version > draft.baseVersion ? current : null }, reviewError: current.version > draft.baseVersion ? null : "No hay una versión más reciente disponible." });
+      } else if (lifecycleRef.current.open && lifecycleRef.current.clientId === clientId) {
+        const state = lifecycleRef.current;
+        updateLifecycle({ ...state, reviewPending: false, conflict: current.version > state.baseVersion ? current : null, reviewError: current.version > state.baseVersion ? null : "No hay una versión más reciente disponible." });
+      }
+    } catch (error: unknown) {
+      if (!mountedRef.current || queryRef.current.clientId !== clientId) return;
+      if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
+      if (editRef.current.open) updateEdit({ ...editRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+      else if (lifecycleRef.current.open) updateLifecycle({ ...lifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+    }
+  }, [api, handleMissingClient, updateEdit, updateLifecycle]);
+
+  const adoptClientConflict = useCallback(() => {
+    const editNow = editRef.current;
+    if (editNow.open && editNow.draft?.conflict && !editNow.pending && !editNow.reviewPending) {
+      updateEdit({ ...editNow, error: null, reviewError: null, draft: { ...editNow.draft, baseVersion: editNow.draft.conflict.version, conflict: null } });
+      return;
+    }
+    const lifeNow = lifecycleRef.current;
+    if (lifeNow.open && lifeNow.conflict && !lifeNow.pending && !lifeNow.reviewPending) {
+      updateLifecycle({ ...lifeNow, baseVersion: lifeNow.conflict.version, conflict: null, error: null, reviewError: null });
+    }
+  }, [updateEdit, updateLifecycle]);
+
+  useEffect(() => {
+    if (!capabilities.canManage || !capabilities.canView) {
+      updateEdit(emptyEdit());
+      updateLifecycle(emptyLifecycle());
+    }
+  }, [capabilities.canManage, capabilities.canView, updateEdit, updateLifecycle]);
+
   useEffect(() => {
     mountedRef.current = true;
     const normalizedUrl = urlWith(serializeClientSearch(window.location.search, queryRef.current));
@@ -319,6 +560,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
       searchTimerRef.current = null;
       const restored = parseClientSearch(window.location.search);
+      if (restored.clientId !== queryRef.current.clientId) {
+        updateEdit(emptyEdit());
+        updateLifecycle(emptyLifecycle());
+      }
       queryRef.current = restored;
       setQuery(restored);
       void refreshList();
@@ -326,7 +571,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [refreshDetail, refreshList]);
+  }, [refreshDetail, refreshList, updateEdit, updateLifecycle]);
 
   useEffect(() => {
     const normalized = search.trim();
@@ -356,5 +601,5 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     invalidateDetail();
   }, [invalidateDetail, invalidateList]);
 
-  return { query, capabilities, list, detail, create, openCreate, closeForm, submitCreate, setClientFilters, clearClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refresh };
+  return { query, capabilities, list, detail, create, edit, lifecycle, openCreate, closeForm: () => { closeForm(); closeClientForms(); }, submitCreate, openEdit, changeClientEdit, submitClientEdit, openClientLifecycle, changeClientLifecycleReason, submitClientLifecycle, reviewClientConflict, adoptClientConflict, setClientFilters, clearClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refresh };
 }
