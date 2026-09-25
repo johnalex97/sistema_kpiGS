@@ -306,6 +306,39 @@ describe("edición y ciclo de vida del cliente", () => {
     expect(result.current.edit.draft?.values.tradeName).toBe("Segundo borrador");
   });
 
+  it("conserva conflicto de edición tras 409 seguido de 500 sin adoptar", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const updateClient = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "interno"))
+      .mockRejectedValueOnce(new ApiClientError(500, "SERVER_ERROR", "interno"));
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValue({ ...detailA, version: 9, tradeName: "Servidor" }), updateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    await act(async () => result.current.reviewClientConflict());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    expect(updateClient).toHaveBeenNthCalledWith(2, clientA.id, { version: 3, tradeName: "Borrador" });
+    expect(result.current.edit).toMatchObject({ open: true, versionConflict: true, draft: { baseVersion: 3, values: { tradeName: "Borrador" }, conflict: { version: 9, tradeName: "Servidor" } } });
+    expect(result.current.edit.error).toMatch(/No fue posible/);
+  });
+
+  it("actualiza el recurso vigente de edición ante un segundo 409", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith({
+      getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValueOnce({ ...detailA, version: 9 }).mockResolvedValue({ ...detailA, version: 11 }),
+      updateClient: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")),
+    });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    await act(async () => result.current.reviewClientConflict());
+    expect(result.current.edit.draft?.conflict?.version).toBe(9);
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    expect(result.current.edit).toMatchObject({ versionConflict: true, draft: { baseVersion: 3, values: { tradeName: "Borrador" }, conflict: { version: 11 } } });
+    expect(api.updateClient).toHaveBeenCalledTimes(2);
+  });
+
   it("mantiene revisión de lifecycle tras ajustar motivo después de 409", async () => {
     window.history.replaceState({}, "", "/clientes?clientId=client-a");
     const api = apiWith({ deactivateClient: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")) });
@@ -316,6 +349,39 @@ describe("edición y ciclo de vida del cliente", () => {
     act(() => result.current.changeClientLifecycleReason("Motivo corregido"));
     expect(result.current.lifecycle.versionConflict).toBe(true);
     expect(result.current.lifecycle.error).toBeNull();
+  });
+
+  it("conserva conflicto de lifecycle tras 409 seguido de 500 sin adoptar", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const deactivateClient = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "interno"))
+      .mockRejectedValueOnce(new ApiClientError(500, "SERVER_ERROR", "interno"));
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValue({ ...detailA, version: 9, tradeName: "Servidor" }), deactivateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
+    await act(async () => result.current.reviewClientConflict());
+    await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
+    expect(deactivateClient).toHaveBeenNthCalledWith(2, clientA.id, { version: 3, reason: "Cierre administrativo" });
+    expect(result.current.lifecycle).toMatchObject({ open: true, versionConflict: true, baseVersion: 3, reason: "Cierre administrativo", conflict: { version: 9, tradeName: "Servidor" } });
+    expect(result.current.lifecycle.error).toMatch(/No fue posible/);
+  });
+
+  it("actualiza el recurso vigente de lifecycle ante un segundo 409", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const api = apiWith({
+      getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValueOnce({ ...detailA, version: 9 }).mockResolvedValue({ ...detailA, version: 11 }),
+      deactivateClient: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")),
+    });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
+    await act(async () => result.current.reviewClientConflict());
+    expect(result.current.lifecycle.conflict?.version).toBe(9);
+    await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
+    expect(result.current.lifecycle).toMatchObject({ versionConflict: true, baseVersion: 3, reason: "Cierre administrativo", conflict: { version: 11 } });
+    expect(api.deactivateClient).toHaveBeenCalledTimes(2);
   });
 
   it("expone validación API del motivo sin cerrar lifecycle", async () => {

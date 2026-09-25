@@ -467,10 +467,25 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
       if (error instanceof ApiClientError && (error.status === 401 || error.status === 403)) { updateEdit(emptyEdit()); return; }
       const fieldErrors = error instanceof ApiClientError ? error.fieldErrors : [];
+      const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
+      const reviewed = editRef.current.draft?.conflict;
       updateEdit({ ...editRef.current, pending: false, error: clientMutationError(error, "No fue posible actualizar el cliente."), fieldErrors,
-        versionConflict: error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT" });
+        versionConflict: editRef.current.versionConflict || versionConflict });
+      if (versionConflict && reviewed) {
+        try {
+          const latest = withConfirmedDetail(await api.getClient(draft.clientId, true));
+          const state = editRef.current;
+          if (mountedRef.current && state.open && state.draft?.clientId === draft.clientId && state.draft.baseVersion === draft.baseVersion) {
+            updateEdit({ ...state, reviewError: null, draft: { ...state.draft, conflict: latest.version > draft.baseVersion ? latest : reviewed } });
+          }
+        } catch {
+          if (mountedRef.current && editRef.current.open && editRef.current.draft?.clientId === draft.clientId) {
+            updateEdit({ ...editRef.current, reviewError: "No fue posible actualizar la versión vigente. Reintenta la consulta." });
+          }
+        }
+      }
     } finally { editPendingRef.current = false; }
-  }, [api, handleMissingClient, reconcileMutation, refreshDetail, refreshList, updateEdit]);
+  }, [api, handleMissingClient, reconcileMutation, refreshDetail, refreshList, updateEdit, withConfirmedDetail]);
 
   const openClientLifecycle = useCallback((action: "deactivate" | "reactivate") => {
     const client = detailRef.current.data;
@@ -518,11 +533,26 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (!mountedRef.current || queryRef.current.clientId !== current.clientId) return;
       if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
       if (error instanceof ApiClientError && (error.status === 401 || error.status === 403)) { updateLifecycle(emptyLifecycle()); return; }
+      const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
+      const reviewed = lifecycleRef.current.conflict;
       updateLifecycle({ ...lifecycleRef.current, pending: false, error: clientMutationError(error, "No fue posible cambiar el estado del cliente."),
         fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [],
-        versionConflict: error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT" });
+        versionConflict: lifecycleRef.current.versionConflict || versionConflict });
+      if (versionConflict && reviewed) {
+        try {
+          const latest = withConfirmedDetail(await api.getClient(current.clientId, true));
+          const state = lifecycleRef.current;
+          if (mountedRef.current && state.open && state.clientId === current.clientId && state.baseVersion === current.baseVersion) {
+            updateLifecycle({ ...state, reviewError: null, conflict: latest.version > current.baseVersion ? latest : reviewed });
+          }
+        } catch {
+          if (mountedRef.current && lifecycleRef.current.open && lifecycleRef.current.clientId === current.clientId) {
+            updateLifecycle({ ...lifecycleRef.current, reviewError: "No fue posible actualizar la versión vigente. Reintenta la consulta." });
+          }
+        }
+      }
     } finally { lifecyclePendingRef.current = false; }
-  }, [api, commitQuery, handleMissingClient, reconcileMutation, refreshDetail, refreshList, updateLifecycle]);
+  }, [api, commitQuery, handleMissingClient, reconcileMutation, refreshDetail, refreshList, updateLifecycle, withConfirmedDetail]);
 
   const reviewClientConflict = useCallback(async (): Promise<void> => {
     const editNow = editRef.current;
