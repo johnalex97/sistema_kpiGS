@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientsApi } from "../api/clients";
 import type { ApiFieldError } from "../api/http";
-import type { ClientDetail, ClientListFilters, ClientPage, ClientSummary, ClientTab, CreateClientInput } from "../models/client";
+import type { ClientDetail, ClientListFilters, ClientPage, ClientTab, CreateClientInput } from "../models/client";
 import {
   deriveClientCapabilities,
   parseClientSearch,
@@ -280,26 +280,12 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     try {
       const created = await api.createClient(input);
       if (!mountedRef.current) return;
-      invalidateList();
       invalidateDetail();
-      const summary: ClientSummary = {
-        id: created.id, code: created.code, tradeName: created.tradeName, legalName: created.legalName,
-        taxId: created.taxId, phone: created.phone, email: created.email, isActive: created.isActive,
-        createdAt: created.createdAt, updatedAt: created.updatedAt, version: created.version,
-        activeBranchCount: created.branches.filter((branch) => branch.isEffectivelyActive).length,
-        activeContactCount: created.contacts.filter((contact) => contact.isEffectivelyActive).length,
-      };
-      setList((current) => current.data ? {
-        ...current, status: "success", error: null, stale: false,
-        data: { ...current.data,
-          items: [summary, ...current.data.items.filter((item) => item.id !== created.id)].slice(0, current.data.pagination.pageSize),
-          pagination: { ...current.data.pagination, totalItems: current.data.pagination.totalItems + (current.data.items.some((item) => item.id === created.id) ? 0 : 1) },
-        },
-      } : current);
       const defaults = parseClientSearch("");
       commitQuery({ ...queryRef.current, clientId: created.id, tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
       setDetailSnapshot({ key: `${created.id}\u0000${queryRef.current.clients.includeInactive}`, state: { status: "success", data: created, error: null, stale: false } });
       setCreate({ open: false, pending: false, error: null, fieldErrors: [] });
+      void refreshList();
     } catch (error: unknown) {
       if (!mountedRef.current) return;
       const fieldErrors = error && typeof error === "object" && "fieldErrors" in error && Array.isArray(error.fieldErrors)
@@ -308,7 +294,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     } finally {
       createPendingRef.current = false;
     }
-  }, [api, commitQuery, invalidateDetail, invalidateList]);
+  }, [api, commitQuery, invalidateDetail, refreshList]);
 
   useEffect(() => {
     mountedRef.current = true;

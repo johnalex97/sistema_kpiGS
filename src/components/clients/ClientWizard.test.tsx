@@ -92,6 +92,52 @@ describe("ClientWizard", () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ primaryContact: undefined, mainBranch: expect.objectContaining({ lat: null, long: null, country: "HN" }) }));
   });
 
+  it("permite país de dos letras distinto de HN, lo normaliza y rechaza códigos inválidos", async () => {
+    const { user, onSubmit } = setup();
+    await reachBranch(user);
+    const country = screen.getByRole("textbox", { name: /País/ });
+    expect(country).toHaveValue("HN");
+    await user.type(screen.getByRole("textbox", { name: /Nombre de la sucursal/ }), "Principal");
+    await user.type(screen.getByRole("textbox", { name: /Dirección/ }), "Palmira");
+    await user.clear(country);
+    await user.type(country, "H1");
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/País.*dos letras/);
+    await user.clear(country);
+    await user.type(country, "us");
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await user.click(screen.getByRole("button", { name: "Crear cliente" }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ mainBranch: expect.objectContaining({ country: "US" }) }));
+  });
+
+  it("marca obligatorios y asocia cada error al control correspondiente", async () => {
+    const { user } = setup();
+    const tradeName = screen.getByRole("textbox", { name: /Nombre comercial/ });
+    expect(tradeName).toBeRequired();
+    expect(tradeName).toHaveAttribute("aria-required", "true");
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    expect(tradeName.getAttribute("aria-describedby")).toBe(screen.getByText("Nombre comercial es obligatorio.").id);
+    await reachBranch(user);
+    for (const name of [/Nombre de la sucursal/, /Dirección/, /País/]) {
+      const field = screen.getByRole("textbox", { name });
+      expect(field).toBeRequired();
+      expect(field).toHaveAttribute("aria-required", "true");
+    }
+    await user.type(screen.getByRole("textbox", { name: /Nombre de la sucursal/ }), "Principal");
+    await user.type(screen.getByRole("textbox", { name: /Dirección/ }), "Palmira");
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await user.click(screen.getByRole("checkbox", { name: /Agregar contacto principal/ }));
+    const fullName = screen.getByRole("textbox", { name: /Nombre del contacto/ });
+    const scope = screen.getByRole("combobox", { name: /Ámbito/ });
+    expect(fullName).toBeRequired();
+    expect(fullName).toHaveAttribute("aria-required", "true");
+    expect(scope).toBeRequired();
+    expect(scope).toHaveAttribute("aria-required", "true");
+    await user.click(screen.getByRole("button", { name: "Crear cliente" }));
+    expect(fullName.getAttribute("aria-describedby")).toBe(screen.getByText("Nombre del contacto es obligatorio.").id);
+    expect(scope.getAttribute("aria-describedby")).toBe(screen.getByText("El ámbito es obligatorio.").id);
+  });
+
   it("exige datos y ámbito del contacto activado y admite ámbito general", async () => {
     const { user, onSubmit } = setup();
     await reachContact(user);

@@ -12,13 +12,13 @@ interface ClientWizardProps {
 
 interface Draft {
   tradeName: string; legalName: string; taxId: string; phone: string; email: string; notes: string;
-  branchName: string; address: string; city: string; region: string; lat: string; long: string; locationReference: string;
+  branchName: string; address: string; city: string; region: string; country: string; lat: string; long: string; locationReference: string;
   withContact: boolean; fullName: string; scope: InitialContactScope | ""; position: string; contactPhone: string; contactEmail: string;
 }
 
 const initialDraft: Draft = {
   tradeName: "", legalName: "", taxId: "", phone: "", email: "", notes: "",
-  branchName: "", address: "", city: "", region: "", lat: "", long: "", locationReference: "",
+  branchName: "", address: "", city: "", region: "", country: "HN", lat: "", long: "", locationReference: "",
   withContact: false, fullName: "", scope: "", position: "", contactPhone: "", contactEmail: "",
 };
 type Field = keyof Draft;
@@ -47,6 +47,7 @@ function validate(draft: Draft, step: number): Errors {
   if (step === 1) {
     required("branchName", "Nombre de la sucursal", 160); required("address", "Dirección", 300);
     length("city", "Ciudad", 100); length("region", "Región", 100); length("locationReference", "Referencia", 300);
+    if (!/^[A-Za-z]{2}$/.test(draft.country.trim())) errors.country = "País debe ser un código de dos letras.";
     const coordinate = (field: "lat" | "long", label: string, limit: number) => {
       const value = draft[field].trim();
       if (value && (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) || !Number.isFinite(Number(value)) || Math.abs(Number(value)) > limit)) {
@@ -68,7 +69,7 @@ function validate(draft: Draft, step: number): Errors {
 
 const serverFields: Record<string, Field> = {
   tradeName: "tradeName", legalName: "legalName", taxId: "taxId", phone: "phone", email: "email", notes: "notes",
-  "mainBranch.name": "branchName", "mainBranch.address": "address", "mainBranch.city": "city", "mainBranch.region": "region",
+  "mainBranch.name": "branchName", "mainBranch.address": "address", "mainBranch.city": "city", "mainBranch.region": "region", "mainBranch.country": "country",
   "mainBranch.lat": "lat", "mainBranch.long": "long", "mainBranch.locationReference": "locationReference",
   "primaryContact.fullName": "fullName", "primaryContact.scope": "scope", "primaryContact.position": "position",
   "primaryContact.phone": "contactPhone", "primaryContact.email": "contactEmail",
@@ -116,25 +117,25 @@ export function ClientWizard({ pending, error, fieldErrors, onSubmit, onClose }:
       tradeName: draft.tradeName.trim(), legalName: optional(draft.legalName), taxId: optional(draft.taxId),
       phone: optional(draft.phone), email: optional(draft.email), notes: optional(draft.notes),
       mainBranch: { name: draft.branchName.trim(), address: draft.address.trim(), city: optional(draft.city),
-        region: optional(draft.region), country: "HN", lat: optional(draft.lat), long: optional(draft.long),
+        region: optional(draft.region), country: draft.country.trim().toUpperCase(), lat: optional(draft.lat), long: optional(draft.long),
         locationReference: optional(draft.locationReference) },
       primaryContact: draft.withContact ? { scope: draft.scope as InitialContactScope, fullName: draft.fullName.trim(),
         position: optional(draft.position), phone: optional(draft.contactPhone), email: optional(draft.contactEmail) } : undefined,
     }).finally(() => { submitGuard.current = false; });
   };
-  const input = (field: Field, label: string, maximum: number, type = "text") => <label className="clients-wizard__field">{label}
-    <input type={type} aria-label={label} maxLength={maximum + 1} value={String(draft[field])} onChange={(event) => set(field, event.target.value)} aria-invalid={Boolean(errors[field])} disabled={pending} />
-    {errors[field] && <span role="alert" className="clients-wizard__error">{errors[field]}</span>}
+  const input = (field: Field, label: string, maximum: number, type = "text", isRequired = false) => <label className="clients-wizard__field">{label}
+    <input type={type} aria-label={label} maxLength={maximum + 1} value={String(draft[field])} onChange={(event) => set(field, event.target.value)} required={isRequired} aria-required={isRequired || undefined} aria-invalid={Boolean(errors[field])} aria-describedby={errors[field] ? `client-create-${field}-error` : undefined} disabled={pending} />
+    {errors[field] && <span id={`client-create-${field}-error`} role="alert" className="clients-wizard__error">{errors[field]}</span>}
   </label>;
   const titles = ["Empresa", "Sucursal principal", "Contacto principal"];
   return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label="Nuevo cliente">
     <header className="clients-wizard__head"><p className="eyebrow">Creación de cliente</p><h2>{titles[step]}</h2><p>Los datos se guardarán juntos al crear el cliente.</p></header>
     <ol className="clients-wizard__steps" aria-label="Pasos de creación">{titles.map((title, index) => <li key={title} aria-current={step === index ? "step" : undefined}><span>{index + 1}</span>{title}</li>)}</ol>
     <form className="clients-wizard__form" aria-label={`Paso ${step + 1}: ${titles[step]}`} onSubmit={(event) => { event.preventDefault(); if (step < 2) next(); else submit(); }} noValidate>
-      {step === 0 && <div className="clients-wizard__grid">{input("tradeName", "Nombre comercial *", 180)}{input("legalName", "Razón social", 200)}{input("taxId", "RTN", 50)}{input("phone", "Teléfono", 30)}{input("email", "Correo institucional", 254, "email")}{input("notes", "Notas", 10000)}</div>}
-      {step === 1 && <div className="clients-wizard__grid">{input("branchName", "Nombre de la sucursal *", 160)}{input("address", "Dirección *", 300)}{input("city", "Ciudad", 100)}{input("region", "Región", 100)}{input("lat", "Latitud", 30)}{input("long", "Longitud", 30)}{input("locationReference", "Referencia de ubicación", 300)}</div>}
+      {step === 0 && <div className="clients-wizard__grid">{input("tradeName", "Nombre comercial *", 180, "text", true)}{input("legalName", "Razón social", 200)}{input("taxId", "RTN", 50)}{input("phone", "Teléfono", 30)}{input("email", "Correo institucional", 254, "email")}{input("notes", "Notas", 10000)}</div>}
+      {step === 1 && <div className="clients-wizard__grid">{input("branchName", "Nombre de la sucursal *", 160, "text", true)}{input("address", "Dirección *", 300, "text", true)}{input("city", "Ciudad", 100)}{input("region", "Región", 100)}{input("country", "País *", 2, "text", true)}{input("lat", "Latitud", 30)}{input("long", "Longitud", 30)}{input("locationReference", "Referencia de ubicación", 300)}</div>}
       {step === 2 && <div className="clients-wizard__grid"><label className="clients-wizard__check"><input type="checkbox" checked={draft.withContact} disabled={pending} onChange={(event) => set("withContact", event.target.checked)} />Agregar contacto principal</label>
-        {draft.withContact && <>{input("fullName", "Nombre del contacto *", 160)}<label className="clients-wizard__field">Ámbito *<select aria-label="Ámbito" value={draft.scope} disabled={pending} aria-invalid={Boolean(errors.scope)} onChange={(event) => set("scope", event.target.value)}><option value="">Selecciona un ámbito</option><option value="CLIENT">Cliente general</option><option value="MAIN_BRANCH">Sucursal principal</option></select>{errors.scope && <span role="alert" className="clients-wizard__error">{errors.scope}</span>}</label>{input("position", "Cargo", 120)}{input("contactPhone", "Teléfono del contacto", 30)}{input("contactEmail", "Correo del contacto", 254, "email")}</>}
+        {draft.withContact && <>{input("fullName", "Nombre del contacto *", 160, "text", true)}<label className="clients-wizard__field">Ámbito *<select aria-label="Ámbito" value={draft.scope} required aria-required="true" disabled={pending} aria-invalid={Boolean(errors.scope)} aria-describedby={errors.scope ? "client-create-scope-error" : undefined} onChange={(event) => set("scope", event.target.value)}><option value="">Selecciona un ámbito</option><option value="CLIENT">Cliente general</option><option value="MAIN_BRANCH">Sucursal principal</option></select>{errors.scope && <span id="client-create-scope-error" role="alert" className="clients-wizard__error">{errors.scope}</span>}</label>{input("position", "Cargo", 120)}{input("contactPhone", "Teléfono del contacto", 30)}{input("contactEmail", "Correo del contacto", 254, "email")}</>}
       </div>}
       {error && <p className="clients-wizard__server-error" role="alert">{error}</p>}
       <footer className="clients-wizard__actions"><button type="button" className="button button--ghost" disabled={pending} onClick={onClose}>Cancelar</button>{step > 0 && <button type="button" className="button button--ghost" disabled={pending} onClick={() => { setErrors({}); setStep(step - 1); }}>Atrás</button>}<button type="submit" className="button button--primary" disabled={pending}>{step === 2 ? pending ? "Creando cliente…" : "Crear cliente" : "Siguiente"}</button></footer>

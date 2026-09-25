@@ -42,9 +42,10 @@ afterEach(() => vi.useRealTimers());
 describe("useClientsWorkspace", () => {
   const input: CreateClientInput = { tradeName: "Nueva", mainBranch: { name: "Principal", address: "Palmira", country: "HN" } };
 
-  it("abre sólo con gestión y una creación exitosa reconcilia, selecciona y cierra con la versión exacta", async () => {
+  it("abre sólo con gestión y una creación exitosa refresca lista, selecciona y cierra con versión confirmada", async () => {
     const created: ClientDetail = { ...detailB, id: "created", tradeName: "Nueva", version: 47, code: "CLI-047" };
-    const api = apiWith({ createClient: vi.fn(async () => created) });
+    const serverList = page([clientA]);
+    const api = apiWith({ createClient: vi.fn(async () => created), listClients: vi.fn().mockResolvedValueOnce(page([clientA, clientB])).mockResolvedValueOnce(serverList) });
     const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
     await waitFor(() => expect(result.current.list.status).toBe("success"));
     act(() => result.current.openCreate!());
@@ -55,9 +56,56 @@ describe("useClientsWorkspace", () => {
     expect(result.current.create?.open).toBe(false);
     expect(result.current.query.clientId).toBe("created");
     expect(result.current.detail.data?.version).toBe(47);
-    expect(result.current.list.data?.items[0]).toMatchObject({ id: "created", version: 47 });
+    await waitFor(() => expect(api.listClients).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    expect(result.current.list.data).toEqual(serverList);
     expect(api.getClient).not.toHaveBeenCalled();
-    expect(api.listClients).toHaveBeenCalledTimes(1);
+  });
+
+  it("delega filtros inactivos y paginación al GET tras crear, sin insertar una fila ficticia", async () => {
+    window.history.replaceState({}, "", "/clientes?isActive=false&includeInactive=true&page=3&pageSize=5");
+    const initial: ClientPage = { items: [clientA], pagination: { page: 3, pageSize: 5, totalItems: 11, totalPages: 3 } };
+    const server: ClientPage = { items: [], pagination: { page: 3, pageSize: 5, totalItems: 10, totalPages: 2 } };
+    const api = apiWith({ listClients: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(server) });
+    const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.openCreate!());
+    await act(async () => result.current.submitCreate!(input));
+    await waitFor(() => expect(api.listClients).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.list.data).toEqual(server));
+    expect(api.listClients).toHaveBeenLastCalledWith({ isActive: false, includeInactive: true, page: 3, pageSize: 5 }, expect.any(AbortSignal));
+    expect(result.current.detail.data?.version).toBe(detailB.version);
+    expect(api.createClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("al resolverse el POST antes del GET inicial inicia un GET nuevo y no queda cargando", async () => {
+    const initial = deferred<ClientPage>();
+    const latest = deferred<ClientPage>();
+    const api = apiWith({ listClients: vi.fn().mockImplementationOnce(() => initial.promise).mockImplementationOnce(() => latest.promise) });
+    const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
+    const firstSignal = vi.mocked(api.listClients).mock.calls[0]?.[1];
+    act(() => result.current.openCreate!());
+    await act(async () => result.current.submitCreate!(input));
+    expect(firstSignal?.aborted).toBe(true);
+    expect(api.listClients).toHaveBeenCalledTimes(2);
+    await act(async () => latest.resolve(page([clientB])));
+    expect(result.current.list).toMatchObject({ status: "success", data: page([clientB]), stale: false });
+    await act(async () => initial.resolve(page([clientA])));
+    expect(result.current.list.data).toEqual(page([clientB]));
+  });
+
+  it("si falla el GET posterior conserva listado anterior como stale y deja reintentar", async () => {
+    const api = apiWith({ listClients: vi.fn().mockResolvedValueOnce(page([clientA])).mockRejectedValueOnce(new Error("Sin red")).mockResolvedValueOnce(page([clientB])) });
+    const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.openCreate!());
+    await act(async () => result.current.submitCreate!(input));
+    await waitFor(() => expect(result.current.list.status).toBe("error"));
+    expect(result.current.list).toMatchObject({ data: page([clientA]), stale: true, error: "Sin red" });
+    expect(result.current.detail.data?.id).toBe(detailB.id);
+    await act(async () => result.current.refreshList());
+    expect(result.current.list.data).toEqual(page([clientB]));
+    expect(api.createClient).toHaveBeenCalledTimes(1);
   });
 
   it("bloquea doble submit y cierre mientras la creación está pendiente", async () => {
