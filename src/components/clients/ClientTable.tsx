@@ -39,7 +39,8 @@ export function ClientTable({ clients, selectedId, onSelect }: ClientTableProps)
         <div className="clients-card__top"><span className="clients-code">{client.code}</span><ClientStatus active={client.isActive} /></div>
         <ClientIdentity client={client} />
         <div className="clients-card__contact"><small>Contacto institucional</small><span>{client.phone?.trim() || client.email?.trim() || "Sin teléfono ni correo"}</span></div>
-        <div className="clients-card__counts"><span>{client.activeBranchCount} sucursales</span><span>{client.activeContactCount} contactos</span></div>
+        <div className="clients-card__counts"><span>{client.activeBranchCount} {client.isActive ? "sucursales" : "sucursales con estado activo"}</span><span>{client.activeContactCount} {client.isActive ? "contactos" : "contactos con estado activo"}</span></div>
+        {!client.isActive && <p className="clients-card__inactive-note">Estos conteos no representan recursos disponibles mientras el cliente esté inactivo.</p>}
         <button type="button" className="clients-card__open" aria-label={`Abrir ficha de ${client.tradeName}`} onClick={() => onSelect(client.id)}>Abrir ficha <ArrowUpRight size={16} aria-hidden="true" /></button>
       </article>)}
     </div>

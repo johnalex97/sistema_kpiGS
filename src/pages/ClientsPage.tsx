@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCw, Search, UserRoundPlus } from "lucide-react";
 import { createClientsApi, type ClientsApi } from "../api/clients";
 import { useAuth } from "../auth/useAuth";
 import { ClientDetail } from "../components/clients/ClientDetail";
+import { ClientFilters } from "../components/clients/ClientFilters";
 import { ClientTable } from "../components/clients/ClientTable";
 import "../components/clients/clients.css";
 import { useClientsWorkspace, type ClientsWorkspace } from "../hooks/useClientsWorkspace";
@@ -49,21 +50,20 @@ function ClientsWorkspaceView({ workspace, onClearSearch }: { workspace: Clients
       <div className="clients-toolbar__actions"><button className="button button--ghost" type="button" onClick={() => void workspace.refreshList()}><RefreshCw size={16} aria-hidden="true" />Actualizar</button>
         {canManage && <button className="button button--primary" type="button"><UserRoundPlus size={16} aria-hidden="true" />Nuevo cliente</button>}</div>
     </header>
-    <div className="clients-filters">
-      <label><span>Estado</span><select aria-label="Estado del cliente" value={query.clients.isActive === undefined ? "" : String(query.clients.isActive)} onChange={(event) => workspace.setClientFilters({ isActive: event.target.value === "" ? undefined : event.target.value === "true" })}><option value="">Todos</option><option value="true">Activos</option><option value="false">Inactivos</option></select></label>
-      <label className="clients-filters__inactive"><input type="checkbox" checked={query.clients.includeInactive} onChange={(event) => workspace.setClientFilters({ includeInactive: event.target.checked })} /><span>Incluir inactivos</span></label>
-    </div>
+    <ClientFilters filters={query.clients} onChange={workspace.setClientFilters} onClear={() => { onClearSearch?.(); workspace.clearClientFilters(); }} />
     <div className="clients-layout">
       <div className="clients-list">
         {list.stale && <div className="clients-notice" role="status"><AlertTriangle size={16} aria-hidden="true" />Datos posiblemente desactualizados. {list.error}<button type="button" onClick={() => void workspace.refreshList()}>Reintentar</button></div>}
         {list.status === "loading" && !list.data && <p className="clients-state" role="status">Cargando clientes…</p>}
         {list.status === "loading" && list.data && <p className="clients-state clients-state--compact" role="status">Actualizando clientes…</p>}
         {list.status === "error" && !list.data && <div className="clients-state" role="alert"><strong>No fue posible cargar los clientes</strong><p>{list.error}</p><button className="button button--ghost" type="button" onClick={() => void workspace.refreshList()}>Reintentar</button></div>}
-        {list.status === "success" && list.data?.items.length === 0 && <div className="clients-state clients-state--empty"><Search size={25} aria-hidden="true" /><strong>No hay clientes para estos filtros</strong><p>Ajusta el estado o la búsqueda para ampliar los resultados.</p>{query.clients.search && onClearSearch && <button className="button button--ghost" type="button" onClick={onClearSearch}>Limpiar búsqueda</button>}</div>}
+        {list.status === "success" && list.data?.items.length === 0 && <div className="clients-state clients-state--empty"><Search size={25} aria-hidden="true" /><strong>No hay clientes para estos filtros</strong><p>Ajusta el estado o la búsqueda para ampliar los resultados.</p>{query.clients.search && <button className="button button--ghost" type="button" onClick={() => { onClearSearch?.(); workspace.setClientFilters({ search: undefined, page: 1 }); }}>Limpiar búsqueda</button>}</div>}
         {list.data && list.data.items.length > 0 && <ClientTable clients={list.data.items} selectedId={query.clientId} onSelect={open} />}
-        {pagination && pagination.totalPages > 1 && <nav className="clients-pagination" aria-label="Paginación de clientes"><button className="button button--ghost" type="button" disabled={pagination.page <= 1} onClick={() => workspace.setClientFilters({ page: pagination.page - 1 })}>Página anterior</button><span>Página {pagination.page} de {pagination.totalPages}</span><button className="button button--ghost" type="button" disabled={pagination.page >= pagination.totalPages} onClick={() => workspace.setClientFilters({ page: pagination.page + 1 })}>Siguiente</button></nav>}
+        {pagination && pagination.totalPages > 1 && <nav className="clients-pagination" aria-label="Paginación de clientes"><button className="button button--ghost" type="button" disabled={pagination.page <= 1} onClick={() => workspace.setClientFilters({ page: pagination.page - 1 })}>Anterior</button><span>Página {pagination.page} de {pagination.totalPages}</span><button className="button button--ghost" type="button" disabled={pagination.page >= pagination.totalPages} onClick={() => workspace.setClientFilters({ page: pagination.page + 1 })}>Siguiente</button></nav>}
       </div>
       {hasDetail && <div className="clients-detail-region">
+        {selected && detail.stale && <div className="clients-notice clients-detail-notice" role="status"><AlertTriangle size={16} aria-hidden="true" /><span>Ficha posiblemente desactualizada. {detail.error}</span><button type="button" onClick={() => void workspace.refreshDetail()}>Reintentar ficha</button></div>}
+        {selected && detail.status === "loading" && <p className="clients-detail-loading" role="status">Actualizando ficha del cliente…</p>}
         {selected && <ClientDetail client={selected} tab={query.tab} onTabChange={workspace.setTab} onClose={close} />}
         {!selected && <div className="clients-detail-state" role={detail.status === "error" ? "alert" : "status"}>
           <strong>{detail.status === "error" ? "No fue posible cargar la ficha" : "Cargando ficha del cliente…"}</strong>

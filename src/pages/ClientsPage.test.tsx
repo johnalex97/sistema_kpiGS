@@ -22,7 +22,7 @@ function workspace(overrides: Partial<ClientsWorkspace> = {}): ClientsWorkspace 
     capabilities: { canView: true, canManage: false },
     list: { status: "success", data: { items: [client], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }, error: null, stale: false },
     detail: { status: "idle", data: null, error: null, stale: false },
-    setClientFilters: vi.fn(), selectClient: vi.fn(), closeDetail: vi.fn(), setTab: vi.fn(),
+    setClientFilters: vi.fn(), clearClientFilters: vi.fn(), selectClient: vi.fn(), closeDetail: vi.fn(), setTab: vi.fn(),
     refreshList: vi.fn(async () => {}), refreshDetail: vi.fn(async () => {}), refresh: vi.fn(async () => {}),
     ...overrides,
   };
@@ -34,6 +34,84 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
+  it("muestra la ficha conservada con advertencia y reintento tras un error", async () => {
+    const current = workspace({
+      query: { ...workspace().query, clientId: "client-1" },
+      detail: { status: "error", data: detail, error: "Red inestable", stale: true },
+    });
+    renderPage(current);
+    expect(screen.getByRole("article", { name: "Ficha de Café Central" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Red inestable");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Reintentar ficha" }));
+    expect(current.refreshDetail).toHaveBeenCalledOnce();
+  });
+
+  it("limpiar filtros limpia buscador superior, filtros y selección", async () => {
+    const onClearSearch = vi.fn();
+    const current = workspace({ query: { ...workspace().query, clientId: "client-1", clients: { page: 3, pageSize: 20, search: "Café", isActive: false, includeInactive: true } }, detail: { status: "success", data: detail, error: null, stale: false } });
+    render(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } })}><ClientsPage workspace={current} search="Café" onClearSearch={onClearSearch} /></AuthContext.Provider>);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Limpiar filtros" }));
+    expect(onClearSearch).toHaveBeenCalledOnce();
+    expect(current.clearClientFilters).toHaveBeenCalledOnce();
+  });
+
+  it("muestra carga inicial, vacío y error inicial con acciones operativas", async () => {
+    const current = workspace({ list: { status: "loading", data: null, error: null, stale: false } });
+    const view = renderPage(current);
+    expect(screen.getByRole("status")).toHaveTextContent("Cargando clientes");
+    view.rerender(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } })}><ClientsPage workspace={workspace({ list: { status: "success", data: { items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } }, error: null, stale: false } })} /></AuthContext.Provider>);
+    expect(screen.getByText(/Ajusta el estado o la búsqueda/)).toBeInTheDocument();
+    const retry = vi.fn(async () => {});
+    view.rerender(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } })}><ClientsPage workspace={workspace({ list: { status: "error", data: null, error: "Red inestable", stale: false }, refreshList: retry })} /></AuthContext.Provider>);
+    expect(screen.getByRole("alert")).toHaveTextContent("Red inestable");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("limpiar búsqueda desde el vacío retira la consulta local sin borrar el estado", async () => {
+    const onClearSearch = vi.fn();
+    const current = workspace({
+      query: { ...workspace().query, clients: { page: 2, pageSize: 20, search: "Acme", isActive: true, includeInactive: false } },
+      list: { status: "success", data: { items: [], pagination: { page: 2, pageSize: 20, totalItems: 0, totalPages: 0 } }, error: null, stale: false },
+    });
+    render(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } })}><ClientsPage workspace={current} search="" onClearSearch={onClearSearch} /></AuthContext.Provider>);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Limpiar búsqueda" }));
+    expect(onClearSearch).toHaveBeenCalledOnce();
+    expect(current.setClientFilters).toHaveBeenCalledWith({ search: undefined, page: 1 });
+    expect(current.clearClientFilters).not.toHaveBeenCalled();
+  });
+
+  it("conserva la lista durante refresh y error stale, con reintento visible", async () => {
+    const current = workspace({ list: { status: "loading", data: workspace().list.data, error: null, stale: false } });
+    const view = renderPage(current);
+    expect(screen.getByRole("status")).toHaveTextContent("Actualizando clientes");
+    expect(screen.getByRole("table", { name: "Listado de clientes" })).toBeInTheDocument();
+    view.rerender(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } })}><ClientsPage workspace={workspace({ list: { status: "error", data: workspace().list.data, error: "Red inestable", stale: true }, refreshList: current.refreshList })} /></AuthContext.Provider>);
+    expect(screen.getByRole("status")).toHaveTextContent("desactualizados");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(current.refreshList).toHaveBeenCalledOnce();
+  });
+
+  it("respeta los límites de la página devuelta por el servidor", async () => {
+    const current = workspace({ list: { status: "success", data: { items: [client], pagination: { page: 2, pageSize: 1, totalItems: 3, totalPages: 3 } }, error: null, stale: false } });
+    const view = renderPage(current);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Anterior" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Siguiente" }));
+    expect(current.setClientFilters).toHaveBeenNthCalledWith(1, { page: 1 });
+    expect(current.setClientFilters).toHaveBeenNthCalledWith(2, { page: 3 });
+    view.rerender(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } })}><ClientsPage workspace={workspace({ list: { status: "success", data: { items: [client], pagination: { page: 3, pageSize: 1, totalItems: 3, totalPages: 3 } }, error: null, stale: false } })} /></AuthContext.Provider>);
+    expect(screen.getByRole("button", { name: "Siguiente" })).toBeDisabled();
+  });
+
+  it("distingue conteos registrados en tarjeta de un cliente inactivo", () => {
+    const inactive = { ...client, isActive: false, activeBranchCount: 2, activeContactCount: 4 };
+    const { container } = renderPage(workspace({ list: { status: "success", data: { items: [inactive], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }, error: null, stale: false } }));
+    const card = container.querySelector(".clients-card") as HTMLElement;
+    expect(within(card).getByText("2 sucursales con estado activo")).toBeInTheDocument();
+    expect(within(card).getByText("4 contactos con estado activo")).toBeInTheDocument();
+    expect(within(card).getByText(/no representan recursos disponibles/)).toBeInTheDocument();
+  });
+
   it("conserva el contacto institucional en tarjetas móviles con respaldo y ausencia explícita", () => {
     const byEmail = { ...client, id: "client-2", code: "CLI-002", tradeName: "Ferretería Norte", phone: null, email: "ventas@norte.test" };
     const withoutContact = { ...client, id: "client-3", code: "CLI-003", tradeName: "Taller del Sur", phone: null, email: null };

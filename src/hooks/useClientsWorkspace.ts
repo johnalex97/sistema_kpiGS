@@ -23,6 +23,7 @@ export interface ClientsWorkspace {
   list: AsyncState<ClientPage>;
   detail: AsyncState<ClientDetail>;
   setClientFilters(patch: Partial<ClientListFilters>): void;
+  clearClientFilters(): void;
   selectClient(id: string): void;
   closeDetail(): void;
   setTab(tab: ClientTab): void;
@@ -217,6 +218,17 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     if (includeInactiveChanged && next.clientId) void refreshDetail();
   }, [commitQuery, refreshDetail, refreshList]);
 
+  const clearClientFilters = useCallback(() => {
+    searchGenerationRef.current += 1;
+    if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = null;
+    invalidateDetail();
+    setDetailSnapshot({ key: null, state: idle<ClientDetail>() });
+    const defaults = parseClientSearch("");
+    commitQuery({ ...defaults, clients: defaults.clients }, "replace");
+    void refreshList();
+  }, [commitQuery, invalidateDetail, refreshList]);
+
   const selectClient = useCallback((id: string) => {
     if (!canViewRef.current || !id.trim()) return;
     const current = queryRef.current;
@@ -302,5 +314,5 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     invalidateDetail();
   }, [invalidateDetail, invalidateList]);
 
-  return { query, capabilities, list, detail, setClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refresh };
+  return { query, capabilities, list, detail, setClientFilters, clearClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refresh };
 }

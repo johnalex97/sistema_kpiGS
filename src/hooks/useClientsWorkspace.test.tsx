@@ -39,6 +39,49 @@ beforeEach(() => window.history.replaceState({}, "", "/clientes"));
 afterEach(() => vi.useRealTimers());
 
 describe("useClientsWorkspace", () => {
+  it("debounce de búsqueda superior espera 300 ms, reinicia página y cancela cambio anterior", async () => {
+    window.history.replaceState({}, "", "/clientes?page=3");
+    const api = apiWith();
+    const { result, rerender } = renderHook(({ search }) => useWorkspace(api, search), { initialProps: { search: "" } });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    vi.useFakeTimers();
+    rerender({ search: "Ac" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(299); });
+    expect(result.current.query.clients.page).toBe(3);
+    rerender({ search: "Acme" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(result.current.query.clients.search).toBeUndefined();
+    await act(async () => { await vi.advanceTimersByTimeAsync(299); });
+    expect(result.current.query.clients).toMatchObject({ search: "Acme", page: 1 });
+    expect(new URLSearchParams(window.location.search).get("search")).toBe("Acme");
+  });
+
+  it("limpiar filtros principales restablece búsqueda, página y selección en una transición", async () => {
+    window.history.replaceState({}, "", "/clientes?search=Acme&isActive=false&includeInactive=true&page=3&clientId=client-a&source=shell");
+    const api = apiWith();
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    act(() => result.current.clearClientFilters());
+    expect(result.current.query.clients).toEqual({ page: 1, pageSize: 20, includeInactive: false });
+    expect(result.current.query.clientId).toBeNull();
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("source")).toBe("shell");
+    expect(params.has("search")).toBe(false);
+    expect(params.has("clientId")).toBe(false);
+  });
+
+  it("limpiar filtros cancela la búsqueda superior pendiente", async () => {
+    const api = apiWith();
+    const { result, rerender } = renderHook(({ search }) => useWorkspace(api, search), { initialProps: { search: "" } });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    vi.useFakeTimers();
+    rerender({ search: "Acme" });
+    act(() => result.current.clearClientFilters());
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(result.current.query.clients.search).toBeUndefined();
+    expect(new URLSearchParams(window.location.search).has("search")).toBe(false);
+  });
+
   it("carga lista y detalle seleccionado, y guarda la selección en el historial", async () => {
     const list = deferred<ClientPage>();
     const detail = deferred<ClientDetail>();
