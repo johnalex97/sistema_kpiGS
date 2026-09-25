@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientsApi } from "../api/clients";
-import type { ClientDetail, ClientListFilters, ClientPage, ClientSummary } from "../models/client";
+import type { ClientDetail, ClientListFilters, ClientPage, ClientSummary, CreateClientInput } from "../models/client";
 import { useClientsWorkspace } from "./useClientsWorkspace";
 
 const clientA: ClientSummary = {
@@ -24,10 +24,11 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function apiWith(overrides: Partial<Pick<ClientsApi, "listClients" | "getClient">> = {}): ClientsApi {
+function apiWith(overrides: Partial<Pick<ClientsApi, "listClients" | "getClient" | "createClient">> = {}): ClientsApi {
   return {
     listClients: vi.fn(async () => page([clientA, clientB])),
     getClient: vi.fn(async (id: string) => id === clientA.id ? detailA : detailB),
+    createClient: vi.fn(async () => detailB),
     ...overrides,
   } as ClientsApi;
 }
@@ -39,6 +40,57 @@ beforeEach(() => window.history.replaceState({}, "", "/clientes"));
 afterEach(() => vi.useRealTimers());
 
 describe("useClientsWorkspace", () => {
+  const input: CreateClientInput = { tradeName: "Nueva", mainBranch: { name: "Principal", address: "Palmira", country: "HN" } };
+
+  it("abre sólo con gestión y una creación exitosa reconcilia, selecciona y cierra con la versión exacta", async () => {
+    const created: ClientDetail = { ...detailB, id: "created", tradeName: "Nueva", version: 47, code: "CLI-047" };
+    const api = apiWith({ createClient: vi.fn(async () => created) });
+    const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.openCreate!());
+    expect(result.current.create?.open).toBe(true);
+    await act(async () => result.current.submitCreate!(input));
+    expect(api.createClient).toHaveBeenCalledOnce();
+    expect(api.createClient).toHaveBeenCalledWith(input);
+    expect(result.current.create?.open).toBe(false);
+    expect(result.current.query.clientId).toBe("created");
+    expect(result.current.detail.data?.version).toBe(47);
+    expect(result.current.list.data?.items[0]).toMatchObject({ id: "created", version: 47 });
+    expect(api.getClient).not.toHaveBeenCalled();
+    expect(api.listClients).toHaveBeenCalledTimes(1);
+  });
+
+  it("bloquea doble submit y cierre mientras la creación está pendiente", async () => {
+    const pending = deferred<ClientDetail>();
+    const api = apiWith({ createClient: vi.fn(() => pending.promise) });
+    const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
+    act(() => result.current.openCreate!());
+    let first!: Promise<void>;
+    act(() => { first = result.current.submitCreate!(input); void result.current.submitCreate!(input); result.current.closeForm!(); });
+    expect(api.createClient).toHaveBeenCalledTimes(1);
+    expect(result.current.create).toMatchObject({ open: true, pending: true });
+    await act(async () => { pending.resolve(detailB); await first; });
+    expect(result.current.create?.open).toBe(false);
+  });
+
+  it("conserva el formulario y errores de campos del servidor al fallar", async () => {
+    const failure = Object.assign(new Error("Datos inválidos"), { fieldErrors: [{ field: "primaryContact.email", code: "INVALID", message: "Correo inválido" }] });
+    const api = apiWith({ createClient: vi.fn(async () => { throw failure; }) });
+    const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
+    act(() => result.current.openCreate!());
+    await act(async () => result.current.submitCreate!(input));
+    expect(result.current.create).toMatchObject({ open: true, pending: false, error: "Datos inválidos", fieldErrors: failure.fieldErrors });
+    expect(result.current.query.clientId).toBeNull();
+  });
+
+  it("sin permiso de gestión no abre ni envía", async () => {
+    const api = apiWith();
+    const { result } = renderHook(() => useWorkspace(api));
+    act(() => result.current.openCreate!());
+    await act(async () => result.current.submitCreate!(input));
+    expect(result.current.create?.open).toBe(false);
+    expect(api.createClient).not.toHaveBeenCalled();
+  });
   it("debounce de búsqueda superior espera 300 ms, reinicia página y cancela cambio anterior", async () => {
     window.history.replaceState({}, "", "/clientes?page=3");
     const api = apiWith();

@@ -70,6 +70,29 @@
 .clients-detail-state { min-height: 260px; padding: 28px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .clients-detail-state strong { color: var(--ink); font-size: 15px; }
 .clients-detail-state p { margin: 0; }
+.clients-wizard-backdrop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 20px; background: rgba(7, 26, 42, .58); }
+.clients-wizard { width: min(680px, 100%); max-height: min(760px, 94dvh); overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--white); box-shadow: 0 24px 70px rgba(7, 26, 42, .24); }
+.clients-wizard__head { padding: 23px 26px 17px; color: var(--white); background: var(--ink-2); }
+.clients-wizard__head .eyebrow { color: #9dc7d2; }
+.clients-wizard__head h2 { margin: 6px 0 7px; font: 650 25px/1.1 "Bahnschrift", "Arial Narrow", sans-serif; }
+.clients-wizard__head p:last-child { margin: 0; color: #c4d9df; font-size: 12px; }
+.clients-wizard__steps { margin: 0; padding: 16px 26px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; border-bottom: 1px solid var(--line); list-style: none; }
+.clients-wizard__steps li { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.clients-wizard__steps li span { width: 23px; height: 23px; flex: 0 0 23px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; font: 700 11px/1 "Consolas", monospace; }
+.clients-wizard__steps li[aria-current="step"] { color: var(--ink-2); }
+.clients-wizard__steps li[aria-current="step"] span { border-color: var(--teal); background: var(--teal); color: var(--white); }
+.clients-wizard__form { padding: 22px 26px 24px; }
+.clients-wizard__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.clients-wizard__field { min-width: 0; display: grid; align-content: start; gap: 6px; color: #506b7e; font-size: 11px; font-weight: 700; }
+.clients-wizard__field input, .clients-wizard__field select { width: 100%; min-height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--white); color: var(--ink); font: 400 13px/1.3 Arial, sans-serif; }
+.clients-wizard__field input:focus-visible, .clients-wizard__field select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.clients-wizard__field [aria-invalid="true"] { border-color: var(--coral); }
+.clients-wizard__error { color: #a35047; font-size: 11px; font-weight: 500; line-height: 1.35; }
+.clients-wizard__check { grid-column: 1 / -1; display: flex; align-items: center; gap: 9px; min-height: 42px; color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }
+.clients-wizard__check input { width: 17px; height: 17px; accent-color: var(--teal); }
+.clients-wizard__server-error { margin: 18px 0 0; padding: 10px 12px; border-left: 3px solid var(--coral); background: #fff5f3; color: #944b43; font-size: 12px; }
+.clients-wizard__actions { margin-top: 26px; padding-top: 18px; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 9px; border-top: 1px solid var(--line); }
+.clients-wizard__actions button:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 1023px) {
   .clients-workspace--detail .clients-layout { display: block; }
   .clients-table-wrap { display: none; }
@@ -89,6 +112,12 @@
   .clients-detail-region { position: fixed; inset: 0; z-index: 80; height: 100dvh; overflow-y: auto; border-left: 0; box-shadow: 0 0 0 999vmax rgba(7, 26, 42, .58); }
 }
 @media (max-width: 640px) {
+  .clients-wizard-backdrop { padding: 0; }
+  .clients-wizard { width: 100%; max-height: 100dvh; min-height: 100dvh; border-radius: 0; }
+  .clients-wizard__head, .clients-wizard__form { padding-left: 18px; padding-right: 18px; }
+  .clients-wizard__steps { padding: 14px 18px; }
+  .clients-wizard__steps li { flex-direction: column; align-items: flex-start; gap: 5px; font-size: 10px; }
+  .clients-wizard__grid { grid-template-columns: minmax(0, 1fr); }
   .clients-toolbar { padding: 18px; align-items: flex-start; flex-direction: column; }
   .clients-toolbar__actions { width: 100%; justify-content: flex-start; }
   .clients-filters { padding: 13px 18px; }

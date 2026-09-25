@@ -5,6 +5,7 @@ import { useAuth } from "../auth/useAuth";
 import { ClientDetail } from "../components/clients/ClientDetail";
 import { ClientFilters } from "../components/clients/ClientFilters";
 import { ClientTable } from "../components/clients/ClientTable";
+import { ClientWizard } from "../components/clients/ClientWizard";
 import "../components/clients/clients.css";
 import { useClientsWorkspace, type ClientsWorkspace } from "../hooks/useClientsWorkspace";
 
@@ -48,7 +49,7 @@ function ClientsWorkspaceView({ workspace, onClearSearch }: { workspace: Clients
     <header className="clients-toolbar">
       <div><p className="eyebrow">Directorio de servicio</p><h2>Registro de clientes</h2><p>{pagination ? `${pagination.totalItems} ${pagination.totalItems === 1 ? "cliente" : "clientes"}` : "Empresas atendidas por Geek Solution"}</p></div>
       <div className="clients-toolbar__actions"><button className="button button--ghost" type="button" onClick={() => void workspace.refreshList()}><RefreshCw size={16} aria-hidden="true" />Actualizar</button>
-        {canManage && <button className="button button--primary" type="button"><UserRoundPlus size={16} aria-hidden="true" />Nuevo cliente</button>}</div>
+        {canManage && <button className="button button--primary" type="button" onClick={() => workspace.openCreate?.()}><UserRoundPlus size={16} aria-hidden="true" />Nuevo cliente</button>}</div>
     </header>
     <ClientFilters filters={query.clients} onChange={workspace.setClientFilters} onClear={() => { onClearSearch?.(); workspace.clearClientFilters(); }} />
     <div className="clients-layout">
@@ -72,5 +73,6 @@ function ClientsWorkspaceView({ workspace, onClearSearch }: { workspace: Clients
         </div>}
       </div>}
     </div>
+    {canManage && workspace.create?.open && <ClientWizard pending={workspace.create.pending} error={workspace.create.error} fieldErrors={workspace.create.fieldErrors} onSubmit={workspace.submitCreate ?? (async () => {})} onClose={() => workspace.closeForm?.()} />}
   </section>;
 }

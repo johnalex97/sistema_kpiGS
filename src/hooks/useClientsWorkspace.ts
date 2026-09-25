@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientsApi } from "../api/clients";
-import type { ClientDetail, ClientListFilters, ClientPage, ClientTab } from "../models/client";
+import type { ApiFieldError } from "../api/http";
+import type { ClientDetail, ClientListFilters, ClientPage, ClientSummary, ClientTab, CreateClientInput } from "../models/client";
 import {
   deriveClientCapabilities,
   parseClientSearch,
@@ -22,6 +23,10 @@ export interface ClientsWorkspace {
   capabilities: ClientCapabilities;
   list: AsyncState<ClientPage>;
   detail: AsyncState<ClientDetail>;
+  create?: { open: boolean; pending: boolean; error: string | null; fieldErrors: ApiFieldError[] };
+  openCreate?(): void;
+  closeForm?(): void;
+  submitCreate?(input: CreateClientInput): Promise<void>;
   setClientFilters(patch: Partial<ClientListFilters>): void;
   clearClientFilters(): void;
   selectClient(id: string): void;
@@ -70,9 +75,12 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       : idle<ClientDetail>(),
   }));
   const detail = detailSnapshot.state;
+  const [create, setCreate] = useState<NonNullable<ClientsWorkspace["create"]>>({ open: false, pending: false, error: null, fieldErrors: [] });
+  const createPendingRef = useRef(false);
 
   const queryRef = useRef(query);
   const canViewRef = useRef(capabilities.canView);
+  const canManageRef = useRef(capabilities.canManage);
   const externalSearchRef = useRef(search.trim());
   const mountedRef = useRef(true);
   const listControllerRef = useRef<AbortController | null>(null);
@@ -84,6 +92,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const searchGenerationRef = useRef(0);
 
   canViewRef.current = capabilities.canView;
+  canManageRef.current = capabilities.canManage;
 
   const invalidateList = useCallback(() => {
     listGenerationRef.current += 1;
@@ -254,6 +263,53 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     commitQuery({ ...queryRef.current, tab }, "replace");
   }, [commitQuery]);
 
+  const openCreate = useCallback(() => {
+    if (!canManageRef.current || createPendingRef.current) return;
+    setCreate({ open: true, pending: false, error: null, fieldErrors: [] });
+  }, []);
+
+  const closeForm = useCallback(() => {
+    if (createPendingRef.current) return;
+    setCreate({ open: false, pending: false, error: null, fieldErrors: [] });
+  }, []);
+
+  const submitCreate = useCallback(async (input: CreateClientInput): Promise<void> => {
+    if (!canManageRef.current || createPendingRef.current) return;
+    createPendingRef.current = true;
+    setCreate((current) => ({ ...current, pending: true, error: null, fieldErrors: [] }));
+    try {
+      const created = await api.createClient(input);
+      if (!mountedRef.current) return;
+      invalidateList();
+      invalidateDetail();
+      const summary: ClientSummary = {
+        id: created.id, code: created.code, tradeName: created.tradeName, legalName: created.legalName,
+        taxId: created.taxId, phone: created.phone, email: created.email, isActive: created.isActive,
+        createdAt: created.createdAt, updatedAt: created.updatedAt, version: created.version,
+        activeBranchCount: created.branches.filter((branch) => branch.isEffectivelyActive).length,
+        activeContactCount: created.contacts.filter((contact) => contact.isEffectivelyActive).length,
+      };
+      setList((current) => current.data ? {
+        ...current, status: "success", error: null, stale: false,
+        data: { ...current.data,
+          items: [summary, ...current.data.items.filter((item) => item.id !== created.id)].slice(0, current.data.pagination.pageSize),
+          pagination: { ...current.data.pagination, totalItems: current.data.pagination.totalItems + (current.data.items.some((item) => item.id === created.id) ? 0 : 1) },
+        },
+      } : current);
+      const defaults = parseClientSearch("");
+      commitQuery({ ...queryRef.current, clientId: created.id, tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
+      setDetailSnapshot({ key: `${created.id}\u0000${queryRef.current.clients.includeInactive}`, state: { status: "success", data: created, error: null, stale: false } });
+      setCreate({ open: false, pending: false, error: null, fieldErrors: [] });
+    } catch (error: unknown) {
+      if (!mountedRef.current) return;
+      const fieldErrors = error && typeof error === "object" && "fieldErrors" in error && Array.isArray(error.fieldErrors)
+        ? error.fieldErrors as ApiFieldError[] : [];
+      setCreate((current) => ({ ...current, pending: false, error: errorMessage(error, "No fue posible crear el cliente"), fieldErrors }));
+    } finally {
+      createPendingRef.current = false;
+    }
+  }, [api, commitQuery, invalidateDetail, invalidateList]);
+
   useEffect(() => {
     mountedRef.current = true;
     const normalizedUrl = urlWith(serializeClientSearch(window.location.search, queryRef.current));
@@ -314,5 +370,5 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     invalidateDetail();
   }, [invalidateDetail, invalidateList]);
 
-  return { query, capabilities, list, detail, setClientFilters, clearClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refresh };
+  return { query, capabilities, list, detail, create, openCreate, closeForm, submitCreate, setClientFilters, clearClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refresh };
 }
