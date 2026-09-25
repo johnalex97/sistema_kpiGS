@@ -29,8 +29,9 @@ const ownedParameters = [
   "contactSearch", "contactBranchId", "contactScope", "contactIsActive", "contactIncludeInactive", "contactPage", "contactPageSize",
 ] as const;
 
-function text(value: string | null | undefined): string | undefined {
-  return value?.trim() || undefined;
+function text(value: string | null | undefined, maximum = Number.MAX_SAFE_INTEGER): string | undefined {
+  const normalized = value?.trim();
+  return normalized && normalized.length <= maximum ? normalized : undefined;
 }
 
 function boolean(value: string | null): boolean | undefined {
@@ -39,22 +40,22 @@ function boolean(value: string | null): boolean | undefined {
   return undefined;
 }
 
-function positiveInteger(value: string | null | undefined): number | null {
+function positiveInteger(value: string | null | undefined, maximum = Number.MAX_SAFE_INTEGER): number | null {
   if (!value || !/^\d+$/.test(value)) return null;
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= maximum ? parsed : null;
 }
 
 function readFilters(query: URLSearchParams, prefix: "" | "branch" | "contact"): ClientListFilters {
   const key = (suffix: string) => prefix ? `${prefix}${suffix}` : suffix[0].toLowerCase() + suffix.slice(1);
   const isActive = boolean(query.get(key("IsActive")));
-  const search = text(query.get(key("Search")));
+  const search = text(query.get(key("Search")), 100);
   return {
     ...(search ? { search } : {}),
     ...(isActive !== undefined ? { isActive } : {}),
     includeInactive: isActive === false || boolean(query.get(key("IncludeInactive"))) === true,
     page: positiveInteger(query.get(key("Page"))) ?? 1,
-    pageSize: positiveInteger(query.get(key("PageSize"))) ?? 20,
+    pageSize: positiveInteger(query.get(key("PageSize")), 100) ?? 20,
   };
 }
 
@@ -64,8 +65,8 @@ export function parseClientSearch(search: string): ClientQueryState {
   const tab = query.get("clientTab");
   const branches = readFilters(query, "branch");
   const contacts = readFilters(query, "contact") as ContactListFilters;
-  const city = text(query.get("branchCity"));
-  const region = text(query.get("branchRegion"));
+  const city = text(query.get("branchCity"), 100);
+  const region = text(query.get("branchRegion"), 100);
   const branchId = text(query.get("contactBranchId"));
   const scope = query.get("contactScope");
   if (city) Object.assign(branches, { city });
@@ -83,12 +84,12 @@ export function parseClientSearch(search: string): ClientQueryState {
 
 function writeFilters(query: URLSearchParams, filters: ClientListFilters, prefix: "" | "branch" | "contact"): void {
   const key = (suffix: string) => prefix ? `${prefix}${suffix}` : suffix[0].toLowerCase() + suffix.slice(1);
-  const search = text(filters.search);
+  const search = text(filters.search, 100);
   if (search) query.set(key("Search"), search);
   if (filters.isActive !== undefined) query.set(key("IsActive"), String(filters.isActive));
   query.set(key("IncludeInactive"), String(filters.isActive === false || filters.includeInactive));
   query.set(key("Page"), String(positiveInteger(String(filters.page)) ?? 1));
-  query.set(key("PageSize"), String(positiveInteger(String(filters.pageSize)) ?? 20));
+  query.set(key("PageSize"), String(positiveInteger(String(filters.pageSize), 100) ?? 20));
 }
 
 export function serializeClientSearch(search: string, state: ClientQueryState): URLSearchParams {
@@ -102,8 +103,8 @@ export function serializeClientSearch(search: string, state: ClientQueryState): 
   if (previousClientId !== (clientId ?? null)) return query;
 
   writeFilters(query, state.branches, "branch");
-  const city = text(state.branches.city);
-  const region = text(state.branches.region);
+  const city = text(state.branches.city, 100);
+  const region = text(state.branches.region, 100);
   if (city) query.set("branchCity", city);
   if (region) query.set("branchRegion", region);
 

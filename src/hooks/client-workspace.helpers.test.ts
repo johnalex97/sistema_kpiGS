@@ -46,6 +46,43 @@ describe("estado URL de clientes", () => {
     });
   });
 
+  it("descarta tamaños de página superiores al máximo del servidor al leer y escribir", () => {
+    const parsed = parseClientSearch("?clientId=c1&pageSize=101&branchPageSize=101&contactPageSize=101");
+    expect(parsed.clients.pageSize).toBe(20);
+    expect(parsed.branches.pageSize).toBe(20);
+    expect(parsed.contacts.pageSize).toBe(20);
+
+    const state = parseClientSearch("?clientId=c1");
+    state.clients.pageSize = 101;
+    state.branches.pageSize = 101;
+    state.contacts.pageSize = 101;
+    const query = serializeClientSearch("?clientId=c1", state);
+    expect(query.get("pageSize")).toBe("20");
+    expect(query.get("branchPageSize")).toBe("20");
+    expect(query.get("contactPageSize")).toBe("20");
+  });
+
+  it("descarta filtros de texto de más de 100 caracteres al leer y escribir", () => {
+    const long = "x".repeat(101);
+    const parsed = parseClientSearch(`?clientId=c1&search=${long}&branchSearch=${long}&contactSearch=${long}&branchCity=${long}&branchRegion=${long}`);
+    expect(parsed.clients.search).toBeUndefined();
+    expect(parsed.branches.search).toBeUndefined();
+    expect(parsed.contacts.search).toBeUndefined();
+    expect(parsed.branches.city).toBeUndefined();
+    expect(parsed.branches.region).toBeUndefined();
+
+    const state = parseClientSearch("?clientId=c1");
+    state.clients.search = long;
+    state.branches.search = long;
+    state.contacts.search = long;
+    state.branches.city = long;
+    state.branches.region = long;
+    const query = serializeClientSearch("?clientId=c1", state);
+    for (const key of ["search", "branchSearch", "contactSearch", "branchCity", "branchRegion"]) {
+      expect(query.has(key)).toBe(false);
+    }
+  });
+
   it("serializa los filtros normalizados y conserva parámetros ajenos", () => {
     const state = parseClientSearch("?search=Acme&isActive=false&page=2&clientId=c1&clientTab=branches&branchCity=San%20Pedro%20Sula&branchPage=3&contactScope=CLIENT&contactPage=4");
     const query = serializeClientSearch("?utm_source=campana&orderId=o1&clientId=c1&page=99", state);
