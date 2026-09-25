@@ -217,6 +217,136 @@ describe("edición y ciclo de vida del cliente", () => {
     expect(result.current.detail.data).toMatchObject({ version: 7, isActive: false });
     expect(result.current.list.data?.items[0]).toMatchObject({ version: 7, isActive: false });
   });
+
+  it("preserva v9 observada frente a mutación v4 tardía y GET v3 tras cambiar includeInactive", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const pendingMutation = deferred<ClientDetail>();
+    const observed = { ...detailA, version: 9, tradeName: "Servidor v9", isActive: true };
+    const staleMutation = { ...detailA, version: 4, tradeName: "Mutación v4", isActive: false };
+    const getClient = vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValueOnce(observed).mockResolvedValue({ ...detailA, version: 3 });
+    const api = apiWith({ getClient, listClients: vi.fn(async () => page([{ ...clientA, version: 3 }])), deactivateClient: vi.fn(() => pendingMutation.promise) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle("deactivate"));
+    let mutation!: Promise<void>;
+    act(() => { mutation = result.current.submitClientLifecycle("Cierre administrativo"); });
+    await act(async () => result.current.refreshDetail());
+    expect(result.current.detail.data?.version).toBe(9);
+    await act(async () => pendingMutation.resolve(staleMutation));
+    await mutation;
+    await waitFor(() => expect(getClient).toHaveBeenCalledTimes(3));
+    expect(result.current.query.clients.includeInactive).toBe(true);
+    expect(result.current.detail.data).toMatchObject({ version: 9, tradeName: "Servidor v9", isActive: true });
+    expect(result.current.list.data?.items[0]).toMatchObject({ version: 9, tradeName: "Servidor v9", isActive: true });
+  });
+
+  it("mantiene v9 observada en la lista aunque detalle y mutación respondan v3/v4", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const pendingMutation = deferred<ClientDetail>();
+    const listClients = vi.fn().mockResolvedValueOnce(page([{ ...clientA, version: 3 }]))
+      .mockResolvedValueOnce(page([{ ...clientA, version: 9, tradeName: "Lista v9", isActive: true }]))
+      .mockResolvedValue(page([{ ...clientA, version: 3 }]));
+    const api = apiWith({ listClients, getClient: vi.fn(async () => ({ ...detailA, version: 3 })), deactivateClient: vi.fn(() => pendingMutation.promise) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.refreshList());
+    expect(result.current.list.data?.items[0]).toMatchObject({ version: 9, tradeName: "Lista v9" });
+    let mutation!: Promise<void>;
+    act(() => { mutation = result.current.submitClientLifecycle("Cierre administrativo"); });
+    await act(async () => pendingMutation.resolve({ ...detailA, version: 4, isActive: false }));
+    await mutation;
+    await waitFor(() => expect(listClients).toHaveBeenCalledTimes(3));
+    expect(result.current.list.data?.items[0]).toMatchObject({ version: 9, tradeName: "Lista v9", isActive: true });
+  });
+
+  it("bloquea update si el cliente pasó a inactivo después de abrir edición", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const updateClient = vi.fn();
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3, isActive: true }).mockResolvedValue({ ...detailA, version: 9, isActive: false }), updateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    act(() => result.current.changeClientEdit({ tradeName: "Borrador privado" }));
+    await act(async () => result.current.refreshDetail());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador privado" }));
+    expect(updateClient).not.toHaveBeenCalled();
+    expect(result.current.edit).toMatchObject({ open: true, draft: { baseVersion: 3, values: { tradeName: "Borrador privado" } } });
+    expect(result.current.edit.error).toMatch(/inactivo/i);
+  });
+
+  it("usa el estado vigente obtenido al revisar conflicto para bloquear otro update", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const updateClient = vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno"));
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3 }).mockResolvedValue({ ...detailA, version: 9, isActive: false }), updateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openEdit());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    await act(async () => result.current.reviewClientConflict());
+    expect(result.current.edit.draft?.conflict?.version).toBe(9);
+    act(() => result.current.adoptClientConflict());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
+    expect(updateClient).toHaveBeenCalledTimes(1);
+    expect(result.current.edit.error).toMatch(/inactivo/i);
+    expect(result.current.edit.draft?.values.tradeName).toBe("Borrador");
+  });
+
+  it("mantiene acceso a revisión de versión después de editar un campo tras 409", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith({ updateClient: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openEdit());
+    await act(async () => result.current.submitClientEdit({ tradeName: "Primer borrador" }));
+    expect(result.current.edit.versionConflict).toBe(true);
+    act(() => result.current.changeClientEdit({ tradeName: "Segundo borrador" }));
+    expect(result.current.edit.error).toBeNull();
+    expect(result.current.edit.versionConflict).toBe(true);
+    expect(result.current.edit.draft?.values.tradeName).toBe("Segundo borrador");
+  });
+
+  it("mantiene revisión de lifecycle tras ajustar motivo después de 409", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const api = apiWith({ deactivateClient: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "interno")) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
+    act(() => result.current.changeClientLifecycleReason("Motivo corregido"));
+    expect(result.current.lifecycle.versionConflict).toBe(true);
+    expect(result.current.lifecycle.error).toBeNull();
+  });
+
+  it("expone validación API del motivo sin cerrar lifecycle", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const issue = { field: "reason", code: "VALIDATION_ERROR", message: "Motivo inválido." };
+    const api = apiWith({ deactivateClient: vi.fn().mockRejectedValue(new ApiClientError(400, "VALIDATION_ERROR", "interno", [issue])) });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openClientLifecycle("deactivate"));
+    await act(async () => result.current.submitClientLifecycle("Motivo documentado"));
+    expect(result.current.lifecycle).toMatchObject({ open: true, fieldErrors: [issue], reason: "Motivo documentado" });
+  });
+
+  it.each([
+    { action: "deactivate" as const, initiallyActive: true, nowActive: false, message: /inactivo/i },
+    { action: "reactivate" as const, initiallyActive: false, nowActive: true, message: /activo/i },
+  ])("bloquea $action si el estado conocido cambió tras abrir lifecycle", async ({ action, initiallyActive, nowActive, message }) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&includeInactive=true");
+    const deactivateClient = vi.fn();
+    const reactivateClient = vi.fn();
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, version: 3, isActive: initiallyActive }).mockResolvedValue({ ...detailA, version: 9, isActive: nowActive }), deactivateClient, reactivateClient });
+    const { result } = renderHook(() => useWorkspace(api, "", manageable));
+    await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
+    act(() => result.current.openClientLifecycle(action));
+    await act(async () => result.current.refreshDetail());
+    await act(async () => result.current.submitClientLifecycle("Motivo documentado"));
+    expect(deactivateClient).not.toHaveBeenCalled();
+    expect(reactivateClient).not.toHaveBeenCalled();
+    expect(result.current.lifecycle).toMatchObject({ open: true, baseVersion: 3, reason: "Motivo documentado" });
+    expect(result.current.lifecycle.error).toMatch(message);
+  });
 });
 
 function deferred<T>() {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ClientDetail } from "../../models/client";
@@ -27,5 +27,27 @@ describe("ClientLifecycleDialog", () => {
     expect(screen.getByRole("textbox", { name: "Motivo" })).toHaveValue(reason);
     await userEvent.setup().click(screen.getByRole("button", { name: "Confirmar desactivación" }));
     expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("muestra nombre y estado vigentes antes de adoptar versión de lifecycle", () => {
+    render(<ClientLifecycleDialog client={client} action="deactivate" baseVersion={3} reason="Cierre administrativo" pending={false} reviewPending={false} error="Conflicto de versión" reviewError={null} conflict={{ ...client, tradeName: "Nombre vigente", version: 9, isActive: false }} onReasonChange={vi.fn()} onSubmit={vi.fn()} onClose={vi.fn()} onReview={vi.fn()} onAdopt={vi.fn()} />);
+    const review = within(screen.getByRole("region", { name: "Estado vigente del cliente" }));
+    expect(review.getByText("Nombre vigente")).toBeInTheDocument();
+    expect(review.getByText("Inactivo")).toBeInTheDocument();
+    expect(review.getByText(/Versión actual: 9/)).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Motivo" })).toHaveValue("Cierre administrativo");
+  });
+
+  it("asocia errores locales y API al motivo", async () => {
+    const props = { client, action: "deactivate" as const, baseVersion: 3, reason: "corto", pending: false, reviewPending: false, error: null, reviewError: null, conflict: null, onReasonChange: vi.fn(), onSubmit: vi.fn(), onClose: vi.fn(), onReview: vi.fn(), onAdopt: vi.fn() };
+    const view = render(<ClientLifecycleDialog {...props} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Confirmar desactivación" }));
+    const reason = screen.getByRole("textbox", { name: "Motivo" });
+    expect(reason).toHaveAttribute("aria-invalid", "true");
+    expect(reason).toHaveAttribute("aria-describedby", "client-lifecycle-reason-error");
+    expect(document.getElementById("client-lifecycle-reason-error")).toHaveTextContent("10 y 500");
+    view.rerender(<ClientLifecycleDialog {...props} reason="Motivo documentado" fieldErrors={[{ field: "reason", code: "VALIDATION_ERROR", message: "Motivo inválido." }]} />);
+    expect(reason).toHaveAttribute("aria-invalid", "true");
+    expect(document.getElementById("client-lifecycle-reason-error")).toHaveTextContent("Motivo inválido.");
   });
 });
