@@ -16,7 +16,7 @@ export function ClientFilters({ filters, onChange, onClear }: ClientFiltersProps
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
     if (input.current) input.current.value = filters.search ?? "";
-  }, [filters.search]);
+  }, [filters.search, filters.isActive, filters.includeInactive, filters.page, filters.pageSize]);
 
   useEffect(() => () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -37,6 +37,11 @@ export function ClientFilters({ filters, onChange, onClear }: ClientFiltersProps
       onChange({ isActive, includeInactive: isActive === false, page: 1 });
     }}><option value="active">Activos</option><option value="inactive">Inactivos</option><option value="all">Todos</option></select></label>
     <label className="clients-filters__inactive"><input type="checkbox" checked={filters.includeInactive} disabled={filters.isActive === false} onChange={(event) => onChange({ includeInactive: event.target.checked, page: 1 })} /><span>Incluir inactivos</span></label>
-    <button className="button button--ghost clients-filters__clear" type="button" onClick={onClear}>Limpiar filtros</button>
+    <button className="button button--ghost clients-filters__clear" type="button" onClick={() => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = null;
+      if (input.current) input.current.value = "";
+      onClear();
+    }}>Limpiar filtros</button>
   </div>;
 }

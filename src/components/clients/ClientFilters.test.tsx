@@ -60,4 +60,41 @@ describe("ClientFilters", () => {
     act(() => vi.advanceTimersByTime(300));
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("limpiar antes de 300 ms descarta la búsqueda local pendiente", () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn();
+    const onClear = vi.fn();
+    render(<ClientFilters filters={defaults} onChange={onChange} onClear={onClear} />);
+    const input = screen.getByRole("searchbox", { name: "Buscar clientes" });
+    fireEvent.change(input, { target: { value: "Temporal" } });
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+    expect(onClear).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(300));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(input).toHaveValue("");
+  });
+
+  it("una navegación histórica con la misma búsqueda confirmada descarta la edición pendiente", () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn();
+    const view = render(<ClientFilters filters={defaults} onChange={onChange} onClear={vi.fn()} />);
+    const input = screen.getByRole("searchbox", { name: "Buscar clientes" });
+    fireEvent.change(input, { target: { value: "Temporal" } });
+    view.rerender(<ClientFilters filters={{ ...defaults, page: 1, isActive: true }} onChange={onChange} onClear={vi.fn()} />);
+    act(() => vi.advanceTimersByTime(300));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(input).toHaveValue("");
+  });
+
+  it("un rerender sin cambios escalares conserva el debounce pendiente", () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn();
+    const view = render(<ClientFilters filters={defaults} onChange={onChange} onClear={vi.fn()} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar clientes" }), { target: { value: "Acme" } });
+    view.rerender(<ClientFilters filters={{ ...defaults }} onChange={onChange} onClear={vi.fn()} />);
+    act(() => vi.advanceTimersByTime(300));
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith({ search: "Acme", page: 1 });
+  });
 });
