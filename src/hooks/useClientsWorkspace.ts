@@ -262,16 +262,26 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     if (!known || client.version > known.version) knownClientStatesRef.current.set(client.id, { version: client.version, isActive: client.isActive });
   }, []);
 
+  const withKnownBranch = useCallback((branch: ClientBranch): ClientBranch => {
+    const key = `${branch.clientId}\u0000${branch.id}`;
+    const known = confirmedBranchesRef.current.get(key);
+    if (known && known.version > branch.version) return known;
+    confirmedBranchesRef.current.set(key, branch);
+    return branch;
+  }, []);
+
+  const withKnownBranches = useCallback((client: ClientDetail): ClientDetail => ({
+    ...client, branches: client.branches.map(withKnownBranch),
+  }), [withKnownBranch]);
+
   const withConfirmedDetail = useCallback((incoming: ClientDetail): ClientDetail => {
     observeClientState(incoming);
+    const normalized = withKnownBranches(incoming);
     const confirmed = confirmedClientsRef.current.get(incoming.id);
-    if (confirmed && confirmed.version > incoming.version) return confirmed;
-    if (!confirmed || incoming.version > confirmed.version) confirmedClientsRef.current.set(incoming.id, incoming);
-    return { ...incoming, branches: incoming.branches.map((branch) => {
-      const newer = confirmedBranchesRef.current.get(branch.id);
-      return newer && newer.version > branch.version ? newer : branch;
-    }) };
-  }, [observeClientState]);
+    if (confirmed && confirmed.version > incoming.version) return withKnownBranches(confirmed);
+    if (!confirmed || incoming.version > confirmed.version) confirmedClientsRef.current.set(incoming.id, normalized);
+    return normalized;
+  }, [observeClientState, withKnownBranches]);
 
   const withConfirmedSummary = useCallback((incoming: ClientPage["items"][number]): ClientPage["items"][number] => {
     observeClientState(incoming);
@@ -376,7 +386,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
         key,
         state: {
           status: "success",
-          data: current.key === key && current.state.data ? reconcileClient(current.state.data, authoritative) : authoritative,
+          data: current.key === key && current.state.data
+            ? withKnownBranches(reconcileClient(current.state.data, authoritative)) : authoritative,
           error: null,
           stale: false,
         },
@@ -398,7 +409,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     } finally {
       if (detailControllerRef.current === controller) detailControllerRef.current = null;
     }
-  }, [api, invalidateDetail, withConfirmedDetail]);
+  }, [api, invalidateDetail, withConfirmedDetail, withKnownBranches]);
 
   const refreshBranches = useCallback(async (): Promise<void> => {
     invalidateBranches();
@@ -419,10 +430,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== branchGenerationRef.current
         || queryRef.current.clientId !== clientId || queryRef.current.tab !== "branches"
         || JSON.stringify([queryRef.current.clientId, queryRef.current.branches]) !== key) return;
-      setBranchSnapshot({ key, state: { status: "success", data: { ...incoming, items: incoming.items.map((branch) => {
-        const newer = confirmedBranchesRef.current.get(branch.id);
-        return newer && newer.version > branch.version ? newer : branch;
-      }) }, error: null, stale: false } });
+      setBranchSnapshot({ key, state: { status: "success", data: { ...incoming, items: incoming.items.map(withKnownBranch) }, error: null, stale: false } });
     } catch (error: unknown) {
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== branchGenerationRef.current
         || isAbortError(error) || queryRef.current.clientId !== clientId || queryRef.current.tab !== "branches"
@@ -434,7 +442,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     } finally {
       if (branchControllerRef.current === controller) branchControllerRef.current = null;
     }
-  }, [api, invalidateBranches]);
+  }, [api, invalidateBranches, withKnownBranch]);
 
   const refresh = useCallback(async (): Promise<void> => {
     await Promise.all([refreshList(), refreshDetail()]);
@@ -795,20 +803,19 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   }, [updateBranchForm]);
 
   const reconcileBranchMutation = useCallback((branch: ClientBranch) => {
-    const previous = confirmedBranchesRef.current.get(branch.id);
-    if (!previous || branch.version >= previous.version) confirmedBranchesRef.current.set(branch.id, branch);
+    const authoritative = withKnownBranch(branch);
     setDetailSnapshot((current) => {
       const client = current.state.data;
       if (!client || client.id !== branch.clientId) return current;
       const exists = client.branches.some((item) => item.id === branch.id);
       return { ...current, state: { ...current.state, data: { ...client, branches: exists
-        ? client.branches.map((item) => item.id === branch.id ? branch : item)
-        : [...client.branches, branch] } } };
+        ? client.branches.map((item) => item.id === branch.id ? authoritative : item)
+        : [...client.branches, authoritative] } } };
     });
     setBranchSnapshot((current) => current.state.data && queryRef.current.clientId === branch.clientId
-      ? { ...current, state: { ...current.state, data: { ...current.state.data, items: current.state.data.items.map((item) => item.id === branch.id ? branch : item) } } }
+      ? { ...current, state: { ...current.state, data: { ...current.state.data, items: current.state.data.items.map((item) => item.id === branch.id ? authoritative : item) } } }
       : current);
-  }, []);
+  }, [withKnownBranch]);
 
   const afterBranchSuccess = useCallback((branch: ClientBranch) => {
     invalidateBranches();
@@ -893,8 +900,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     try {
       const client = await api.getClient(clientId, true);
       if (!mountedRef.current || queryRef.current.clientId !== clientId) return;
+      observeClientState(client);
       const current = client.branches.find((item) => item.id === branchId) ?? null;
-      const latest = current && current.version > baseVersion ? current : null;
+      const observed = current ? withKnownBranch(current) : null;
+      const latest = observed && observed.version > baseVersion ? observed : null;
       const reviewError = latest ? null : "No hay una versión más reciente disponible.";
       if (form.open && branchFormRef.current.open && branchFormRef.current.draft?.branchId === branchId) {
         const state = branchFormRef.current;
@@ -906,7 +915,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (form.open && branchFormRef.current.open) updateBranchForm({ ...branchFormRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
       else if (life.open && branchLifecycleRef.current.open) updateBranchLifecycle({ ...branchLifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
     }
-  }, [api, updateBranchForm, updateBranchLifecycle]);
+  }, [api, observeClientState, updateBranchForm, updateBranchLifecycle, withKnownBranch]);
 
   const adoptBranchConflict = useCallback(() => {
     const form = branchFormRef.current;

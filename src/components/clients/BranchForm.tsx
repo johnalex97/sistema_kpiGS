@@ -68,7 +68,14 @@ export function BranchForm({ mode, draft, pending, reviewPending, error, reviewE
         const issue = fieldError(field);
         return <label key={field} className="clients-wizard__field">{label}<input type="text" value={draft.values[field] ?? ""} maxLength={max} disabled={pending} aria-invalid={Boolean(issue)} aria-describedby={issue ? `branch-${field}-error` : undefined} onChange={(event) => { setLocalError(null); onChange({ [field]: event.target.value }); }} />{issue && <span id={`branch-${field}-error`} className="clients-wizard__error" role="alert">{issue}</span>}</label>;
       })}</div>
-      {draft.conflict && <section className="clients-notice" role="region" aria-label="Estado vigente de la sucursal"><p>Versión actual: {draft.conflict.version}. Tu borrador se conserva.</p><p>{draft.conflict.name} · {draft.conflict.isActive ? "Activa" : "Inactiva"}</p><button type="button" disabled={pending || reviewPending} onClick={onAdopt}>Adoptar versión {draft.conflict.version}</button></section>}
+      {draft.conflict && <section className="clients-notice" role="region" aria-label="Estado vigente de la sucursal">
+        <p>Compara los datos vigentes con tu borrador antes de adoptar la versión. Tu borrador se conserva.</p>
+        <dl className="clients-detail__facts">{fields.map(([field, label]) => <div key={field}><dt>{label}</dt><dd>{draft.conflict?.[field] || "No registrado"}</dd></div>)}
+          <div><dt>Estado</dt><dd>{draft.conflict.isActive ? "Activa" : "Inactiva"}</dd></div>
+          <div><dt>Versión</dt><dd>{draft.conflict.version}</dd></div>
+        </dl>
+        <button type="button" disabled={pending || reviewPending} onClick={onAdopt}>Adoptar versión {draft.conflict.version}</button>
+      </section>}
       {error && <p className="clients-wizard__server-error" role="alert">{error}</p>}
       {reviewError && <p className="clients-wizard__server-error" role="alert">{reviewError}</p>}
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
