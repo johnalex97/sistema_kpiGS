@@ -34,14 +34,15 @@ export function ClientBranches({ clientActive, filters, branches, onChange, onRe
     {branches.status === "success" && branches.data?.items.length === 0 && <div className="clients-state"><strong>No hay sucursales para estos filtros</strong><p>Cambia la búsqueda o el estado para ampliar los resultados.</p></div>}
     {branches.data && branches.data.items.length > 0 && <div className="clients-branches__list">{branches.data.items.map((branch) => {
       const href = locationUrl(branch);
-      const effectiveLabel = branch.isEffectivelyActive ? "Disponible" : !clientActive && branch.isActive ? "No disponible por cliente inactivo" : "No disponible";
+      const effectiveActive = clientActive && branch.isEffectivelyActive;
+      const effectiveLabel = !clientActive && branch.isActive ? "No disponible por cliente inactivo" : effectiveActive ? "Disponible" : "No disponible";
       return <article key={branch.id} className="clients-branch" aria-label={`Sucursal ${branch.name}`}>
         <div className="clients-branch__heading"><span className="clients-code">{branch.code}</span><h3>{branch.name}</h3></div>
         <p className="clients-branch__address">{branch.address}</p>
         {(branch.city || branch.region) && <p className="clients-branch__area">{[branch.city, branch.region].filter(Boolean).join(" · ")}</p>}
         {branch.locationReference && <p className="clients-branch__reference"><span>Referencia</span>{branch.locationReference}</p>}
         {href && <p className="clients-branch__coordinates"><span>Coordenadas</span>{branch.lat?.trim()}, {branch.long?.trim()}</p>}
-        <div className="clients-branch__foot"><span className={`clients-status ${branch.isActive ? "clients-status--active" : "clients-status--inactive"}`}><i aria-hidden="true" />Estado interno: {branch.isActive ? "Activa" : "Inactiva"}</span><span className={`clients-branch__effective ${branch.isEffectivelyActive ? "clients-branch__effective--active" : ""}`}>{effectiveLabel}</span></div>
+        <div className="clients-branch__foot"><span className={`clients-status ${branch.isActive ? "clients-status--active" : "clients-status--inactive"}`}><i aria-hidden="true" />Estado interno: {branch.isActive ? "Activa" : "Inactiva"}</span><span className={`clients-branch__effective ${effectiveActive ? "clients-branch__effective--active" : ""}`}>{effectiveLabel}</span></div>
         {href && <a className="clients-branch__map" href={href} target="_blank" rel="noreferrer" aria-label={`Ver ubicación de ${branch.name}`}>Ver ubicación</a>}
       </article>;
     })}</div>}

@@ -26,6 +26,20 @@ describe("ClientBranches", () => {
     expect(within(card).queryByText("Estado interno: Inactiva")).not.toBeInTheDocument();
   });
 
+  it("retira disponibilidad al desactivar el cliente aunque la colección aún marque efectividad", () => {
+    const loaded = state(page([branch]));
+    const { onChange, onRetry, rerender } = show({ branches: loaded });
+    const card = screen.getByRole("article", { name: "Sucursal Principal" });
+    expect(within(card).getByText("Disponible")).toHaveClass("clients-branch__effective--active");
+
+    rerender(<ClientBranches clientActive={false} filters={filters} branches={loaded} onChange={onChange} onRetry={onRetry} />);
+
+    expect(within(card).getByText("Estado interno: Activa")).toBeInTheDocument();
+    const effective = within(card).getByText("No disponible por cliente inactivo");
+    expect(effective).not.toHaveClass("clients-branch__effective--active");
+    expect(within(card).queryByText("Disponible")).not.toBeInTheDocument();
+  });
+
   it("muestra identidad, dirección, referencia y vínculo seguro sólo con coordenadas finitas", () => {
     show({ branches: state(page([branch, { ...branch, id: "branch-2", name: "Sin mapa", lat: "NaN" }, { ...branch, id: "branch-3", name: "Incompleta", long: null }])) });
     const principal = screen.getByRole("article", { name: "Sucursal Principal" });
