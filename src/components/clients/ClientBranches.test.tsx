@@ -18,6 +18,18 @@ function show(props: Partial<Parameters<typeof ClientBranches>[0]> = {}) {
 }
 
 describe("ClientBranches", () => {
+  it("oculta mutaciones si el cliente está inactivo aunque se pueda gestionar", () => {
+    show({ clientActive: false, canManage: true, onCreate: vi.fn(), onEdit: vi.fn(), onLifecycle: vi.fn() });
+    expect(screen.queryByRole("button", { name: /Nueva sucursal|Editar sucursal|Desactivar sucursal/ })).not.toBeInTheDocument();
+  });
+
+  it("permite iniciar desactivación de MAIN y no cambia el estado de otras sucursales", async () => {
+    const onLifecycle = vi.fn();
+    show({ canManage: true, onLifecycle, branches: state(page([branch, { ...branch, id: "branch-2", code: "S-002", name: "Secundaria" }])) });
+    await userEvent.setup().click(within(screen.getByRole("article", { name: "Sucursal Principal" })).getByRole("button", { name: "Desactivar sucursal" }));
+    expect(onLifecycle).toHaveBeenCalledWith(branch, "deactivate");
+    expect(within(screen.getByRole("article", { name: "Sucursal Secundaria" })).getByText("Estado interno: Activa")).toBeInTheDocument();
+  });
   it("distingue estado interno y efectivo al desactivar el cliente", () => {
     show({ clientActive: false, branches: state(page([{ ...branch, isEffectivelyActive: false }])) });
     const card = screen.getByRole("article", { name: "Sucursal Principal" });

@@ -36,6 +36,29 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
+  it("conecta acciones de sucursal y presenta el error de dominio dentro del diálogo", async () => {
+    const branch = { id: "branch-1", clientId: "client-1", code: "S-001", name: "Principal", address: "Palmira", city: null, region: null, country: "HN", lat: null, long: null, locationReference: null, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 3 };
+    const onLifecycle = vi.fn();
+    const onSubmit = vi.fn(async () => {});
+    const base = workspace({
+      capabilities: { canView: true, canManage: true },
+      query: { ...workspace().query, clientId: "client-1", tab: "branches" },
+      detail: { status: "success", data: { ...detail, branches: [branch] }, error: null, stale: false },
+      branches: { status: "success", data: { items: [branch], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }, error: null, stale: false },
+      openEdit: vi.fn(), openClientLifecycle: vi.fn(), openBranchLifecycle: onLifecycle, submitBranchLifecycle: onSubmit,
+    });
+    const user = userEvent.setup();
+    const view = renderPage(base, ["CLIENTS_VIEW", "CLIENTS_MANAGE"]);
+    await user.click(within(screen.getByRole("article", { name: "Sucursal Principal" })).getByRole("button", { name: "Desactivar sucursal" }));
+    expect(onLifecycle).toHaveBeenCalledWith(branch, "deactivate");
+    const active = workspace({ ...base, branchLifecycle: { open: true, action: "deactivate", clientId: client.id, branchId: branch.id, baseVersion: 3, reason: "Motivo documentado", pending: false, error: "La sucursal tiene trabajo activo y no puede desactivarse.", fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, conflict: null } });
+    view.rerender(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW", "CLIENTS_MANAGE"] } })}><ClientsPage workspace={active} /></AuthContext.Provider>);
+    const dialog = document.querySelector('[role="dialog"][aria-label="Desactivar sucursal Principal"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.querySelector('[role="alert"]')).toHaveTextContent("La sucursal tiene trabajo activo y no puede desactivarse.");
+    await user.click(screen.getByText("Confirmar"));
+    expect(onSubmit).toHaveBeenCalledWith("Motivo documentado");
+  });
   it("presenta la colección paginada al abrir Sucursales", () => {
     const current = workspace({
       query: { ...workspace().query, clientId: "client-1", tab: "branches" },

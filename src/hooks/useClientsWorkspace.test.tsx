@@ -466,7 +466,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function apiWith(overrides: Partial<Pick<ClientsApi, "listClients" | "getClient" | "createClient" | "updateClient" | "deactivateClient" | "reactivateClient" | "listBranches">> = {}): ClientsApi {
+function apiWith(overrides: Partial<ClientsApi> = {}): ClientsApi {
   return {
     listClients: vi.fn(async () => page([clientA, clientB])),
     getClient: vi.fn(async (id: string) => id === clientA.id ? detailA : detailB),
@@ -478,6 +478,120 @@ function apiWith(overrides: Partial<Pick<ClientsApi, "listClients" | "getClient"
 
 const branchA: ClientBranch = { id: "branch-a", clientId: clientA.id, code: "S-1", name: "Principal", address: "Centro", city: "Tegucigalpa", region: "Francisco Morazán", country: "HN", lat: "14.1", long: "-87.2", locationReference: "Frente al parque", isActive: true, isEffectivelyActive: true, createdAt: clientA.createdAt, updatedAt: clientA.updatedAt, version: 1 };
 const branchPage = (items: ClientBranch[], pageNumber = 1): BranchPage => ({ items, pagination: { page: pageNumber, pageSize: 20, totalItems: items.length, totalPages: items.length ? 1 : 0 } });
+
+describe("mutaciones de sucursales", () => {
+  const managed = ["CLIENTS_VIEW", "CLIENTS_MANAGE"];
+  const setup = (overrides: Partial<ClientsApi> = {}, inactive = false) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=branches&branchCity=Tegucigalpa");
+    const detail = { ...detailA, isActive: !inactive, branches: [branchA] };
+    const api = apiWith({ getClient: vi.fn(async () => detail), listBranches: vi.fn(async () => branchPage([branchA])), ...overrides });
+    return { api, ...renderHook(() => useWorkspace(api, "", managed)) };
+  };
+
+  it("crea sin versión y refresca detalle y colección con filtros vigentes", async () => {
+    const createBranch = vi.fn(async () => ({ ...branchA, id: "branch-b", version: 1 }));
+    const { api, result } = setup({ createBranch });
+    await waitFor(() => expect(result.current.branches.status).toBe("success"));
+    act(() => result.current.openBranchCreate());
+    await act(async () => result.current.submitBranchForm({ name: "Norte", address: "Centro", country: "HN", lat: null, long: null }));
+    expect(createBranch).toHaveBeenCalledWith(clientA.id, expect.not.objectContaining({ version: expect.anything() }));
+    await waitFor(() => expect(api.listBranches).toHaveBeenCalledTimes(2));
+    expect(api.listBranches).toHaveBeenLastCalledWith(clientA.id, expect.objectContaining({ city: "Tegucigalpa" }), expect.any(AbortSignal));
+    await waitFor(() => expect(api.getClient).toHaveBeenCalledTimes(2));
+  });
+
+  it("edita con versión capturada y preserva draft en 409 hasta adopción explícita", async () => {
+    const updateBranch = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "conflict")).mockResolvedValueOnce({ ...branchA, name: "Mi borrador", version: 9 });
+    const { result } = setup({ updateBranch, getClient: vi.fn().mockResolvedValueOnce({ ...detailA, branches: [branchA] }).mockResolvedValue({ ...detailA, branches: [{ ...branchA, name: "Servidor", version: 8 }] }) });
+    await waitFor(() => expect(result.current.detail.data?.branches[0]).toBeDefined());
+    act(() => result.current.openBranchEdit(branchA));
+    act(() => result.current.changeBranchForm({ name: "Mi borrador" }));
+    await act(async () => result.current.submitBranchForm(result.current.branchForm.draft!.values));
+    expect(updateBranch).toHaveBeenCalledWith(clientA.id, branchA.id, expect.objectContaining({ version: 1, name: "Mi borrador" }));
+    expect(result.current.branchForm.draft).toMatchObject({ baseVersion: 1, values: { name: "Mi borrador" }, conflict: null });
+    expect(updateBranch).toHaveBeenCalledTimes(1);
+    await act(async () => result.current.reviewBranchConflict());
+    expect(result.current.branchForm.draft?.conflict).toMatchObject({ version: 8, name: "Servidor" });
+    act(() => result.current.adoptBranchConflict());
+    expect(result.current.branchForm.draft).toMatchObject({ baseVersion: 8, values: { name: "Mi borrador" } });
+    await act(async () => result.current.submitBranchForm(result.current.branchForm.draft!.values));
+    expect(updateBranch).toHaveBeenLastCalledWith(clientA.id, branchA.id, expect.objectContaining({ version: 8, name: "Mi borrador" }));
+  });
+
+  it.each([["BRANCH_HAS_ACTIVE_WORK", "La sucursal tiene trabajo activo y no puede desactivarse."], ["CLIENT_REQUIRES_ACTIVE_BRANCH", "El cliente debe conservar al menos una sucursal activa."]])("muestra %s en el diálogo sin reintento automático", async (code, message) => {
+    const deactivateBranch = vi.fn().mockRejectedValue(new ApiClientError(409, code, "conflict"));
+    const { result } = setup({ deactivateBranch });
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openBranchLifecycle(branchA, "deactivate"));
+    await act(async () => result.current.submitBranchLifecycle("Motivo documentado"));
+    expect(result.current.branchLifecycle.error).toBe(message);
+    expect(result.current.branchLifecycle.open).toBe(true);
+    expect(deactivateBranch).toHaveBeenCalledTimes(1);
+  });
+
+  it("desactiva MAIN si API confirma y no reescribe otra sucursal", async () => {
+    const other = { ...branchA, id: "branch-b", code: "S-2", name: "Otra" };
+    const deactivateBranch = vi.fn(async () => ({ ...branchA, isActive: false, isEffectivelyActive: false, version: 2 }));
+    const { result } = setup({ deactivateBranch, getClient: vi.fn(async () => ({ ...detailA, branches: [branchA, other] })) });
+    await waitFor(() => expect(result.current.detail.data?.branches.length).toBe(2));
+    act(() => result.current.openBranchLifecycle(branchA, "deactivate"));
+    await act(async () => result.current.submitBranchLifecycle("Motivo documentado"));
+    expect(deactivateBranch).toHaveBeenCalledWith(clientA.id, branchA.id, { version: 1, reason: "Motivo documentado" });
+    expect(result.current.detail.data?.branches.find((item) => item.id === branchA.id)?.isActive).toBe(false);
+    expect(result.current.detail.data?.branches.find((item) => item.id === other.id)?.isActive).toBe(true);
+  });
+
+  it("bloquea mutaciones si cliente está inactivo", async () => {
+    const updateBranch = vi.fn();
+    const { result } = setup({ updateBranch }, true);
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openBranchEdit(branchA));
+    expect(result.current.branchForm.open).toBe(false);
+    await act(async () => result.current.submitBranchForm({ name: "Nada", address: "Centro", country: "HN" }));
+    expect(updateBranch).not.toHaveBeenCalled();
+  });
+
+  it("prioriza cliente inactivo vigente en listado aunque ficha anterior siga activa", async () => {
+    const { result } = setup({ listClients: vi.fn(async () => page([{ ...clientA, version: 8, isActive: false }])) });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    await waitFor(() => expect(result.current.detail.data?.branches[0]).toBeDefined());
+    expect(result.current.detail.data?.isActive).toBe(true);
+    expect(result.current.branchClientActive).toBe(false);
+    act(() => result.current.openBranchEdit(branchA));
+    expect(result.current.branchForm.open).toBe(false);
+  });
+
+  it("mantiene el motivo y versión base de lifecycle durante conflicto hasta adoptar", async () => {
+    const deactivateBranch = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "conflict")).mockResolvedValueOnce({ ...branchA, version: 9, isActive: false });
+    const getClient = vi.fn().mockResolvedValueOnce({ ...detailA, branches: [branchA] }).mockResolvedValue({ ...detailA, branches: [{ ...branchA, version: 8 }] });
+    const { result } = setup({ deactivateBranch, getClient });
+    await waitFor(() => expect(result.current.detail.data?.branches[0]).toBeDefined());
+    act(() => result.current.openBranchLifecycle(branchA, "deactivate"));
+    await act(async () => result.current.submitBranchLifecycle("Motivo documentado"));
+    expect(result.current.branchLifecycle).toMatchObject({ baseVersion: 1, reason: "Motivo documentado", conflict: null });
+    await act(async () => result.current.reviewBranchConflict());
+    expect(result.current.branchLifecycle.conflict?.version).toBe(8);
+    act(() => result.current.adoptBranchConflict());
+    expect(result.current.branchLifecycle).toMatchObject({ baseVersion: 8, reason: "Motivo documentado", conflict: null });
+    await act(async () => result.current.submitBranchLifecycle(result.current.branchLifecycle.reason));
+    expect(deactivateBranch).toHaveBeenLastCalledWith(clientA.id, branchA.id, { version: 8, reason: "Motivo documentado" });
+  });
+
+  it("conserva colección stale tras error de refresh, sin reintento automático", async () => {
+    const updated = { ...branchA, version: 2, name: "Renovada" };
+    const listBranches = vi.fn().mockResolvedValueOnce(branchPage([branchA])).mockRejectedValueOnce(new Error("Sin red")).mockResolvedValueOnce(branchPage([updated]));
+    const { result } = setup({ listBranches, updateBranch: vi.fn(async () => updated) });
+    await waitFor(() => expect(result.current.branches.status).toBe("success"));
+    act(() => result.current.openBranchEdit(branchA));
+    await act(async () => result.current.submitBranchForm({ name: "Renovada", address: "Centro", country: "HN" }));
+    await waitFor(() => expect(result.current.branches.status).toBe("error"));
+    expect(result.current.branches).toMatchObject({ stale: true, error: "Sin red" });
+    expect(listBranches).toHaveBeenCalledTimes(2);
+    await act(async () => result.current.refreshBranches());
+    expect(listBranches).toHaveBeenCalledTimes(3);
+    expect(result.current.branches.data?.items[0]).toMatchObject({ version: 2, name: "Renovada" });
+  });
+});
 
 describe("consulta de sucursales", () => {
   it("consulta sólo al abrir la pestaña y aborta al salir a Contactos", async () => {

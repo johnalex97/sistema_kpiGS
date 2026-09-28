@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientsApi } from "../api/clients";
 import { ApiClientError, type ApiFieldError } from "../api/http";
-import type { BranchListFilters, BranchPage, ClientDetail, ClientListFilters, ClientPage, ClientTab, CreateClientInput, UpdateClientInput } from "../models/client";
+import type { BranchInput, BranchListFilters, BranchPage, ClientBranch, ClientDetail, ClientListFilters, ClientPage, ClientTab, CreateClientInput, UpdateClientInput } from "../models/client";
 import {
   deriveClientCapabilities,
   parseClientSearch,
@@ -27,6 +27,9 @@ export interface ClientsWorkspace {
   create?: { open: boolean; pending: boolean; error: string | null; fieldErrors: ApiFieldError[] };
   edit?: ClientEditState;
   lifecycle?: ClientLifecycleState;
+  branchForm?: BranchFormState;
+  branchLifecycle?: BranchLifecycleState;
+  branchClientActive?: boolean;
   openCreate?(): void;
   closeForm?(): void;
   submitCreate?(input: CreateClientInput): Promise<void>;
@@ -38,6 +41,16 @@ export interface ClientsWorkspace {
   submitClientLifecycle?(reason: string): Promise<void>;
   reviewClientConflict?(): Promise<void>;
   adoptClientConflict?(): void;
+  openBranchCreate?(): void;
+  openBranchEdit?(branch: ClientBranch): void;
+  changeBranchForm?(patch: Partial<BranchInput>): void;
+  submitBranchForm?(values: BranchInput): Promise<void>;
+  openBranchLifecycle?(branch: ClientBranch, action: "deactivate" | "reactivate"): void;
+  changeBranchLifecycleReason?(reason: string): void;
+  submitBranchLifecycle?(reason: string): Promise<void>;
+  reviewBranchConflict?(): Promise<void>;
+  adoptBranchConflict?(): void;
+  closeBranchDialogs?(): void;
   setClientFilters(patch: Partial<ClientListFilters>): void;
   setBranchFilters(patch: Partial<BranchListFilters>): void;
   clearClientFilters(): void;
@@ -83,6 +96,42 @@ export interface ClientLifecycleState {
   conflict: ClientDetail | null;
 }
 
+export interface BranchFormDraft {
+  clientId: string | null;
+  branchId: string | null;
+  baseVersion: number | null;
+  values: BranchInput;
+  conflict: ClientBranch | null;
+}
+
+export interface BranchFormState {
+  open: boolean;
+  mode: "create" | "edit";
+  draft: BranchFormDraft | null;
+  pending: boolean;
+  error: string | null;
+  fieldErrors: ApiFieldError[];
+  reviewPending: boolean;
+  reviewError: string | null;
+  versionConflict: boolean;
+}
+
+export interface BranchLifecycleState {
+  open: boolean;
+  action: "deactivate" | "reactivate";
+  clientId: string;
+  branchId: string;
+  baseVersion: number;
+  reason: string;
+  pending: boolean;
+  error: string | null;
+  fieldErrors: ApiFieldError[];
+  reviewPending: boolean;
+  reviewError: string | null;
+  versionConflict: boolean;
+  conflict: ClientBranch | null;
+}
+
 export interface UseClientsWorkspaceOptions {
   api: ClientsApi;
   permissions: string[];
@@ -114,6 +163,24 @@ function clientValues(client: ClientDetail): Omit<UpdateClientInput, "version"> 
 
 const emptyEdit = (): ClientEditState => ({ open: false, pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, draft: null });
 const emptyLifecycle = (): ClientLifecycleState => ({ open: false, action: "deactivate", clientId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, conflict: null });
+const emptyBranchForm = (): BranchFormState => ({ open: false, mode: "create", draft: null, pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false });
+const emptyBranchLifecycle = (): BranchLifecycleState => ({ open: false, action: "deactivate", clientId: "", branchId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, conflict: null });
+
+function branchMutationError(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiClientError)) return errorMessage(error, fallback);
+  const messages: Record<string, string> = {
+    VERSION_CONFLICT: "La sucursal cambió en el servidor. Revisa la versión vigente antes de continuar.",
+    BRANCH_HAS_ACTIVE_WORK: "La sucursal tiene trabajo activo y no puede desactivarse.",
+    CLIENT_REQUIRES_ACTIVE_BRANCH: "El cliente debe conservar al menos una sucursal activa.",
+    RESOURCE_INACTIVE: "El cliente o la sucursal está inactivo. Revisa su estado antes de continuar.",
+    VALIDATION_ERROR: "Revisa los campos señalados antes de continuar.",
+  };
+  return messages[error.code] ?? (error.status === 403 ? "Ya no tienes permiso para administrar esta sucursal." : fallback);
+}
+
+function branchValues(branch: ClientBranch): BranchInput {
+  return { name: branch.name, address: branch.address, city: branch.city, region: branch.region, country: branch.country, lat: branch.lat, long: branch.long, locationReference: branch.locationReference };
+}
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -148,18 +215,27 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const [create, setCreate] = useState<NonNullable<ClientsWorkspace["create"]>>({ open: false, pending: false, error: null, fieldErrors: [] });
   const [edit, setEdit] = useState<ClientEditState>(emptyEdit);
   const [lifecycle, setLifecycle] = useState<ClientLifecycleState>(emptyLifecycle);
+  const [branchForm, setBranchForm] = useState<BranchFormState>(emptyBranchForm);
+  const [branchLifecycle, setBranchLifecycle] = useState<BranchLifecycleState>(emptyBranchLifecycle);
   const createPendingRef = useRef(false);
   const editPendingRef = useRef(false);
   const lifecyclePendingRef = useRef(false);
+  const branchPendingRef = useRef(false);
+  const branchFormRef = useRef(branchForm);
+  const branchLifecycleRef = useRef(branchLifecycle);
   const editRef = useRef(edit);
   const lifecycleRef = useRef(lifecycle);
   const detailRef = useRef(detail);
   editRef.current = edit;
   lifecycleRef.current = lifecycle;
+  branchFormRef.current = branchForm;
+  branchLifecycleRef.current = branchLifecycle;
   detailRef.current = detail;
 
   const updateEdit = useCallback((next: ClientEditState) => { editRef.current = next; setEdit(next); }, []);
   const updateLifecycle = useCallback((next: ClientLifecycleState) => { lifecycleRef.current = next; setLifecycle(next); }, []);
+  const updateBranchForm = useCallback((next: BranchFormState) => { branchFormRef.current = next; setBranchForm(next); }, []);
+  const updateBranchLifecycle = useCallback((next: BranchLifecycleState) => { branchLifecycleRef.current = next; setBranchLifecycle(next); }, []);
 
   const queryRef = useRef(query);
   const canViewRef = useRef(capabilities.canView);
@@ -177,6 +253,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const observedSummariesRef = useRef<Map<string, ClientPage["items"][number]>>(new Map());
   const mutationWatchedIdsRef = useRef<Set<string>>(new Set());
   const knownClientStatesRef = useRef<Map<string, { version: number; isActive: boolean }>>(new Map());
+  const confirmedBranchesRef = useRef<Map<string, ClientBranch>>(new Map());
   const searchTimerRef = useRef<number | null>(null);
   const searchGenerationRef = useRef(0);
 
@@ -190,7 +267,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     const confirmed = confirmedClientsRef.current.get(incoming.id);
     if (confirmed && confirmed.version > incoming.version) return confirmed;
     if (!confirmed || incoming.version > confirmed.version) confirmedClientsRef.current.set(incoming.id, incoming);
-    return incoming;
+    return { ...incoming, branches: incoming.branches.map((branch) => {
+      const newer = confirmedBranchesRef.current.get(branch.id);
+      return newer && newer.version > branch.version ? newer : branch;
+    }) };
   }, [observeClientState]);
 
   const withConfirmedSummary = useCallback((incoming: ClientPage["items"][number]): ClientPage["items"][number] => {
@@ -339,7 +419,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== branchGenerationRef.current
         || queryRef.current.clientId !== clientId || queryRef.current.tab !== "branches"
         || JSON.stringify([queryRef.current.clientId, queryRef.current.branches]) !== key) return;
-      setBranchSnapshot({ key, state: { status: "success", data: incoming, error: null, stale: false } });
+      setBranchSnapshot({ key, state: { status: "success", data: { ...incoming, items: incoming.items.map((branch) => {
+        const newer = confirmedBranchesRef.current.get(branch.id);
+        return newer && newer.version > branch.version ? newer : branch;
+      }) }, error: null, stale: false } });
     } catch (error: unknown) {
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== branchGenerationRef.current
         || isAbortError(error) || queryRef.current.clientId !== clientId || queryRef.current.tab !== "branches"
@@ -397,6 +480,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const clearClientFilters = useCallback(() => {
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
+    updateBranchForm(emptyBranchForm());
+    updateBranchLifecycle(emptyBranchLifecycle());
     searchGenerationRef.current += 1;
     if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
     searchTimerRef.current = null;
@@ -407,7 +492,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     const defaults = parseClientSearch("");
     commitQuery({ ...defaults, clients: defaults.clients }, "replace");
     void refreshList();
-  }, [commitQuery, invalidateBranches, invalidateDetail, refreshList, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
 
   const selectClient = useCallback((id: string) => {
     if (!canViewRef.current || !id.trim()) return;
@@ -418,25 +503,29 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     }
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
+    updateBranchForm(emptyBranchForm());
+    updateBranchLifecycle(emptyBranchLifecycle());
     invalidateBranches();
     setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     const defaults = parseClientSearch("");
     commitQuery({ ...current, clientId: id.trim(), tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
     void refreshDetail();
-  }, [commitQuery, invalidateBranches, refreshDetail, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, refreshDetail, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
 
   const closeDetail = useCallback(() => {
     const current = queryRef.current;
     if (!current.clientId) return;
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
+    updateBranchForm(emptyBranchForm());
+    updateBranchLifecycle(emptyBranchLifecycle());
     invalidateDetail();
     invalidateBranches();
     const defaults = parseClientSearch("");
     setDetailSnapshot({ key: null, state: idle<ClientDetail>() });
     setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     commitQuery({ ...current, clientId: null, tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
-  }, [commitQuery, invalidateBranches, invalidateDetail, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateDetail, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
 
   const setTab = useCallback((tab: ClientTab) => {
     const previous = queryRef.current.tab;
@@ -671,12 +760,175 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     }
   }, [updateEdit, updateLifecycle]);
 
+  const canMutateBranch = useCallback((clientId: string): boolean => {
+    const client = detailRef.current.data;
+    const known = knownClientStatesRef.current.get(clientId);
+    return Boolean(canViewRef.current && canManageRef.current && client?.id === clientId
+      && queryRef.current.clientId === clientId && client.isActive && known?.isActive !== false);
+  }, []);
+
+  const closeBranchDialogs = useCallback(() => {
+    if (branchPendingRef.current) return;
+    updateBranchForm(emptyBranchForm());
+    updateBranchLifecycle(emptyBranchLifecycle());
+  }, [updateBranchForm, updateBranchLifecycle]);
+
+  const openBranchCreate = useCallback(() => {
+    const client = detailRef.current.data;
+    if (!client || !canMutateBranch(client.id) || branchPendingRef.current) return;
+    updateBranchLifecycle(emptyBranchLifecycle());
+    updateBranchForm({ ...emptyBranchForm(), open: true, draft: { clientId: client.id, branchId: null, baseVersion: null,
+      values: { name: "", address: "", city: null, region: null, country: "HN", lat: null, long: null, locationReference: null }, conflict: null } });
+  }, [canMutateBranch, updateBranchForm, updateBranchLifecycle]);
+
+  const openBranchEdit = useCallback((branch: ClientBranch) => {
+    if (!canMutateBranch(branch.clientId) || !branch.isActive || branchPendingRef.current) return;
+    updateBranchLifecycle(emptyBranchLifecycle());
+    updateBranchForm({ ...emptyBranchForm(), open: true, mode: "edit", draft: { clientId: branch.clientId,
+      branchId: branch.id, baseVersion: branch.version, values: branchValues(branch), conflict: null } });
+  }, [canMutateBranch, updateBranchForm, updateBranchLifecycle]);
+
+  const changeBranchForm = useCallback((patch: Partial<BranchInput>) => {
+    const state = branchFormRef.current;
+    if (!state.open || !state.draft || branchPendingRef.current) return;
+    updateBranchForm({ ...state, error: null, fieldErrors: [], draft: { ...state.draft, values: { ...state.draft.values, ...patch } } });
+  }, [updateBranchForm]);
+
+  const reconcileBranchMutation = useCallback((branch: ClientBranch) => {
+    const previous = confirmedBranchesRef.current.get(branch.id);
+    if (!previous || branch.version >= previous.version) confirmedBranchesRef.current.set(branch.id, branch);
+    setDetailSnapshot((current) => {
+      const client = current.state.data;
+      if (!client || client.id !== branch.clientId) return current;
+      const exists = client.branches.some((item) => item.id === branch.id);
+      return { ...current, state: { ...current.state, data: { ...client, branches: exists
+        ? client.branches.map((item) => item.id === branch.id ? branch : item)
+        : [...client.branches, branch] } } };
+    });
+    setBranchSnapshot((current) => current.state.data && queryRef.current.clientId === branch.clientId
+      ? { ...current, state: { ...current.state, data: { ...current.state.data, items: current.state.data.items.map((item) => item.id === branch.id ? branch : item) } } }
+      : current);
+  }, []);
+
+  const afterBranchSuccess = useCallback((branch: ClientBranch) => {
+    invalidateBranches();
+    invalidateDetail();
+    invalidateList();
+    reconcileBranchMutation(branch);
+    void refreshBranches();
+    void refreshDetail();
+    void refreshList();
+  }, [invalidateBranches, invalidateDetail, invalidateList, reconcileBranchMutation, refreshBranches, refreshDetail, refreshList]);
+
+  const submitBranchForm = useCallback(async (values: BranchInput): Promise<void> => {
+    const state = branchFormRef.current;
+    const draft = state.draft;
+    if (!state.open || !draft?.clientId || !canMutateBranch(draft.clientId) || branchPendingRef.current) return;
+    branchPendingRef.current = true;
+    const nextDraft = { ...draft, values };
+    updateBranchForm({ ...state, draft: nextDraft, pending: true, error: null, fieldErrors: [] });
+    try {
+      const branch = state.mode === "create"
+        ? await api.createBranch(draft.clientId, values)
+        : await api.updateBranch(draft.clientId, draft.branchId!, { ...values, version: draft.baseVersion! });
+      if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      updateBranchForm(emptyBranchForm());
+      afterBranchSuccess(branch);
+    } catch (error: unknown) {
+      if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
+      updateBranchForm({ ...branchFormRef.current, pending: false, error: branchMutationError(error, "No fue posible guardar la sucursal."),
+        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [], versionConflict });
+    } finally {
+      branchPendingRef.current = false;
+    }
+  }, [afterBranchSuccess, api, canMutateBranch, updateBranchForm]);
+
+  const openBranchLifecycle = useCallback((branch: ClientBranch, action: "deactivate" | "reactivate") => {
+    if (!canMutateBranch(branch.clientId) || branch.isActive !== (action === "deactivate") || branchPendingRef.current) return;
+    updateBranchForm(emptyBranchForm());
+    updateBranchLifecycle({ ...emptyBranchLifecycle(), open: true, action, clientId: branch.clientId, branchId: branch.id, baseVersion: branch.version });
+  }, [canMutateBranch, updateBranchForm, updateBranchLifecycle]);
+
+  const changeBranchLifecycleReason = useCallback((reason: string) => {
+    const state = branchLifecycleRef.current;
+    if (!state.open || branchPendingRef.current) return;
+    updateBranchLifecycle({ ...state, reason, error: null, fieldErrors: [] });
+  }, [updateBranchLifecycle]);
+
+  const submitBranchLifecycle = useCallback(async (reason: string): Promise<void> => {
+    const state = branchLifecycleRef.current;
+    if (!state.open || !canMutateBranch(state.clientId) || branchPendingRef.current) return;
+    const normalized = reason.trim();
+    if (normalized.length < 10 || normalized.length > 500) {
+      updateBranchLifecycle({ ...state, reason, error: "El motivo debe tener entre 10 y 500 caracteres." });
+      return;
+    }
+    branchPendingRef.current = true;
+    updateBranchLifecycle({ ...state, reason, pending: true, error: null, fieldErrors: [] });
+    try {
+      const branch = await (state.action === "deactivate" ? api.deactivateBranch : api.reactivateBranch)(state.clientId, state.branchId, { version: state.baseVersion, reason: normalized });
+      if (!mountedRef.current || queryRef.current.clientId !== state.clientId) return;
+      updateBranchLifecycle(emptyBranchLifecycle());
+      afterBranchSuccess(branch);
+    } catch (error: unknown) {
+      if (!mountedRef.current || queryRef.current.clientId !== state.clientId) return;
+      const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
+      updateBranchLifecycle({ ...branchLifecycleRef.current, pending: false, error: branchMutationError(error, "No fue posible cambiar el estado de la sucursal."),
+        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [], versionConflict });
+    } finally {
+      branchPendingRef.current = false;
+    }
+  }, [afterBranchSuccess, api, canMutateBranch, updateBranchLifecycle]);
+
+  const reviewBranchConflict = useCallback(async (): Promise<void> => {
+    const form = branchFormRef.current;
+    const life = branchLifecycleRef.current;
+    const clientId = form.open ? form.draft?.clientId : life.open ? life.clientId : null;
+    const branchId = form.open ? form.draft?.branchId : life.open ? life.branchId : null;
+    const baseVersion = form.open ? form.draft?.baseVersion : life.open ? life.baseVersion : null;
+    if (!clientId || !branchId || baseVersion === null || baseVersion === undefined || !canViewRef.current || queryRef.current.clientId !== clientId) return;
+    if (form.open) updateBranchForm({ ...form, reviewPending: true, reviewError: null });
+    else updateBranchLifecycle({ ...life, reviewPending: true, reviewError: null });
+    try {
+      const client = await api.getClient(clientId, true);
+      if (!mountedRef.current || queryRef.current.clientId !== clientId) return;
+      const current = client.branches.find((item) => item.id === branchId) ?? null;
+      const latest = current && current.version > baseVersion ? current : null;
+      const reviewError = latest ? null : "No hay una versión más reciente disponible.";
+      if (form.open && branchFormRef.current.open && branchFormRef.current.draft?.branchId === branchId) {
+        const state = branchFormRef.current;
+        updateBranchForm({ ...state, reviewPending: false, reviewError, draft: { ...state.draft!, conflict: latest } });
+      } else if (life.open && branchLifecycleRef.current.open && branchLifecycleRef.current.branchId === branchId) {
+        updateBranchLifecycle({ ...branchLifecycleRef.current, reviewPending: false, reviewError, conflict: latest });
+      }
+    } catch {
+      if (form.open && branchFormRef.current.open) updateBranchForm({ ...branchFormRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+      else if (life.open && branchLifecycleRef.current.open) updateBranchLifecycle({ ...branchLifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+    }
+  }, [api, updateBranchForm, updateBranchLifecycle]);
+
+  const adoptBranchConflict = useCallback(() => {
+    const form = branchFormRef.current;
+    if (form.open && form.draft?.conflict && !form.pending && !form.reviewPending) {
+      updateBranchForm({ ...form, error: null, reviewError: null, versionConflict: false,
+        draft: { ...form.draft, baseVersion: form.draft.conflict.version, conflict: null } });
+      return;
+    }
+    const life = branchLifecycleRef.current;
+    if (life.open && life.conflict && !life.pending && !life.reviewPending) {
+      updateBranchLifecycle({ ...life, baseVersion: life.conflict.version, conflict: null, error: null, reviewError: null, versionConflict: false });
+    }
+  }, [updateBranchForm, updateBranchLifecycle]);
+
   useEffect(() => {
     if (!capabilities.canManage || !capabilities.canView) {
       updateEdit(emptyEdit());
       updateLifecycle(emptyLifecycle());
+      updateBranchForm(emptyBranchForm());
+      updateBranchLifecycle(emptyBranchLifecycle());
     }
-  }, [capabilities.canManage, capabilities.canView, updateEdit, updateLifecycle]);
+  }, [capabilities.canManage, capabilities.canView, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -707,6 +959,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (restored.clientId !== queryRef.current.clientId) {
         updateEdit(emptyEdit());
         updateLifecycle(emptyLifecycle());
+        updateBranchForm(emptyBranchForm());
+        updateBranchLifecycle(emptyBranchLifecycle());
       }
       queryRef.current = restored;
       setQuery(restored);
@@ -716,7 +970,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [refreshBranches, refreshDetail, refreshList, updateEdit, updateLifecycle]);
+  }, [refreshBranches, refreshDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
 
   useEffect(() => {
     const normalized = search.trim();
@@ -747,5 +1001,15 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     invalidateBranches();
   }, [invalidateBranches, invalidateDetail, invalidateList]);
 
-  return { query, capabilities, list, detail, branches, create, edit, lifecycle, openCreate, closeForm: () => { closeForm(); closeClientForms(); }, submitCreate, openEdit, changeClientEdit, submitClientEdit, openClientLifecycle, changeClientLifecycleReason, submitClientLifecycle, reviewClientConflict, adoptClientConflict, setClientFilters, setBranchFilters, clearClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refreshBranches, refresh };
+  const currentClient = detail.data?.id === query.clientId ? detail.data : null;
+  const knownClient = currentClient ? knownClientStatesRef.current.get(currentClient.id) : null;
+  const branchClientActive = Boolean(currentClient?.isActive && knownClient?.isActive !== false);
+
+  return { query, capabilities, list, detail, branches, create, edit, lifecycle, branchForm, branchLifecycle, branchClientActive,
+    openCreate, closeForm: () => { closeForm(); closeClientForms(); closeBranchDialogs(); }, submitCreate, openEdit,
+    changeClientEdit, submitClientEdit, openClientLifecycle, changeClientLifecycleReason, submitClientLifecycle,
+    reviewClientConflict, adoptClientConflict, openBranchCreate, openBranchEdit, changeBranchForm, submitBranchForm,
+    openBranchLifecycle, changeBranchLifecycleReason, submitBranchLifecycle, reviewBranchConflict, adoptBranchConflict,
+    closeBranchDialogs, setClientFilters, setBranchFilters, clearClientFilters, selectClient, closeDetail, setTab,
+    refreshList, refreshDetail, refreshBranches, refresh };
 }

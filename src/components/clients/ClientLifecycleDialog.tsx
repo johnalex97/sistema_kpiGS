@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ApiFieldError } from "../../api/http";
-import type { ClientDetail } from "../../models/client";
+import type { ClientBranch, ClientDetail } from "../../models/client";
 
 interface ClientLifecycleDialogProps {
   client: ClientDetail;
@@ -49,6 +49,38 @@ export function ClientLifecycleDialog({ client, action, baseVersion, reason, pen
       {reviewError && <p className="clients-wizard__server-error" role="alert">{reviewError}</p>}
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
       <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Procesando…" : `Confirmar ${verb}`}</button></footer>
+    </form>
+  </section></div>;
+}
+
+interface BranchLifecycleDialogProps extends Omit<ClientLifecycleDialogProps, "client" | "conflict"> {
+  branch: ClientBranch;
+  conflict: ClientBranch | null;
+}
+
+export function BranchLifecycleDialog({ branch, action, baseVersion, reason, pending, reviewPending, error, reviewError, versionConflict = false, conflict, fieldErrors = [], onReasonChange, onSubmit, onClose, onReview, onAdopt }: BranchLifecycleDialogProps) {
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [submitGuard, setSubmitGuard] = useState(false);
+  const deactivating = action === "deactivate";
+  const reasonError = fieldErrors.find((issue) => issue.field === "reason")?.message ?? localError;
+  const submit = () => {
+    if (pending || submitGuard) return;
+    const normalized = reason.trim();
+    if (normalized.length < 10 || normalized.length > 500) { setLocalError("El motivo debe tener entre 10 y 500 caracteres."); return; }
+    setLocalError(null);
+    setSubmitGuard(true);
+    void Promise.resolve(onSubmit(normalized)).finally(() => setSubmitGuard(false));
+  };
+  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={`${deactivating ? "Desactivar" : "Reactivar"} sucursal ${branch.name}`}>
+    <header className="clients-wizard__head"><p className="eyebrow">Ciclo de vida</p><h2>{deactivating ? "Desactivar" : "Reactivar"} sucursal</h2><p>{branch.name} · versión base {baseVersion}</p></header>
+    <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <p>{deactivating ? "La sucursal dejará de estar disponible si el servidor confirma la operación. Otras sucursales conservan su estado interno." : "La sucursal volverá a estar disponible según el estado del cliente."}</p>
+      <label className="clients-wizard__field">Motivo<textarea aria-label="Motivo" value={reason} disabled={pending} aria-invalid={Boolean(reasonError)} aria-describedby={reasonError ? "branch-lifecycle-reason-error" : undefined} onChange={(event) => { setLocalError(null); onReasonChange(event.target.value); }} />{reasonError && <span id="branch-lifecycle-reason-error" className="clients-wizard__error" role="alert">{reasonError}</span>}</label>
+      {conflict && <section className="clients-notice" role="region" aria-label="Estado vigente de la sucursal"><p>Versión actual: {conflict.version}. Tu motivo se conserva.</p><p>{conflict.name} · {conflict.isActive ? "Activa" : "Inactiva"}</p><button type="button" disabled={pending || reviewPending} onClick={onAdopt}>Adoptar versión {conflict.version}</button></section>}
+      {error && <p className="clients-wizard__server-error" role="alert">{error}</p>}
+      {reviewError && <p className="clients-wizard__server-error" role="alert">{reviewError}</p>}
+      {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
+      <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Procesando…" : "Confirmar"}</button></footer>
     </form>
   </section></div>;
 }

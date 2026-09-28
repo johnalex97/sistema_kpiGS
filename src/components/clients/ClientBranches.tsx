@@ -1,4 +1,4 @@
-import type { BranchListFilters, BranchPage } from "../../models/client";
+import type { BranchListFilters, BranchPage, ClientBranch } from "../../models/client";
 import type { AsyncState } from "../../hooks/useClientsWorkspace";
 
 export interface ClientBranchesProps {
@@ -7,6 +7,10 @@ export interface ClientBranchesProps {
   branches: AsyncState<BranchPage>;
   onChange(patch: Partial<BranchListFilters>): void;
   onRetry(): void;
+  canManage?: boolean;
+  onCreate?(): void;
+  onEdit?(branch: ClientBranch): void;
+  onLifecycle?(branch: ClientBranch, action: "deactivate" | "reactivate"): void;
 }
 
 function locationUrl(branch: BranchPage["items"][number]): string | null {
@@ -18,9 +22,10 @@ function locationUrl(branch: BranchPage["items"][number]): string | null {
   return `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}`;
 }
 
-export function ClientBranches({ clientActive, filters, branches, onChange, onRetry }: ClientBranchesProps) {
+export function ClientBranches({ clientActive, filters, branches, onChange, onRetry, canManage, onCreate, onEdit, onLifecycle }: ClientBranchesProps) {
   const pagination = branches.data?.pagination;
   return <div className="clients-branches">
+    {canManage && clientActive && <button className="button button--primary" type="button" onClick={onCreate}>Nueva sucursal</button>}
     <div className="clients-branches__filters">
       <label>Buscar sucursales<input type="search" value={filters.search ?? ""} maxLength={100} onChange={(event) => onChange({ search: event.target.value || undefined })} /></label>
       <label>Ciudad<input type="text" value={filters.city ?? ""} maxLength={100} onChange={(event) => onChange({ city: event.target.value || undefined })} /></label>
@@ -44,6 +49,10 @@ export function ClientBranches({ clientActive, filters, branches, onChange, onRe
         {href && <p className="clients-branch__coordinates"><span>Coordenadas</span>{branch.lat?.trim()}, {branch.long?.trim()}</p>}
         <div className="clients-branch__foot"><span className={`clients-status ${branch.isActive ? "clients-status--active" : "clients-status--inactive"}`}><i aria-hidden="true" />Estado interno: {branch.isActive ? "Activa" : "Inactiva"}</span><span className={`clients-branch__effective ${effectiveActive ? "clients-branch__effective--active" : ""}`}>{effectiveLabel}</span></div>
         {href && <a className="clients-branch__map" href={href} target="_blank" rel="noreferrer" aria-label={`Ver ubicación de ${branch.name}`}>Ver ubicación</a>}
+        {canManage && clientActive && <div className="clients-wizard__actions">
+          {branch.isActive && <button className="button button--ghost" type="button" onClick={() => onEdit?.(branch)}>Editar sucursal</button>}
+          <button className="button button--ghost" type="button" onClick={() => onLifecycle?.(branch, branch.isActive ? "deactivate" : "reactivate")}>{branch.isActive ? "Desactivar sucursal" : "Reactivar sucursal"}</button>
+        </div>}
       </article>;
     })}</div>}
     {pagination && pagination.totalPages > 1 && <nav className="clients-pagination" aria-label="Paginación de sucursales"><button className="button button--ghost" type="button" disabled={pagination.page <= 1} onClick={() => onChange({ page: pagination.page - 1 })}>Anterior</button><span>Página {pagination.page} de {pagination.totalPages}</span><button className="button button--ghost" type="button" disabled={pagination.page >= pagination.totalPages} onClick={() => onChange({ page: pagination.page + 1 })}>Siguiente</button></nav>}
