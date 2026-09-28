@@ -71,8 +71,8 @@ export function parseClientSearch(search: string): ClientQueryState {
   const scope = query.get("contactScope");
   if (city) Object.assign(branches, { city });
   if (region) Object.assign(branches, { region });
-  if (branchId) contacts.branchId = branchId;
   if (scope === "CLIENT" || scope === "BRANCH") contacts.scope = scope;
+  if (branchId && contacts.scope !== "CLIENT") contacts.branchId = branchId;
   return {
     clients: readFilters(query, ""),
     clientId,
@@ -110,7 +110,7 @@ export function serializeClientSearch(search: string, state: ClientQueryState): 
 
   writeFilters(query, state.contacts, "contact");
   const branchId = text(state.contacts.branchId);
-  if (branchId) query.set("contactBranchId", branchId);
+  if (branchId && state.contacts.scope !== "CLIENT") query.set("contactBranchId", branchId);
   const scope: ContactScope | undefined = state.contacts.scope;
   if (scope === "CLIENT" || scope === "BRANCH") query.set("contactScope", scope);
   return query;

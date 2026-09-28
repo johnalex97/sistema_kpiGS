@@ -73,4 +73,12 @@ describe("ClientContacts", () => {
     expect(screen.getByLabelText("Sucursal")).toBeDisabled();
     expect(screen.getByLabelText("Sucursal")).toHaveValue("");
   });
+  it("no infiere disponibilidad positiva para una sucursal aún desconocida", () => {
+    const item = { ...base, scope: "BRANCH" as const, branchId: "missing-branch", branchName: "Remota", isEffectivelyActive: true };
+    render(<ClientContacts clientActive={true} branches={[]} filters={filters} contacts={{ status: "success", data: page([item]), error: null, stale: false }} onChange={vi.fn()} onRetry={vi.fn()} />);
+    const card = screen.getByRole("article", { name: "Contacto Ana General" });
+    expect(within(card).queryByText("Disponible")).not.toBeInTheDocument();
+    expect(within(card).getByText(/No disponible/)).toBeVisible();
+    expect(within(card).getByText("Remota")).toBeVisible();
+  });
 });

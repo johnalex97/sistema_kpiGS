@@ -25,6 +25,7 @@ function workspace(overrides: Partial<ClientsWorkspace> = {}): ClientsWorkspace 
     detail: { status: "idle", data: null, error: null, stale: false },
     branches: { status: "idle", data: null, error: null, stale: false },
     contacts: { status: "idle", data: null, error: null, stale: false },
+    contactBranches: [],
     setClientFilters: vi.fn(), clearClientFilters: vi.fn(), selectClient: vi.fn(), closeDetail: vi.fn(), setTab: vi.fn(),
     setBranchFilters: vi.fn(), refreshBranches: vi.fn(async () => {}),
     setContactFilters: vi.fn(), refreshContacts: vi.fn(async () => {}),
@@ -39,13 +40,13 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
-  it("usa la sucursal de mayor versión al pasar Sucursales→Contactos aunque la ficha vieja siga abierta", async () => {
-    window.history.replaceState({}, "", "/clientes?clientId=client-1");
+  it.each([true, false])("usa la sucursal conocida al pasar Sucursales→Contactos aunque la ficha %s la incluya", async (inDetail) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-1&branchIncludeInactive=true");
     const branch: ClientBranch = { id: "branch-1", clientId: client.id, code: "S-1", name: "Principal", address: "Centro", city: null, region: null, country: "HN", lat: null, long: null, locationReference: null, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 1 };
     const contact: ClientContact = { id: "contact-1", clientId: client.id, branchId: branch.id, scope: "BRANCH", branchName: "Principal", fullName: "Ana", position: null, phone: null, email: null, isPrimary: false, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 1 };
     const api = {
       listClients: vi.fn(async () => ({ items: [client], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } })),
-      getClient: vi.fn(async () => ({ ...detail, branches: [branch] })),
+      getClient: vi.fn(async () => ({ ...detail, branches: inDetail ? [branch] : [] })),
       listBranches: vi.fn(async () => ({ items: [{ ...branch, version: 2, isActive: false, isEffectivelyActive: false }], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } })),
       listContacts: vi.fn(async () => ({ items: [contact], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } })),
     } as unknown as ClientsApi;
@@ -53,7 +54,7 @@ describe("ClientsPage", () => {
     render(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } })}><ClientsPage api={api} /></AuthContext.Provider>);
     await screen.findByRole("article", { name: "Ficha de Café Central" });
     await user.click(screen.getByRole("tab", { name: "Sucursales" }));
-    await waitFor(() => expect(api.listBranches).toHaveBeenCalledOnce());
+    await waitFor(() => expect(api.listBranches).toHaveBeenCalledWith(client.id, expect.objectContaining({ includeInactive: true }), expect.any(AbortSignal)));
     await screen.findByText("No disponible", { exact: true });
     await user.click(screen.getByRole("tab", { name: "Contactos" }));
     const card = await screen.findByRole("article", { name: "Contacto Ana" });

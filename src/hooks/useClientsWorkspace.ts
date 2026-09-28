@@ -25,6 +25,7 @@ export interface ClientsWorkspace {
   detail: AsyncState<ClientDetail>;
   branches: AsyncState<BranchPage>;
   contacts: AsyncState<ContactPage>;
+  contactBranches: ClientBranch[];
   create?: { open: boolean; pending: boolean; error: string | null; fieldErrors: ApiFieldError[] };
   edit?: ClientEditState;
   lifecycle?: ClientLifecycleState;
@@ -541,6 +542,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     const current = queryRef.current;
     if (!current.clientId) return;
     const filters = { ...current.contacts, ...patch, page: patch.page ?? 1 };
+    if (filters.scope === "CLIENT") delete filters.branchId;
     if (filters.isActive === false) filters.includeInactive = true;
     else if (Object.prototype.hasOwnProperty.call(patch, "isActive")
       && !Object.prototype.hasOwnProperty.call(patch, "includeInactive")) filters.includeInactive = false;
@@ -1092,8 +1094,18 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const currentClient = detail.data?.id === query.clientId ? detail.data : null;
   const knownClient = currentClient ? knownClientStatesRef.current.get(currentClient.id) : null;
   const branchClientActive = Boolean(currentClient?.isActive && knownClient?.isActive !== false);
+  const contactBranchMap = new Map<string, ClientBranch>();
+  if (currentClient) {
+    for (const branch of currentClient.branches) contactBranchMap.set(branch.id, branch);
+    for (const known of confirmedBranchesRef.current.values()) {
+      if (known.clientId !== currentClient.id) continue;
+      const current = contactBranchMap.get(known.id);
+      if (!current || known.version > current.version) contactBranchMap.set(known.id, known);
+    }
+  }
+  const contactBranches = [...contactBranchMap.values()];
 
-  return { query, capabilities, list, detail, branches, contacts, create, edit, lifecycle, branchForm, branchLifecycle, branchClientActive,
+  return { query, capabilities, list, detail, branches, contacts, contactBranches, create, edit, lifecycle, branchForm, branchLifecycle, branchClientActive,
     openCreate, closeForm: () => { closeForm(); closeClientForms(); closeBranchDialogs(); }, submitCreate, openEdit,
     changeClientEdit, submitClientEdit, openClientLifecycle, changeClientLifecycleReason, submitClientLifecycle,
     reviewClientConflict, adoptClientConflict, openBranchCreate, openBranchEdit, changeBranchForm, submitBranchForm,

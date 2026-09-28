@@ -14,6 +14,17 @@ const branch = { id: "b1", version: 3 } as ClientBranch;
 const contact = { id: "ct1", version: 3 } as ClientContact;
 
 describe("estado URL de clientes", () => {
+  it("normaliza ámbito general sin sucursal al leer y serializar, preservando parámetros ajenos", () => {
+    const input = "?clientId=c1&clientTab=contacts&contactScope=CLIENT&contactBranchId=no-existe&source=shell";
+    const state = parseClientSearch(input);
+    expect(state.contacts).toMatchObject({ scope: "CLIENT" });
+    expect(state.contacts.branchId).toBeUndefined();
+    const query = serializeClientSearch(input, state);
+    expect(query.get("contactScope")).toBe("CLIENT");
+    expect(query.has("contactBranchId")).toBe(false);
+    expect(query.get("source")).toBe("shell");
+    expect(serializeClientSearch(input, { ...state, contacts: { ...state.contacts, branchId: "still-invalid" } }).has("contactBranchId")).toBe(false);
+  });
   it("parsea las 21 claves de clientes, sucursales y contactos", () => {
     const parsed = parseClientSearch("?search=Acme&isActive=false&includeInactive=false&page=2&pageSize=30&clientId=c1&clientTab=contacts&branchSearch=Centro&branchCity=Tegucigalpa&branchRegion=Francisco%20Morazan&branchIsActive=false&branchIncludeInactive=false&branchPage=4&branchPageSize=40&contactSearch=Ana&contactBranchId=b1&contactScope=BRANCH&contactIsActive=false&contactIncludeInactive=false&contactPage=3&contactPageSize=50");
 

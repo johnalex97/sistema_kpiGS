@@ -21,6 +21,17 @@ const contact: ClientContact = { id: "contact-a", clientId: clientA.id, branchId
 const contactPage = (items: ClientContact[]): ContactPage => ({ items, pagination: { page: 1, pageSize: 20, totalItems: items.length, totalPages: 1 } });
 
 describe("consulta de contactos", () => {
+  it("normaliza URL directa CLIENT + branchId antes de consultar sin perder parámetros ajenos", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=contacts&contactScope=CLIENT&contactBranchId=no-existe&source=shell");
+    const api = apiWith({ listContacts: vi.fn(async () => contactPage([])) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(api.listContacts).toHaveBeenCalledOnce());
+    expect(api.listContacts).toHaveBeenCalledWith(clientA.id, expect.objectContaining({ scope: "CLIENT" }), expect.any(AbortSignal));
+    expect(vi.mocked(api.listContacts).mock.calls[0]?.[1].branchId).toBeUndefined();
+    expect(result.current.query.contacts.branchId).toBeUndefined();
+    expect(new URLSearchParams(window.location.search).has("contactBranchId")).toBe(false);
+    expect(new URLSearchParams(window.location.search).get("source")).toBe("shell");
+  });
   it("carga sólo al abrir contactos y descarta respuesta al salir de la pestaña", async () => {
     window.history.replaceState({}, "", "/clientes?clientId=client-a");
     const pending = deferred<ContactPage>();

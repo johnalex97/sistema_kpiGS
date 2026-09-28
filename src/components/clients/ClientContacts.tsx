@@ -27,10 +27,11 @@ function phoneHref(value: string | null): string | null {
 }
 
 function ContactCard({ contact, clientActive, branch }: { contact: ClientContact; clientActive: boolean; branch?: ClientBranch }) {
-  const effective = contact.isActive && contact.isEffectivelyActive && clientActive && (contact.scope === "CLIENT" || !branch || branch.isActive);
+  const effective = contact.isActive && contact.isEffectivelyActive && clientActive && (contact.scope === "CLIENT" || Boolean(branch?.isActive));
   const effectiveLabel = !clientActive && contact.isActive ? "No disponible por cliente inactivo"
     : contact.scope === "BRANCH" && branch && !branch.isActive && contact.isActive
-      ? "No disponible por sucursal inactiva" : effective ? "Disponible" : "No disponible";
+      ? "No disponible por sucursal inactiva" : contact.scope === "BRANCH" && !branch
+        ? "No disponible: sucursal no verificada" : effective ? "Disponible" : "No disponible";
   const email = emailHref(contact.email);
   const phone = phoneHref(contact.phone);
   return <article className="clients-contact" aria-label={`Contacto ${contact.fullName}`}>
