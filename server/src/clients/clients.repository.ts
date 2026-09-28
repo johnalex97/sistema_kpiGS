@@ -515,9 +515,13 @@ export function createClientsRepository(
       const where: Prisma.ContactoClienteWhereInput = {
         clienteId: clientId,
         ...state,
-        ...(filters.branchId && { sucursalId: filters.branchId }),
-        ...(filters.scope === "CLIENT" && { sucursalId: null }),
-        ...(filters.scope === "BRANCH" && { sucursalId: { not: null } }),
+        ...(filters.scope === "CLIENT"
+          ? { sucursalId: null }
+          : filters.branchId
+            ? { sucursalId: filters.branchId }
+            : filters.scope === "BRANCH"
+              ? { sucursalId: { not: null } }
+              : {}),
         ...(filters.search && {
           OR: [
             { fullName: { contains: filters.search, mode: "insensitive" } },

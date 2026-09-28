@@ -1,10 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AuthContext } from "../auth/AuthContext";
 import { authContext, limitedUser } from "../test/auth-test-utils";
 import type { ClientsWorkspace } from "../hooks/useClientsWorkspace";
-import type { ClientDetail, ClientSummary } from "../models/client";
+import type { ClientsApi } from "../api/clients";
+import type { ClientBranch, ClientContact, ClientDetail, ClientSummary } from "../models/client";
 import { ClientsPage } from "./ClientsPage";
 
 const client: ClientSummary = {
@@ -38,6 +39,34 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
+  it("usa la sucursal de mayor versión al pasar Sucursales→Contactos aunque la ficha vieja siga abierta", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-1");
+    const branch: ClientBranch = { id: "branch-1", clientId: client.id, code: "S-1", name: "Principal", address: "Centro", city: null, region: null, country: "HN", lat: null, long: null, locationReference: null, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 1 };
+    const contact: ClientContact = { id: "contact-1", clientId: client.id, branchId: branch.id, scope: "BRANCH", branchName: "Principal", fullName: "Ana", position: null, phone: null, email: null, isPrimary: false, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 1 };
+    const api = {
+      listClients: vi.fn(async () => ({ items: [client], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } })),
+      getClient: vi.fn(async () => ({ ...detail, branches: [branch] })),
+      listBranches: vi.fn(async () => ({ items: [{ ...branch, version: 2, isActive: false, isEffectivelyActive: false }], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } })),
+      listContacts: vi.fn(async () => ({ items: [contact], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } })),
+    } as unknown as ClientsApi;
+    const user = userEvent.setup();
+    render(<AuthContext.Provider value={authContext({ user: { ...limitedUser, permissions: ["CLIENTS_VIEW"] } })}><ClientsPage api={api} /></AuthContext.Provider>);
+    await screen.findByRole("article", { name: "Ficha de Café Central" });
+    await user.click(screen.getByRole("tab", { name: "Sucursales" }));
+    await waitFor(() => expect(api.listBranches).toHaveBeenCalledOnce());
+    await screen.findByText("No disponible", { exact: true });
+    await user.click(screen.getByRole("tab", { name: "Contactos" }));
+    const card = await screen.findByRole("article", { name: "Contacto Ana" });
+    expect(within(card).getByText("No disponible por sucursal inactiva")).toBeVisible();
+  });
+
+  it("Actualizar usa refresh global para incluir la colección hija activa", async () => {
+    const current = workspace({ query: { ...workspace().query, clientId: client.id, tab: "contacts" }, detail: { status: "success", data: detail, error: null, stale: false } });
+    renderPage(current);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Actualizar" }));
+    expect(current.refresh).toHaveBeenCalledOnce();
+    expect(current.refreshList).not.toHaveBeenCalled();
+  });
   it("conecta filtros y reintento de contactos con la ficha", async () => {
     const current = workspace({
       query: { ...workspace().query, clientId: client.id, tab: "contacts" },

@@ -55,7 +55,7 @@ function ClientsWorkspaceView({ workspace, onClearSearch }: { workspace: Clients
   return <section className={`panel clients-workspace ${hasDetail ? "clients-workspace--detail" : ""}`} aria-label="Registro de clientes">
     <header className="clients-toolbar">
       <div><p className="eyebrow">Directorio de servicio</p><h2>Registro de clientes</h2><p>{pagination ? `${pagination.totalItems} ${pagination.totalItems === 1 ? "cliente" : "clientes"}` : "Empresas atendidas por Geek Solution"}</p></div>
-      <div className="clients-toolbar__actions"><button className="button button--ghost" type="button" onClick={() => void workspace.refreshList()}><RefreshCw size={16} aria-hidden="true" />Actualizar</button>
+      <div className="clients-toolbar__actions"><button className="button button--ghost" type="button" onClick={() => void workspace.refresh()}><RefreshCw size={16} aria-hidden="true" />Actualizar</button>
         {canManage && <button className="button button--primary" type="button" onClick={() => workspace.openCreate?.()}><UserRoundPlus size={16} aria-hidden="true" />Nuevo cliente</button>}</div>
     </header>
     <ClientFilters filters={query.clients} onChange={workspace.setClientFilters} onClear={() => { onClearSearch?.(); workspace.clearClientFilters(); }} />

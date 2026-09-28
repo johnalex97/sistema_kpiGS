@@ -100,6 +100,20 @@ describe("consulta de contactos", () => {
     await act(async () => restored.resolve(contactPage([contact])));
     expect(result.current.contacts.data?.items[0]?.fullName).toBe("Ana");
   });
+  it("refresh global actualiza contactos activos y descarta la respuesta si se cambia de pestaña", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=contacts");
+    const late = deferred<ContactPage>();
+    const api = apiWith({ listContacts: vi.fn().mockResolvedValueOnce(contactPage([contact])).mockImplementationOnce(() => late.promise) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.contacts.status).toBe("success"));
+    let refreshing!: Promise<void>;
+    act(() => { refreshing = result.current.refresh(); });
+    expect(api.listContacts).toHaveBeenCalledTimes(2);
+    act(() => result.current.setTab("summary"));
+    await act(async () => late.resolve(contactPage([{ ...contact, fullName: "Tardía" }])));
+    await refreshing;
+    expect(result.current.contacts.data).toBeNull();
+  });
 });
 
 describe("edición y ciclo de vida del cliente", () => {

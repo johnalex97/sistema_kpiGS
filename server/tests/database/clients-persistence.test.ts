@@ -241,7 +241,7 @@ describe("client repository reads", () => {
     const suffix = randomUUID().slice(0, 8);
     const clientId = randomUUID();
     const branchIds = [randomUUID(), randomUUID()] as const;
-    const contactIds = [randomUUID(), randomUUID()] as const;
+    const contactIds = [randomUUID(), randomUUID(), randomUUID()] as const;
     const repository = createClientsRepository(database);
 
     try {
@@ -285,6 +285,12 @@ describe("client repository reads", () => {
             sucursalId: branchIds[1],
             fullName: "Contacto norte",
           },
+          {
+            id: contactIds[2],
+            clienteId: clientId,
+            sucursalId: branchIds[0],
+            fullName: "Contacto principal",
+          },
         ],
       });
 
@@ -302,6 +308,7 @@ describe("client repository reads", () => {
       });
       const branch = await repository.listContacts(clientId, {
         branchId: branchIds[1],
+        scope: "BRANCH",
         page: 1,
         pageSize: 20,
         includeInactive: false,

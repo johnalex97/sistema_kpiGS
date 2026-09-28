@@ -443,7 +443,11 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== branchGenerationRef.current
         || queryRef.current.clientId !== clientId || queryRef.current.tab !== "branches"
         || JSON.stringify([queryRef.current.clientId, queryRef.current.branches]) !== key) return;
-      setBranchSnapshot({ key, state: { status: "success", data: { ...incoming, items: incoming.items.map(withKnownBranch) }, error: null, stale: false } });
+      const normalized = { ...incoming, items: incoming.items.map(withKnownBranch) };
+      setBranchSnapshot({ key, state: { status: "success", data: normalized, error: null, stale: false } });
+      setDetailSnapshot((current) => current.state.data?.id === clientId
+        ? { ...current, state: { ...current.state, data: withKnownBranches(current.state.data) } }
+        : current);
     } catch (error: unknown) {
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== branchGenerationRef.current
         || isAbortError(error) || queryRef.current.clientId !== clientId || queryRef.current.tab !== "branches"
@@ -455,7 +459,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     } finally {
       if (branchControllerRef.current === controller) branchControllerRef.current = null;
     }
-  }, [api, invalidateBranches, withKnownBranch]);
+  }, [api, invalidateBranches, withKnownBranch, withKnownBranches]);
 
   const refreshContacts = useCallback(async (): Promise<void> => {
     invalidateContacts();
@@ -491,8 +495,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   }, [api, invalidateContacts]);
 
   const refresh = useCallback(async (): Promise<void> => {
-    await Promise.all([refreshList(), refreshDetail()]);
-  }, [refreshDetail, refreshList]);
+    const activeTab = queryRef.current.tab;
+    await Promise.all([refreshList(), refreshDetail(),
+      activeTab === "branches" ? refreshBranches() : activeTab === "contacts" ? refreshContacts() : Promise.resolve()]);
+  }, [refreshBranches, refreshContacts, refreshDetail, refreshList]);
 
   const commitQuery = useCallback((next: ClientQueryState, navigation: "push" | "replace") => {
     queryRef.current = next;

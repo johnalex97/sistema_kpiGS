@@ -27,7 +27,7 @@ function phoneHref(value: string | null): string | null {
 }
 
 function ContactCard({ contact, clientActive, branch }: { contact: ClientContact; clientActive: boolean; branch?: ClientBranch }) {
-  const effective = contact.isActive && clientActive && (contact.scope === "CLIENT" || (branch ? branch.isActive : contact.isEffectivelyActive));
+  const effective = contact.isActive && contact.isEffectivelyActive && clientActive && (contact.scope === "CLIENT" || !branch || branch.isActive);
   const effectiveLabel = !clientActive && contact.isActive ? "No disponible por cliente inactivo"
     : contact.scope === "BRANCH" && branch && !branch.isActive && contact.isActive
       ? "No disponible por sucursal inactiva" : effective ? "Disponible" : "No disponible";
@@ -67,7 +67,7 @@ export function ClientContacts({ clientActive, branches, filters, contacts, onCh
     <div className="clients-contacts__filters">
       <label>Buscar contactos<input type="search" maxLength={100} value={filters.search ?? ""} onChange={(event) => onChange({ search: event.target.value || undefined })} /></label>
       <label>Ámbito<select value={filters.scope ?? "all"} onChange={(event) => onChange({ scope: event.target.value === "all" ? undefined : event.target.value as ContactListFilters["scope"], branchId: event.target.value === "CLIENT" ? undefined : filters.branchId })}><option value="all">Todos</option><option value="CLIENT">Generales</option><option value="BRANCH">De sucursal</option></select></label>
-      <label>Sucursal<select value={filters.branchId ?? ""} onChange={(event) => onChange({ branchId: event.target.value || undefined })}><option value="">Todas las sucursales</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
+      <label>Sucursal<select value={filters.scope === "CLIENT" ? "" : filters.branchId ?? ""} disabled={filters.scope === "CLIENT"} onChange={(event) => onChange({ branchId: event.target.value || undefined })}><option value="">Todas las sucursales</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
       <label>Estado de contacto<select value={filters.isActive === undefined ? "all" : String(filters.isActive)} onChange={(event) => onChange({ isActive: event.target.value === "all" ? undefined : event.target.value === "true" })}><option value="all">Todos</option><option value="true">Activos</option><option value="false">Inactivos</option></select></label>
       <label className="clients-contacts__inactive"><input type="checkbox" checked={filters.includeInactive} disabled={filters.isActive === false} onChange={(event) => onChange({ includeInactive: event.target.checked })} />Incluir contactos inactivos</label>
     </div>

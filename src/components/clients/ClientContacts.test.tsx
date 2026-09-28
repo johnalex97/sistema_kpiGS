@@ -58,12 +58,19 @@ describe("ClientContacts", () => {
   });
 
   it("prioriza estados actuales de cliente y sucursal frente al snapshot efectivo del contacto", () => {
-    const item = { ...base, scope: "BRANCH" as const, branchId: branch.id, branchName: branch.name, isEffectivelyActive: false, email: "ana?bcc=x@example.com" };
+    const item = { ...base, scope: "BRANCH" as const, branchId: branch.id, branchName: branch.name, isEffectivelyActive: true, email: "ana?bcc=x@example.com" };
     const view = render(<ClientContacts clientActive={true} branches={[{ ...branch, isEffectivelyActive: false }]} filters={filters} contacts={{ status: "success", data: page([item]), error: null, stale: false }} onChange={vi.fn()} onRetry={vi.fn()} />);
     const card = screen.getByRole("article", { name: "Contacto Ana General" });
     expect(within(card).getByText("Disponible")).toBeVisible();
     expect(within(card).queryByRole("link", { name: "ana?bcc=x@example.com" })).not.toBeInTheDocument();
     view.rerender(<ClientContacts clientActive={true} branches={[{ ...branch, isActive: false }]} filters={filters} contacts={{ status: "success", data: page([{ ...item, isEffectivelyActive: true }]), error: null, stale: false }} onChange={vi.fn()} onRetry={vi.fn()} />);
     expect(within(card).getByText("No disponible por sucursal inactiva")).toBeVisible();
+  });
+  it("respeta el snapshot no efectivo y no permite combinar ámbito general con sucursal", async () => {
+    const onChange = vi.fn();
+    render(<ClientContacts clientActive={true} branches={[branch]} filters={{ ...filters, scope: "CLIENT", branchId: branch.id }} contacts={{ status: "success", data: page([{ ...base, isEffectivelyActive: false }]), error: null, stale: false }} onChange={onChange} onRetry={vi.fn()} />);
+    expect(within(screen.getByRole("article", { name: "Contacto Ana General" })).getByText("No disponible")).toBeVisible();
+    expect(screen.getByLabelText("Sucursal")).toBeDisabled();
+    expect(screen.getByLabelText("Sucursal")).toHaveValue("");
   });
 });
