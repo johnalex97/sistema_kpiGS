@@ -23,8 +23,10 @@ function workspace(overrides: Partial<ClientsWorkspace> = {}): ClientsWorkspace 
     list: { status: "success", data: { items: [client], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }, error: null, stale: false },
     detail: { status: "idle", data: null, error: null, stale: false },
     branches: { status: "idle", data: null, error: null, stale: false },
+    contacts: { status: "idle", data: null, error: null, stale: false },
     setClientFilters: vi.fn(), clearClientFilters: vi.fn(), selectClient: vi.fn(), closeDetail: vi.fn(), setTab: vi.fn(),
     setBranchFilters: vi.fn(), refreshBranches: vi.fn(async () => {}),
+    setContactFilters: vi.fn(), refreshContacts: vi.fn(async () => {}),
     refreshList: vi.fn(async () => {}), refreshDetail: vi.fn(async () => {}), refresh: vi.fn(async () => {}),
     ...overrides,
   };
@@ -36,6 +38,18 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
+  it("conecta filtros y reintento de contactos con la ficha", async () => {
+    const current = workspace({
+      query: { ...workspace().query, clientId: client.id, tab: "contacts" },
+      detail: { status: "success", data: detail, error: null, stale: false },
+      contacts: { status: "error", data: null, error: "Sin red", stale: false },
+    });
+    renderPage(current);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Reintentar contactos" }));
+    expect(current.refreshContacts).toHaveBeenCalledOnce();
+    await userEvent.setup().selectOptions(screen.getByLabelText("Ámbito"), "CLIENT");
+    expect(current.setContactFilters).toHaveBeenCalledWith({ scope: "CLIENT", branchId: undefined });
+  });
   it("conecta acciones de sucursal y presenta el error de dominio dentro del diálogo", async () => {
     const branch = { id: "branch-1", clientId: "client-1", code: "S-001", name: "Principal", address: "Palmira", city: null, region: null, country: "HN", lat: null, long: null, locationReference: null, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 3 };
     const onLifecycle = vi.fn();

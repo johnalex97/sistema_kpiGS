@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientsApi } from "../api/clients";
-import type { BranchPage, ClientBranch, ClientDetail, ClientListFilters, ClientPage, ClientSummary, CreateClientInput } from "../models/client";
+import type { BranchPage, ClientBranch, ClientContact, ClientDetail, ClientListFilters, ClientPage, ClientSummary, ContactPage, CreateClientInput } from "../models/client";
 import { useClientsWorkspace } from "./useClientsWorkspace";
 import { ApiClientError } from "../api/http";
 
@@ -16,6 +16,90 @@ const detailA: ClientDetail = { ...clientA, notes: null, branches: [], contacts:
 const detailB: ClientDetail = { ...clientB, notes: null, branches: [], contacts: [] };
 const page = (items: ClientSummary[]): ClientPage => ({
   items, pagination: { page: 1, pageSize: 20, totalItems: items.length, totalPages: 1 },
+});
+const contact: ClientContact = { id: "contact-a", clientId: clientA.id, branchId: null, scope: "CLIENT", branchName: null, fullName: "Ana", position: null, phone: null, email: null, isPrimary: true, isActive: true, isEffectivelyActive: true, createdAt: clientA.createdAt, updatedAt: clientA.updatedAt, version: 1 };
+const contactPage = (items: ClientContact[]): ContactPage => ({ items, pagination: { page: 1, pageSize: 20, totalItems: items.length, totalPages: 1 } });
+
+describe("consulta de contactos", () => {
+  it("carga sólo al abrir contactos y descarta respuesta al salir de la pestaña", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const pending = deferred<ContactPage>();
+    const api = apiWith({ listContacts: vi.fn(() => pending.promise) });
+    const { result } = renderHook(() => useWorkspace(api));
+    expect(api.listContacts).not.toHaveBeenCalled();
+    act(() => result.current.setTab("contacts"));
+    expect(api.listContacts).toHaveBeenCalledTimes(1);
+    expect(result.current.contacts.status).toBe("loading");
+    const signal = vi.mocked(api.listContacts).mock.calls[0]?.[2];
+    act(() => result.current.setTab("summary"));
+    expect(signal?.aborted).toBe(true);
+    await act(async () => pending.resolve(contactPage([contact])));
+    expect(result.current.contacts.data).toBeNull();
+  });
+
+  it("aísla A y B, filtros de URL y respuestas tardías de filtros y popstate", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=contacts&source=shell");
+    const old = deferred<ContactPage>();
+    const filtered = deferred<ContactPage>();
+    const api = apiWith({ listContacts: vi.fn().mockImplementationOnce(() => old.promise).mockImplementationOnce(() => filtered.promise).mockResolvedValue(contactPage([{ ...contact, id: "contact-b", clientId: clientB.id, fullName: "Berta" }])) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(api.listContacts).toHaveBeenCalledTimes(1));
+    act(() => result.current.setContactFilters({ scope: "BRANCH", branchId: "branch-1", search: "Be", page: 3, isActive: false }));
+    expect(api.listContacts).toHaveBeenLastCalledWith(clientA.id, expect.objectContaining({ scope: "BRANCH", branchId: "branch-1", search: "Be", page: 3, includeInactive: true }), expect.any(AbortSignal));
+    const url = new URLSearchParams(window.location.search);
+    expect(url.get("contactScope")).toBe("BRANCH");
+    expect(url.get("contactBranchId")).toBe("branch-1");
+    expect(url.get("contactPage")).toBe("3");
+    expect(url.get("source")).toBe("shell");
+    expect(result.current.query.branches.page).toBe(1);
+    await act(async () => filtered.resolve(contactPage([contact])));
+    await act(async () => old.resolve(contactPage([{ ...contact, fullName: "Vieja" }])));
+    expect(result.current.contacts.data?.items[0]?.fullName).toBe("Ana");
+    act(() => result.current.selectClient(clientB.id));
+    act(() => result.current.setTab("contacts"));
+    await waitFor(() => expect(api.listContacts).toHaveBeenCalledTimes(3));
+    expect(result.current.query.contacts.page).toBe(1);
+    await waitFor(() => expect(result.current.contacts.data?.items[0]?.fullName).toBe("Berta"));
+    window.history.pushState({}, "", "/clientes?clientId=client-a&clientTab=contacts&contactSearch=Restaurado");
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await waitFor(() => expect(api.listContacts).toHaveBeenLastCalledWith(clientA.id, expect.objectContaining({ search: "Restaurado" }), expect.any(AbortSignal)));
+  });
+
+  it("retiene contactos stale y permite reintentar", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=contacts");
+    const api = apiWith({ listContacts: vi.fn().mockResolvedValueOnce(contactPage([contact])).mockRejectedValueOnce(new Error("Red inestable")).mockResolvedValueOnce(contactPage([{ ...contact, fullName: "Ana nueva" }])) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.contacts.status).toBe("success"));
+    await act(async () => result.current.refreshContacts());
+    expect(result.current.contacts).toMatchObject({ status: "error", stale: true, error: "Red inestable" });
+    expect(result.current.contacts.data?.items[0]?.fullName).toBe("Ana");
+    await act(async () => result.current.refreshContacts());
+    expect(result.current.contacts.data?.items[0]?.fullName).toBe("Ana nueva");
+  });
+
+  it("descarta respuestas tardías de A al elegir B y de B al restaurar A por popstate", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=contacts");
+    const a = deferred<ContactPage>();
+    const b = deferred<ContactPage>();
+    const restored = deferred<ContactPage>();
+    const api = apiWith({ listContacts: vi.fn().mockImplementationOnce(() => a.promise).mockImplementationOnce(() => b.promise).mockImplementationOnce(() => restored.promise) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(api.listContacts).toHaveBeenCalledTimes(1));
+    const oldSignal = vi.mocked(api.listContacts).mock.calls[0]?.[2];
+    act(() => result.current.selectClient(clientB.id));
+    act(() => result.current.setTab("contacts"));
+    expect(oldSignal?.aborted).toBe(true);
+    await waitFor(() => expect(api.listContacts).toHaveBeenCalledTimes(2));
+    await act(async () => a.resolve(contactPage([contact])));
+    expect(result.current.contacts.data).toBeNull();
+    window.history.pushState({}, "", "/clientes?clientId=client-a&clientTab=contacts");
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await waitFor(() => expect(api.listContacts).toHaveBeenCalledTimes(3));
+    await act(async () => b.resolve(contactPage([{ ...contact, clientId: clientB.id, fullName: "Berta" }])));
+    expect(result.current.contacts.data).toBeNull();
+    await act(async () => restored.resolve(contactPage([contact])));
+    expect(result.current.contacts.data?.items[0]?.fullName).toBe("Ana");
+  });
 });
 
 describe("edición y ciclo de vida del cliente", () => {
