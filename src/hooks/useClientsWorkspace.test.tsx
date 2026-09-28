@@ -68,6 +68,7 @@ describe("mutaciones de contactos", () => {
     expect(reactivateContact).toHaveBeenCalledTimes(1);
     expect(result.current.contactLifecycle).toMatchObject({ open: true, reason: "Motivo suficientemente largo", baseVersion: 3 });
     expect(result.current.contactLifecycle?.error).toMatch(/principal/i);
+    expect(result.current.contactLifecycle?.error).toMatch(/desmarc|cambi/i);
   });
 
   it("adopta principal general desmarcado por servidor sin alterar principal de sucursal", async () => {
@@ -115,6 +116,82 @@ describe("mutaciones de contactos", () => {
     expect(reactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 9, reason: "Motivo para reactivar" });
     expect(result.current.detail.data?.contacts.find((item) => item.id === contact.id)?.version).toBe(17);
     expect(api.listContacts).toHaveBeenCalledTimes(3);
+  });
+
+  it("revisa 409 de edición v3→v9 y adopta sólo la versión, conservando el borrador", async () => {
+    const edited = { ...contact, version: 3, fullName: "Ana base" };
+    const current = { ...edited, version: 9, fullName: "Ana servidor", email: "servidor@example.com" };
+    const updateContact = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "conflict"))
+      .mockResolvedValueOnce({ ...current, version: 10, fullName: "Ana borrador" });
+    const getClient = vi.fn().mockResolvedValueOnce({ ...detailA, contacts: [edited] }).mockResolvedValue({ ...detailA, contacts: [current] });
+    const { result } = setup({ getClient, listContacts: vi.fn(async () => contactPage([edited])), updateContact });
+    await waitFor(() => expect(result.current.detail.data?.contacts[0]?.version).toBe(3));
+    act(() => result.current.openContactEdit(edited));
+    act(() => result.current.changeContactForm({ fullName: "Ana borrador" }));
+    await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
+    expect(result.current.contactForm?.draft).toMatchObject({ baseVersion: 3, values: { fullName: "Ana borrador" } });
+    expect(result.current.contactForm?.versionConflict).toBe(true);
+    await act(async () => result.current.reviewContactConflict());
+    expect(getClient).toHaveBeenLastCalledWith("client-a", true, expect.any(AbortSignal));
+    expect(result.current.contactForm?.draft?.conflict).toMatchObject({ version: 9, fullName: "Ana servidor" });
+    act(() => result.current.adoptContactConflict());
+    expect(result.current.contactForm?.draft).toMatchObject({ baseVersion: 9, values: { fullName: "Ana borrador" }, conflict: null });
+    await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
+    expect(updateContact).toHaveBeenLastCalledWith("client-a", edited.id, expect.objectContaining({ version: 9, fullName: "Ana borrador" }));
+  });
+
+  it("error posterior de consulta conserva conflicto y permite reintentar", async () => {
+    const edited = { ...contact, version: 3 };
+    const current = { ...edited, version: 9 };
+    const getClient = vi.fn().mockResolvedValueOnce({ ...detailA, contacts: [edited] })
+      .mockResolvedValueOnce({ ...detailA, contacts: [current] }).mockRejectedValueOnce(new Error("Sin red"))
+      .mockResolvedValueOnce({ ...detailA, contacts: [{ ...current, version: 17 }] });
+    const { result } = setup({ getClient, updateContact: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "conflict")) });
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openContactEdit(edited));
+    await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
+    await act(async () => result.current.reviewContactConflict());
+    expect(result.current.contactForm?.draft?.conflict?.version).toBe(9);
+    await act(async () => result.current.reviewContactConflict());
+    expect(result.current.contactForm?.draft?.conflict?.version).toBe(9);
+    expect(result.current.contactForm?.reviewError).toMatch(/No fue posible/);
+    await act(async () => result.current.reviewContactConflict());
+    expect(result.current.contactForm?.draft?.conflict?.version).toBe(17);
+  });
+
+  it("revisa 409 de ciclo de vida y conserva motivo al adoptar versión", async () => {
+    const inactive = { ...contact, isActive: false, version: 3 };
+    const current = { ...inactive, version: 9, fullName: "Nombre vigente", phone: "2222" };
+    const reactivateContact = vi.fn().mockRejectedValueOnce(new ApiClientError(409, "VERSION_CONFLICT", "conflict"))
+      .mockResolvedValueOnce({ ...current, isActive: true, version: 10 });
+    const { result } = setup({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, contacts: [inactive] }).mockResolvedValue({ ...detailA, contacts: [current] }),
+      listContacts: vi.fn(async () => contactPage([inactive])), reactivateContact });
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openContactLifecycle(inactive, "reactivate"));
+    await act(async () => result.current.submitContactLifecycle("Motivo suficientemente largo"));
+    expect(result.current.contactLifecycle).toMatchObject({ baseVersion: 3, reason: "Motivo suficientemente largo", versionConflict: true });
+    await act(async () => result.current.reviewContactConflict());
+    expect(result.current.contactLifecycle?.conflict).toMatchObject({ version: 9, fullName: "Nombre vigente" });
+    act(() => result.current.adoptContactConflict());
+    expect(result.current.contactLifecycle).toMatchObject({ baseVersion: 9, reason: "Motivo suficientemente largo", conflict: null });
+    await act(async () => result.current.submitContactLifecycle(result.current.contactLifecycle!.reason));
+    expect(reactivateContact).toHaveBeenLastCalledWith("client-a", inactive.id, { version: 9, reason: "Motivo suficientemente largo" });
+  });
+
+  it("descarta revisión tardía del contacto A después de elegir B", async () => {
+    const pending = deferred<ClientDetail>();
+    const getClient = vi.fn().mockResolvedValueOnce({ ...detailA, contacts: [{ ...contact, version: 3 }] }).mockImplementationOnce(() => pending.promise).mockResolvedValue(detailB);
+    const { result } = setup({ getClient, updateContact: vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "conflict")) });
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull());
+    act(() => result.current.openContactEdit({ ...contact, version: 3 }));
+    await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
+    let review!: Promise<void>;
+    act(() => { review = result.current.reviewContactConflict(); });
+    act(() => result.current.selectClient("client-b"));
+    await act(async () => pending.resolve({ ...detailA, contacts: [{ ...contact, version: 9 }] }));
+    await review;
+    expect(result.current.contactForm?.open).toBe(false);
+    expect(result.current.detail.data?.id).toBe("client-b");
   });
 });
 

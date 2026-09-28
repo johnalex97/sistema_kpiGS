@@ -93,28 +93,46 @@ interface ContactLifecycleDialogProps {
   pending: boolean;
   error: string | null;
   fieldErrors?: ApiFieldError[];
+  conflict?: ClientContact | null;
+  reviewPending?: boolean;
+  reviewError?: string | null;
+  versionConflict?: boolean;
+  onReview?(): void | Promise<void>;
+  onAdopt?(): void;
   onReasonChange(reason: string): void;
   onSubmit(reason: string): void | Promise<void>;
   onClose(): void;
 }
 
-export function ContactLifecycleDialog({ contact, action, baseVersion, reason, pending, error, fieldErrors = [], onReasonChange, onSubmit, onClose }: ContactLifecycleDialogProps) {
+export function ContactLifecycleDialog({ contact, action, baseVersion, reason, pending, error, fieldErrors = [], conflict = null, reviewPending = false, reviewError = null, versionConflict = false, onReview, onAdopt, onReasonChange, onSubmit, onClose }: ContactLifecycleDialogProps) {
   const [localError, setLocalError] = useState<string | null>(null);
+  const [submitGuard, setSubmitGuard] = useState(false);
   const deactivating = action === "deactivate";
+  const reasonError = fieldErrors.find((issue) => issue.field === "reason")?.message ?? localError;
   const submit = () => {
+    if (pending || submitGuard) return;
     const normalized = reason.trim();
     if (normalized.length < 10 || normalized.length > 500) { setLocalError("El motivo debe tener entre 10 y 500 caracteres."); return; }
     setLocalError(null);
-    void onSubmit(normalized);
+    setSubmitGuard(true);
+    void Promise.resolve(onSubmit(normalized)).finally(() => setSubmitGuard(false));
   };
   return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={`${deactivating ? "Desactivar" : "Reactivar"} contacto ${contact.fullName}`}>
     <header className="clients-wizard__head"><p className="eyebrow">Ciclo de vida</p><h2>{deactivating ? "Desactivar" : "Reactivar"} contacto</h2><p>{contact.fullName} · versión base {baseVersion}</p></header>
     <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <p>{deactivating ? "El contacto dejará de estar disponible. Ningún otro contacto se promoverá automáticamente a principal." : "El contacto volverá a estar disponible según el estado del cliente y su sucursal."}</p>
-      <label className="clients-wizard__field">Motivo<textarea value={reason} disabled={pending} onChange={(event) => { setLocalError(null); onReasonChange(event.target.value); }} /></label>
-      {fieldErrors.map((issue, index) => <p key={`${issue.field}-${index}`} role="alert">{issue.message}</p>)}
-      {(localError || error) && <p className="clients-wizard__server-error" role="alert">{localError || error}</p>}
-      <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending}>{pending ? "Procesando…" : "Confirmar"}</button></footer>
+      <label className="clients-wizard__field">Motivo<textarea aria-label="Motivo" value={reason} disabled={pending} aria-invalid={Boolean(reasonError)} aria-describedby={reasonError ? "contact-lifecycle-reason-error" : undefined} onChange={(event) => { setLocalError(null); onReasonChange(event.target.value); }} />{reasonError && <span id="contact-lifecycle-reason-error" className="clients-wizard__error" role="alert">{reasonError}</span>}</label>
+      {fieldErrors.filter((issue) => issue.field !== "reason").map((issue, index) => <p key={`${issue.field}-${index}`} role="alert">{issue.message}</p>)}
+      {conflict && <section className="clients-notice" role="region" aria-label="Estado vigente del contacto">
+        <p>Versión actual: {conflict.version}. Tu motivo se conserva.</p>
+        <dl className="clients-detail__facts"><div><dt>Nombre completo</dt><dd>{conflict.fullName}</dd></div><div><dt>Cargo</dt><dd>{conflict.position || "No registrado"}</dd></div><div><dt>Teléfono</dt><dd>{conflict.phone || "No registrado"}</dd></div><div><dt>Correo</dt><dd>{conflict.email || "No registrado"}</dd></div><div><dt>Ámbito</dt><dd>{conflict.scope === "CLIENT" ? "General" : "Sucursal"}</dd></div><div><dt>Sucursal</dt><dd>{conflict.scope === "CLIENT" ? "No aplica" : conflict.branchName || "No registrada"}</dd></div><div><dt>Principal</dt><dd>{conflict.isPrimary ? "Sí" : "No"}</dd></div><div><dt>Estado</dt><dd>{conflict.isActive ? "Activo" : "Inactivo"}</dd></div></dl>
+        <button type="button" disabled={pending || reviewPending} onClick={onAdopt}>Adoptar versión {conflict.version}</button>
+      </section>}
+      {error && <p className="clients-wizard__server-error" role="alert">{error}</p>}
+      {error && /principal/i.test(error) && <p>Desmarca o cambia el principal vigente del mismo ámbito antes de reintentar. Tu motivo se conserva.</p>}
+      {reviewError && <p className="clients-wizard__server-error" role="alert">{reviewError}</p>}
+      {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview?.()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
+      <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Procesando…" : "Confirmar"}</button></footer>
     </form>
   </section></div>;
 }

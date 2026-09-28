@@ -63,6 +63,8 @@ export interface ClientsWorkspace {
   openContactLifecycle?(contact: ClientContact, action: "deactivate" | "reactivate"): void;
   changeContactLifecycleReason?(reason: string): void;
   submitContactLifecycle?(reason: string): Promise<void>;
+  reviewContactConflict?(): Promise<void>;
+  adoptContactConflict?(): void;
   closeContactDialogs?(): void;
   setClientFilters(patch: Partial<ClientListFilters>): void;
   setBranchFilters(patch: Partial<BranchListFilters>): void;
@@ -150,10 +152,13 @@ export interface BranchLifecycleState {
 export interface ContactFormState {
   open: boolean;
   mode: "create" | "edit";
-  draft: { clientId: string; contactId: string | null; baseVersion: number | null; values: ContactFormValues } | null;
+  draft: { clientId: string; contactId: string | null; baseVersion: number | null; values: ContactFormValues; conflict: ClientContact | null } | null;
   pending: boolean;
   error: string | null;
   fieldErrors: ApiFieldError[];
+  reviewPending: boolean;
+  reviewError: string | null;
+  versionConflict: boolean;
 }
 
 export interface ContactLifecycleState {
@@ -166,6 +171,10 @@ export interface ContactLifecycleState {
   pending: boolean;
   error: string | null;
   fieldErrors: ApiFieldError[];
+  reviewPending: boolean;
+  reviewError: string | null;
+  versionConflict: boolean;
+  conflict: ClientContact | null;
 }
 
 export interface UseClientsWorkspaceOptions {
@@ -201,14 +210,14 @@ const emptyEdit = (): ClientEditState => ({ open: false, pending: false, error: 
 const emptyLifecycle = (): ClientLifecycleState => ({ open: false, action: "deactivate", clientId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, conflict: null });
 const emptyBranchForm = (): BranchFormState => ({ open: false, mode: "create", draft: null, pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false });
 const emptyBranchLifecycle = (): BranchLifecycleState => ({ open: false, action: "deactivate", clientId: "", branchId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, conflict: null });
-const emptyContactForm = (): ContactFormState => ({ open: false, mode: "create", draft: null, pending: false, error: null, fieldErrors: [] });
-const emptyContactLifecycle = (): ContactLifecycleState => ({ open: false, action: "deactivate", clientId: "", contactId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [] });
+const emptyContactForm = (): ContactFormState => ({ open: false, mode: "create", draft: null, pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false });
+const emptyContactLifecycle = (): ContactLifecycleState => ({ open: false, action: "deactivate", clientId: "", contactId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, conflict: null });
 
 function contactMutationError(error: unknown, fallback: string): string {
   if (!(error instanceof ApiClientError)) return errorMessage(error, fallback);
   const messages: Record<string, string> = {
     VERSION_CONFLICT: "El contacto cambió en el servidor. Revisa la versión vigente antes de continuar.",
-    PRIMARY_CONTACT_CONFLICT: "Existe un conflicto con el contacto principal de este ámbito. Tu borrador y motivo se conservan.",
+    PRIMARY_CONTACT_CONFLICT: "Desmarca o cambia el contacto principal vigente del mismo ámbito antes de reintentar. Tu borrador y motivo se conservan.",
     RESOURCE_INACTIVE: "El cliente o la sucursal está inactivo. Revisa su estado antes de continuar.",
     VALIDATION_ERROR: "Revisa los campos señalados antes de continuar.",
   };
@@ -280,6 +289,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const lifecyclePendingRef = useRef(false);
   const branchPendingRef = useRef(false);
   const contactPendingRef = useRef(false);
+  const contactReviewControllerRef = useRef<AbortController | null>(null);
   const contactFormRef = useRef(contactForm);
   const contactLifecycleRef = useRef(contactLifecycle);
   const branchFormRef = useRef(branchForm);
@@ -1093,6 +1103,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
 
   const closeContactDialogs = useCallback(() => {
     if (contactPendingRef.current) return;
+    contactReviewControllerRef.current?.abort();
+    contactReviewControllerRef.current = null;
     updateContactForm(emptyContactForm());
     updateContactLifecycle(emptyContactLifecycle());
   }, [updateContactForm, updateContactLifecycle]);
@@ -1102,14 +1114,14 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     if (!client || !canMutateContact(client.id) || contactPendingRef.current) return;
     updateContactLifecycle(emptyContactLifecycle());
     updateContactForm({ ...emptyContactForm(), open: true, draft: { clientId: client.id, contactId: null, baseVersion: null,
-      values: { scope: "CLIENT", branchId: null, fullName: "", position: null, phone: null, email: null, isPrimary: false } } });
+      values: { scope: "CLIENT", branchId: null, fullName: "", position: null, phone: null, email: null, isPrimary: false }, conflict: null } });
   }, [canMutateContact, updateContactForm, updateContactLifecycle]);
 
   const openContactEdit = useCallback((contact: ClientContact) => {
     if (!canMutateContact(contact.clientId) || !contact.isActive || contactPendingRef.current) return;
     updateContactLifecycle(emptyContactLifecycle());
     updateContactForm({ ...emptyContactForm(), mode: "edit", open: true, draft: { clientId: contact.clientId,
-      contactId: contact.id, baseVersion: contact.version, values: contactValues(contact) } });
+      contactId: contact.id, baseVersion: contact.version, values: contactValues(contact), conflict: null } });
   }, [canMutateContact, updateContactForm, updateContactLifecycle]);
 
   const changeContactForm = useCallback((patch: Partial<ContactFormValues>) => {
@@ -1171,8 +1183,9 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       afterContactSuccess(contact);
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
       updateContactForm({ ...contactFormRef.current, pending: false, error: contactMutationError(error, "No fue posible guardar el contacto."),
-        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [] });
+        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [], versionConflict: contactFormRef.current.versionConflict || versionConflict });
     } finally { contactPendingRef.current = false; }
   }, [afterContactSuccess, api, canMutateContact, updateContactForm]);
 
@@ -1205,10 +1218,68 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       afterContactSuccess(contact);
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== state.clientId) return;
+      const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
       updateContactLifecycle({ ...contactLifecycleRef.current, pending: false, error: contactMutationError(error, "No fue posible cambiar el estado del contacto."),
-        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [] });
+        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [], versionConflict: contactLifecycleRef.current.versionConflict || versionConflict });
     } finally { contactPendingRef.current = false; }
   }, [afterContactSuccess, api, canMutateContact, updateContactLifecycle]);
+
+  const reviewContactConflict = useCallback(async (): Promise<void> => {
+    const form = contactFormRef.current;
+    const life = contactLifecycleRef.current;
+    const reviewingForm = form.open && form.mode === "edit" && Boolean(form.draft);
+    const clientId = reviewingForm ? form.draft!.clientId : life.open ? life.clientId : null;
+    const contactId = reviewingForm ? form.draft!.contactId : life.open ? life.contactId : null;
+    const baseVersion = reviewingForm ? form.draft!.baseVersion : life.open ? life.baseVersion : null;
+    if (!clientId || !contactId || baseVersion == null || !canViewRef.current || queryRef.current.clientId !== clientId
+      || contactReviewControllerRef.current || (reviewingForm ? form.pending || form.reviewPending : life.pending || life.reviewPending)) return;
+    const controller = new AbortController();
+    contactReviewControllerRef.current = controller;
+    if (reviewingForm) updateContactForm({ ...form, reviewPending: true, reviewError: null });
+    else updateContactLifecycle({ ...life, reviewPending: true, reviewError: null });
+    try {
+      const response = await api.getClient(clientId, true, controller.signal);
+      if (controller.signal.aborted || !mountedRef.current || queryRef.current.clientId !== clientId) return;
+      if (response.id !== clientId) throw new Error("El servidor devolvió otro cliente.");
+      const observed = response.contacts.find((item) => item.id === contactId && item.clientId === clientId);
+      const latest = observed ? withKnownContact(observed) : null;
+      const conflict = latest && latest.version > baseVersion ? latest : null;
+      const reviewError = conflict ? null : "No hay una versión más reciente disponible para este contacto.";
+      if (reviewingForm && contactFormRef.current.open && contactFormRef.current.draft?.clientId === clientId
+        && contactFormRef.current.draft.contactId === contactId && contactFormRef.current.draft.baseVersion === baseVersion) {
+        const current = contactFormRef.current;
+        updateContactForm({ ...current, reviewPending: false, reviewError, draft: { ...current.draft!, conflict: conflict ?? current.draft!.conflict } });
+      } else if (!reviewingForm && contactLifecycleRef.current.open && contactLifecycleRef.current.clientId === clientId
+        && contactLifecycleRef.current.contactId === contactId && contactLifecycleRef.current.baseVersion === baseVersion) {
+        const current = contactLifecycleRef.current;
+        updateContactLifecycle({ ...current, reviewPending: false, reviewError, conflict: conflict ?? current.conflict });
+      }
+    } catch (error: unknown) {
+      if (controller.signal.aborted || !mountedRef.current || queryRef.current.clientId !== clientId) return;
+      const reviewError = error instanceof ApiClientError && error.status === 404
+        ? "El contacto ya no está disponible. Cancela y actualiza la ficha."
+        : "No fue posible cargar la versión vigente. Reintenta la consulta.";
+      if (reviewingForm && contactFormRef.current.open && contactFormRef.current.draft?.clientId === clientId
+        && contactFormRef.current.draft.contactId === contactId) updateContactForm({ ...contactFormRef.current, reviewPending: false, reviewError });
+      else if (!reviewingForm && contactLifecycleRef.current.open && contactLifecycleRef.current.clientId === clientId
+        && contactLifecycleRef.current.contactId === contactId) updateContactLifecycle({ ...contactLifecycleRef.current, reviewPending: false, reviewError });
+    } finally {
+      if (contactReviewControllerRef.current === controller) contactReviewControllerRef.current = null;
+    }
+  }, [api, updateContactForm, updateContactLifecycle, withKnownContact]);
+
+  const adoptContactConflict = useCallback(() => {
+    const form = contactFormRef.current;
+    if (form.open && form.draft?.conflict && !form.pending && !form.reviewPending) {
+      updateContactForm({ ...form, error: null, reviewError: null, versionConflict: false,
+        draft: { ...form.draft, baseVersion: form.draft.conflict.version, conflict: null } });
+      return;
+    }
+    const life = contactLifecycleRef.current;
+    if (life.open && life.conflict && !life.pending && !life.reviewPending) {
+      updateContactLifecycle({ ...life, baseVersion: life.conflict.version, conflict: null, error: null, reviewError: null, versionConflict: false });
+    }
+  }, [updateContactForm, updateContactLifecycle]);
 
   useEffect(() => {
     if (!capabilities.canManage || !capabilities.canView) {
@@ -1320,6 +1391,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     openBranchLifecycle, changeBranchLifecycleReason, submitBranchLifecycle, reviewBranchConflict, adoptBranchConflict,
     closeBranchDialogs, openContactCreate, openContactEdit, changeContactForm, submitContactForm, openContactLifecycle,
     changeContactLifecycleReason, submitContactLifecycle, closeContactDialogs,
+    reviewContactConflict, adoptContactConflict,
     setClientFilters, setBranchFilters, setContactFilters, clearClientFilters, selectClient, closeDetail, setTab,
     refreshList, refreshDetail, refreshBranches, refreshContacts, refresh };
 }

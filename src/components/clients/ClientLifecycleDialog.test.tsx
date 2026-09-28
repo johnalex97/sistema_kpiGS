@@ -1,8 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ClientDetail } from "../../models/client";
-import { ClientLifecycleDialog } from "./ClientLifecycleDialog";
+import type { ClientContact, ClientDetail } from "../../models/client";
+import { ClientLifecycleDialog, ContactLifecycleDialog } from "./ClientLifecycleDialog";
 
 const client: ClientDetail = {
   id: "client-1", code: "CLI-001", tradeName: "Acme", legalName: null, taxId: null,
@@ -49,5 +49,31 @@ describe("ClientLifecycleDialog", () => {
     view.rerender(<ClientLifecycleDialog {...props} reason="Motivo documentado" fieldErrors={[{ field: "reason", code: "VALIDATION_ERROR", message: "Motivo inválido." }]} />);
     expect(reason).toHaveAttribute("aria-invalid", "true");
     expect(document.getElementById("client-lifecycle-reason-error")).toHaveTextContent("Motivo inválido.");
+  });
+});
+
+describe("ContactLifecycleDialog", () => {
+  const contact = { id: "contact-1", clientId: client.id, branchId: null, branchName: null, scope: "CLIENT", fullName: "Ana", position: "Jefa", phone: "2222", email: "ana@example.com", isPrimary: true, isActive: false, isEffectivelyActive: false, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 3 } as ClientContact;
+  const props = { contact, action: "reactivate" as const, baseVersion: 3, reason: "corto", pending: false, error: null, fieldErrors: [], onReasonChange: vi.fn(), onSubmit: vi.fn(), onClose: vi.fn() };
+
+  it("asocia error local y API al motivo", async () => {
+    const view = render(<ContactLifecycleDialog {...props} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Confirmar" }));
+    const reason = screen.getByRole("textbox", { name: "Motivo" });
+    expect(reason).toHaveAttribute("aria-invalid", "true");
+    expect(reason).toHaveAttribute("aria-describedby", "contact-lifecycle-reason-error");
+    expect(document.getElementById("contact-lifecycle-reason-error")).toHaveTextContent("10 y 500");
+    view.rerender(<ContactLifecycleDialog {...props} reason="Motivo documentado" fieldErrors={[{ field: "reason", code: "VALIDATION_ERROR", message: "Motivo rechazado" }]} />);
+    expect(document.getElementById("contact-lifecycle-reason-error")).toHaveTextContent("Motivo rechazado");
+  });
+
+  it("muestra conflicto vigente, motivo intacto y recuperación explícita; explica conflicto principal", () => {
+    render(<ContactLifecycleDialog {...props} reason="Motivo documentado" error="Conflicto principal" versionConflict reviewPending={false} reviewError={null} conflict={{ ...contact, version: 9, fullName: "Nombre vigente", phone: "3333", isPrimary: false }} onReview={vi.fn()} onAdopt={vi.fn()} />);
+    const review = screen.getByRole("region", { name: "Estado vigente del contacto" });
+    for (const value of ["Nombre vigente", "Jefa", "3333", "ana@example.com", "General", "No", "Inactivo", "9"]) expect(review).toHaveTextContent(value);
+    expect(screen.getByRole("textbox", { name: "Motivo" })).toHaveValue("Motivo documentado");
+    expect(screen.getByRole("button", { name: "Adoptar versión 9" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Revisar versión vigente" })).toBeVisible();
+    expect(screen.getByText(/desmarc|cambi/i)).toBeVisible();
   });
 });
