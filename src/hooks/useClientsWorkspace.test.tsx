@@ -20,6 +20,104 @@ const page = (items: ClientSummary[]): ClientPage => ({
 const contact: ClientContact = { id: "contact-a", clientId: clientA.id, branchId: null, scope: "CLIENT", branchName: null, fullName: "Ana", position: null, phone: null, email: null, isPrimary: true, isActive: true, isEffectivelyActive: true, createdAt: clientA.createdAt, updatedAt: clientA.updatedAt, version: 1 };
 const contactPage = (items: ClientContact[]): ContactPage => ({ items, pagination: { page: 1, pageSize: 20, totalItems: items.length, totalPages: 1 } });
 
+describe("mutaciones de contactos", () => {
+  const managed = ["CLIENTS_VIEW", "CLIENTS_MANAGE"];
+  const setup = (overrides: Partial<ClientsApi> = {}) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=contacts");
+    const api = apiWith({ getClient: vi.fn(async () => ({ ...detailA, branches: [branchA], contacts: [contact] })), listContacts: vi.fn(async () => contactPage([contact])), ...overrides });
+    return { api, ...renderHook(() => useWorkspace(api, "", managed)) };
+  };
+
+  it("crea, reconcilia sólo el mutado y recarga detalle y colección", async () => {
+    const created = { ...contact, id: "contact-new", version: 9, fullName: "Ada" };
+    const createContact = vi.fn(async () => created);
+    const { api, result } = setup({ createContact });
+    await waitFor(() => expect(result.current.contacts.status).toBe("success"));
+    act(() => result.current.openContactCreate());
+    await act(async () => result.current.submitContactForm({ scope: "CLIENT", fullName: "Ada", position: null, phone: null, email: null, isPrimary: true }));
+    expect(createContact).toHaveBeenCalledWith("client-a", expect.objectContaining({ scope: "CLIENT", fullName: "Ada", isPrimary: true }));
+    expect(vi.mocked(api.createContact).mock.calls[0]?.[1]).not.toHaveProperty("branchId");
+    expect(api.listContacts).toHaveBeenCalledTimes(2);
+    expect(api.getClient).toHaveBeenCalledTimes(2);
+    expect(result.current.detail.data?.contacts.find((item) => item.id === contact.id)?.isPrimary).toBe(true);
+  });
+
+  it("edita con versión base, bloquea sucursal ajena y conserva borrador tras 409", async () => {
+    const updateContact = vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "conflict"));
+    const { result } = setup({ updateContact });
+    await waitFor(() => expect(result.current.contacts.status).toBe("success"));
+    act(() => result.current.openContactEdit({ ...contact, version: 3 }));
+    act(() => result.current.changeContactForm({ fullName: "Borrador", scope: "BRANCH", branchId: "foreign" }));
+    await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
+    expect(updateContact).not.toHaveBeenCalled();
+    act(() => result.current.changeContactForm({ branchId: branchA.id }));
+    await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
+    expect(updateContact).toHaveBeenCalledWith("client-a", contact.id, expect.objectContaining({ version: 3, branchId: branchA.id, fullName: "Borrador" }));
+    expect(result.current.contactForm?.draft?.values.fullName).toBe("Borrador");
+    expect(result.current.contactForm?.draft?.baseVersion).toBe(3);
+  });
+
+  it("reactivar con PRIMARY_CONTACT_CONFLICT conserva motivo, versión y no reintenta", async () => {
+    const inactive = { ...contact, isActive: false, isPrimary: true, version: 3 };
+    const reactivateContact = vi.fn().mockRejectedValue(new ApiClientError(409, "PRIMARY_CONTACT_CONFLICT", "conflict"));
+    const { result } = setup({ listContacts: vi.fn(async () => contactPage([inactive])), reactivateContact });
+    await waitFor(() => expect(result.current.contacts.status).toBe("success"));
+    act(() => result.current.openContactLifecycle(inactive, "reactivate"));
+    await act(async () => result.current.submitContactLifecycle("Motivo suficientemente largo"));
+    expect(reactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 3, reason: "Motivo suficientemente largo" });
+    expect(reactivateContact).toHaveBeenCalledTimes(1);
+    expect(result.current.contactLifecycle).toMatchObject({ open: true, reason: "Motivo suficientemente largo", baseVersion: 3 });
+    expect(result.current.contactLifecycle?.error).toMatch(/principal/i);
+  });
+
+  it("adopta principal general desmarcado por servidor sin alterar principal de sucursal", async () => {
+    const branchPrimary = { ...contact, id: "branch-primary", branchId: branchA.id, scope: "BRANCH" as const, isPrimary: true, version: 3 };
+    const old = { ...contact, version: 3 };
+    const next = { ...contact, id: "new-primary", fullName: "Bea", isPrimary: true, version: 9 };
+    const server = { ...detailA, branches: [branchA], contacts: [{ ...old, isPrimary: false, version: 17 }, branchPrimary, next] };
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, branches: [branchA], contacts: [old, branchPrimary] }).mockResolvedValue(server),
+      listContacts: vi.fn().mockResolvedValueOnce(contactPage([old, branchPrimary])).mockResolvedValue(contactPage(server.contacts)),
+      createContact: vi.fn(async () => next) });
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=contacts");
+    const { result } = renderHook(() => useWorkspace(api, "", managed));
+    await waitFor(() => expect(result.current.contacts.status).toBe("success"));
+    act(() => result.current.openContactCreate());
+    await act(async () => result.current.submitContactForm({ scope: "CLIENT", fullName: "Bea", isPrimary: true }));
+    await waitFor(() => expect(result.current.detail.data?.contacts.find((item) => item.id === old.id)?.version).toBe(17));
+    expect(result.current.detail.data?.contacts.find((item) => item.id === old.id)?.isPrimary).toBe(false);
+    expect(result.current.detail.data?.contacts.find((item) => item.id === branchPrimary.id)?.isPrimary).toBe(true);
+  });
+
+  it("cierra borrador de contacto al elegir otro cliente", async () => {
+    const { result } = setup();
+    await waitFor(() => expect(result.current.detail.data?.id).toBe("client-a"));
+    act(() => result.current.openContactCreate());
+    expect(result.current.contactForm?.open).toBe(true);
+    act(() => result.current.selectClient("client-b"));
+    expect(result.current.contactForm?.open).toBe(false);
+  });
+
+  it("desactiva sin promover otro y reactiva con versión recibida del servidor", async () => {
+    const other = { ...contact, id: "other", fullName: "Otra", isPrimary: false, version: 3 };
+    const inactive = { ...contact, isActive: false, isEffectivelyActive: false, version: 9 };
+    const active = { ...contact, version: 17 };
+    const deactivateContact = vi.fn(async () => inactive);
+    const reactivateContact = vi.fn(async () => active);
+    const { api, result } = setup({ getClient: vi.fn(async () => ({ ...detailA, branches: [branchA], contacts: [inactive, other] })),
+      listContacts: vi.fn(async () => contactPage([inactive, other])), deactivateContact, reactivateContact });
+    await waitFor(() => expect(result.current.contacts.status).toBe("success"));
+    act(() => result.current.openContactLifecycle(contact, "deactivate"));
+    await act(async () => result.current.submitContactLifecycle("Motivo suficientemente largo"));
+    expect(deactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 1, reason: "Motivo suficientemente largo" });
+    expect(result.current.detail.data?.contacts.find((item) => item.id === other.id)?.isPrimary).toBe(false);
+    act(() => result.current.openContactLifecycle(inactive, "reactivate"));
+    await act(async () => result.current.submitContactLifecycle("Motivo para reactivar"));
+    expect(reactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 9, reason: "Motivo para reactivar" });
+    expect(result.current.detail.data?.contacts.find((item) => item.id === contact.id)?.version).toBe(17);
+    expect(api.listContacts).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("consulta de contactos", () => {
   it("normaliza URL directa CLIENT + branchId antes de consultar sin perder parámetros ajenos", async () => {
     window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=contacts&contactScope=CLIENT&contactBranchId=no-existe&source=shell");

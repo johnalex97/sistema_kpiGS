@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ApiFieldError } from "../../api/http";
-import type { ClientBranch, ClientDetail } from "../../models/client";
+import type { ClientBranch, ClientContact, ClientDetail } from "../../models/client";
 
 interface ClientLifecycleDialogProps {
   client: ClientDetail;
@@ -81,6 +81,40 @@ export function BranchLifecycleDialog({ branch, action, baseVersion, reason, pen
       {reviewError && <p className="clients-wizard__server-error" role="alert">{reviewError}</p>}
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
       <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Procesando…" : "Confirmar"}</button></footer>
+    </form>
+  </section></div>;
+}
+
+interface ContactLifecycleDialogProps {
+  contact: ClientContact;
+  action: "deactivate" | "reactivate";
+  baseVersion: number;
+  reason: string;
+  pending: boolean;
+  error: string | null;
+  fieldErrors?: ApiFieldError[];
+  onReasonChange(reason: string): void;
+  onSubmit(reason: string): void | Promise<void>;
+  onClose(): void;
+}
+
+export function ContactLifecycleDialog({ contact, action, baseVersion, reason, pending, error, fieldErrors = [], onReasonChange, onSubmit, onClose }: ContactLifecycleDialogProps) {
+  const [localError, setLocalError] = useState<string | null>(null);
+  const deactivating = action === "deactivate";
+  const submit = () => {
+    const normalized = reason.trim();
+    if (normalized.length < 10 || normalized.length > 500) { setLocalError("El motivo debe tener entre 10 y 500 caracteres."); return; }
+    setLocalError(null);
+    void onSubmit(normalized);
+  };
+  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={`${deactivating ? "Desactivar" : "Reactivar"} contacto ${contact.fullName}`}>
+    <header className="clients-wizard__head"><p className="eyebrow">Ciclo de vida</p><h2>{deactivating ? "Desactivar" : "Reactivar"} contacto</h2><p>{contact.fullName} · versión base {baseVersion}</p></header>
+    <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <p>{deactivating ? "El contacto dejará de estar disponible. Ningún otro contacto se promoverá automáticamente a principal." : "El contacto volverá a estar disponible según el estado del cliente y su sucursal."}</p>
+      <label className="clients-wizard__field">Motivo<textarea value={reason} disabled={pending} onChange={(event) => { setLocalError(null); onReasonChange(event.target.value); }} /></label>
+      {fieldErrors.map((issue, index) => <p key={`${issue.field}-${index}`} role="alert">{issue.message}</p>)}
+      {(localError || error) && <p className="clients-wizard__server-error" role="alert">{localError || error}</p>}
+      <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending}>{pending ? "Procesando…" : "Confirmar"}</button></footer>
     </form>
   </section></div>;
 }

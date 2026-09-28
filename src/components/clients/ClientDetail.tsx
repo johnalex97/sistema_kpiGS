@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { ClientDetail as ClientRecord, ClientTab } from "../../models/client";
-import type { BranchListFilters, BranchPage, ClientBranch, ContactListFilters, ContactPage } from "../../models/client";
+import type { BranchListFilters, BranchPage, ClientBranch, ClientContact, ContactListFilters, ContactPage } from "../../models/client";
 import type { AsyncState } from "../../hooks/useClientsWorkspace";
 import { ClientBranches } from "./ClientBranches";
 import { ClientContacts } from "./ClientContacts";
@@ -27,6 +27,9 @@ interface ClientDetailProps {
   contactFilters: ContactListFilters;
   onContactFiltersChange(patch: Partial<ContactListFilters>): void;
   onRefreshContacts(): void;
+  onContactCreate?(): void;
+  onContactEdit?(contact: ClientContact): void;
+  onContactLifecycle?(contact: ClientContact, action: "deactivate" | "reactivate"): void;
 }
 
 const tabs: { id: ClientTab; label: string }[] = [
@@ -38,7 +41,7 @@ const tabs: { id: ClientTab; label: string }[] = [
 function value(text: string | null) { return text || "No registrado"; }
 function date(text: string) { return new Intl.DateTimeFormat("es-HN", { dateStyle: "medium" }).format(new Date(text)); }
 
-export function ClientDetail({ client, tab, onTabChange, onClose, canManage, onEdit, onLifecycle, branches, branchFilters, onBranchFiltersChange, onRefreshBranches, onBranchCreate, onBranchEdit, onBranchLifecycle, branchClientActive, contacts, contactBranches, contactFilters, onContactFiltersChange, onRefreshContacts }: ClientDetailProps) {
+export function ClientDetail({ client, tab, onTabChange, onClose, canManage, onEdit, onLifecycle, branches, branchFilters, onBranchFiltersChange, onRefreshBranches, onBranchCreate, onBranchEdit, onBranchLifecycle, branchClientActive, contacts, contactBranches, contactFilters, onContactFiltersChange, onRefreshContacts, onContactCreate, onContactEdit, onContactLifecycle }: ClientDetailProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeRef.current?.focus(); }, [client.id]);
 
@@ -82,6 +85,6 @@ export function ClientDetail({ client, tab, onTabChange, onClose, canManage, onE
       </div>}
     </section>
     <section role="tabpanel" id="client-panel-branches" aria-labelledby="client-tab-branches" tabIndex={0} hidden={tab !== "branches"} className="clients-detail__body">{tab === "branches" && <ClientBranches clientActive={client.isActive && branchClientActive !== false} canManage={canManage} filters={branchFilters} branches={branches} onChange={onBranchFiltersChange} onRetry={onRefreshBranches} onCreate={onBranchCreate} onEdit={onBranchEdit} onLifecycle={onBranchLifecycle} />}</section>
-    <section role="tabpanel" id="client-panel-contacts" aria-labelledby="client-tab-contacts" tabIndex={0} hidden={tab !== "contacts"} className="clients-detail__body">{tab === "contacts" && <ClientContacts clientActive={client.isActive && branchClientActive !== false} branches={contactBranches} contacts={contacts} filters={contactFilters} onChange={onContactFiltersChange} onRetry={onRefreshContacts} />}</section>
+    <section role="tabpanel" id="client-panel-contacts" aria-labelledby="client-tab-contacts" tabIndex={0} hidden={tab !== "contacts"} className="clients-detail__body">{tab === "contacts" && <ClientContacts clientActive={client.isActive && branchClientActive !== false} canManage={canManage} branches={contactBranches} contacts={contacts} filters={contactFilters} onChange={onContactFiltersChange} onRetry={onRefreshContacts} onCreate={onContactCreate} onEdit={onContactEdit} onLifecycle={onContactLifecycle} />}</section>
   </article>;
 }

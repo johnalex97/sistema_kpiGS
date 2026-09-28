@@ -40,6 +40,18 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
+  it("conecta creación y edición de contactos desde la ficha", async () => {
+    const item: ClientContact = { id: "contact-1", clientId: client.id, branchId: null, scope: "CLIENT", branchName: null, fullName: "Ana", position: null, phone: null, email: null, isPrimary: true, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 3 };
+    const onCreate = vi.fn();
+    const onEdit = vi.fn();
+    const current = workspace({ capabilities: { canView: true, canManage: true }, query: { ...workspace().query, clientId: client.id, tab: "contacts" }, detail: { status: "success", data: { ...detail, contacts: [item] }, error: null, stale: false }, contacts: { status: "success", data: { items: [item], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }, error: null, stale: false }, openContactCreate: onCreate, openContactEdit: onEdit });
+    renderPage(current, ["CLIENTS_VIEW", "CLIENTS_MANAGE"]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Nuevo contacto" }));
+    await user.click(within(screen.getByRole("article", { name: "Contacto Ana" })).getByRole("button", { name: "Editar contacto" }));
+    expect(onCreate).toHaveBeenCalledOnce();
+    expect(onEdit).toHaveBeenCalledWith(item);
+  });
   it.each([true, false])("usa la sucursal conocida al pasar Sucursales→Contactos aunque la ficha %s la incluya", async (inDetail) => {
     window.history.replaceState({}, "", "/clientes?clientId=client-1&branchIncludeInactive=true");
     const branch: ClientBranch = { id: "branch-1", clientId: client.id, code: "S-1", name: "Principal", address: "Centro", city: null, region: null, country: "HN", lat: null, long: null, locationReference: null, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 1 };

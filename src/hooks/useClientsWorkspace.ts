@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientsApi } from "../api/clients";
 import { ApiClientError, type ApiFieldError } from "../api/http";
-import type { BranchInput, BranchListFilters, BranchPage, ClientBranch, ClientDetail, ClientListFilters, ClientPage, ClientTab, ContactListFilters, ContactPage, CreateClientInput, UpdateClientInput } from "../models/client";
+import type { BranchInput, BranchListFilters, BranchPage, ClientBranch, ClientContact, ClientDetail, ClientListFilters, ClientPage, ClientTab, ContactListFilters, ContactPage, CreateClientInput, UpdateClientInput } from "../models/client";
+import { toContactInput, type ContactFormValues } from "../components/clients/ContactForm";
 import {
   deriveClientCapabilities,
   parseClientSearch,
@@ -31,6 +32,8 @@ export interface ClientsWorkspace {
   lifecycle?: ClientLifecycleState;
   branchForm?: BranchFormState;
   branchLifecycle?: BranchLifecycleState;
+  contactForm?: ContactFormState;
+  contactLifecycle?: ContactLifecycleState;
   branchClientActive?: boolean;
   openCreate?(): void;
   closeForm?(): void;
@@ -53,6 +56,14 @@ export interface ClientsWorkspace {
   reviewBranchConflict?(): Promise<void>;
   adoptBranchConflict?(): void;
   closeBranchDialogs?(): void;
+  openContactCreate?(): void;
+  openContactEdit?(contact: ClientContact): void;
+  changeContactForm?(patch: Partial<ContactFormValues>): void;
+  submitContactForm?(values: ContactFormValues): Promise<void>;
+  openContactLifecycle?(contact: ClientContact, action: "deactivate" | "reactivate"): void;
+  changeContactLifecycleReason?(reason: string): void;
+  submitContactLifecycle?(reason: string): Promise<void>;
+  closeContactDialogs?(): void;
   setClientFilters(patch: Partial<ClientListFilters>): void;
   setBranchFilters(patch: Partial<BranchListFilters>): void;
   setContactFilters(patch: Partial<ContactListFilters>): void;
@@ -136,6 +147,27 @@ export interface BranchLifecycleState {
   conflict: ClientBranch | null;
 }
 
+export interface ContactFormState {
+  open: boolean;
+  mode: "create" | "edit";
+  draft: { clientId: string; contactId: string | null; baseVersion: number | null; values: ContactFormValues } | null;
+  pending: boolean;
+  error: string | null;
+  fieldErrors: ApiFieldError[];
+}
+
+export interface ContactLifecycleState {
+  open: boolean;
+  action: "deactivate" | "reactivate";
+  clientId: string;
+  contactId: string;
+  baseVersion: number;
+  reason: string;
+  pending: boolean;
+  error: string | null;
+  fieldErrors: ApiFieldError[];
+}
+
 export interface UseClientsWorkspaceOptions {
   api: ClientsApi;
   permissions: string[];
@@ -169,6 +201,24 @@ const emptyEdit = (): ClientEditState => ({ open: false, pending: false, error: 
 const emptyLifecycle = (): ClientLifecycleState => ({ open: false, action: "deactivate", clientId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, conflict: null });
 const emptyBranchForm = (): BranchFormState => ({ open: false, mode: "create", draft: null, pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false });
 const emptyBranchLifecycle = (): BranchLifecycleState => ({ open: false, action: "deactivate", clientId: "", branchId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [], reviewPending: false, reviewError: null, versionConflict: false, conflict: null });
+const emptyContactForm = (): ContactFormState => ({ open: false, mode: "create", draft: null, pending: false, error: null, fieldErrors: [] });
+const emptyContactLifecycle = (): ContactLifecycleState => ({ open: false, action: "deactivate", clientId: "", contactId: "", baseVersion: 0, reason: "", pending: false, error: null, fieldErrors: [] });
+
+function contactMutationError(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiClientError)) return errorMessage(error, fallback);
+  const messages: Record<string, string> = {
+    VERSION_CONFLICT: "El contacto cambió en el servidor. Revisa la versión vigente antes de continuar.",
+    PRIMARY_CONTACT_CONFLICT: "Existe un conflicto con el contacto principal de este ámbito. Tu borrador y motivo se conservan.",
+    RESOURCE_INACTIVE: "El cliente o la sucursal está inactivo. Revisa su estado antes de continuar.",
+    VALIDATION_ERROR: "Revisa los campos señalados antes de continuar.",
+  };
+  return messages[error.code] ?? (error.status === 403 ? "Ya no tienes permiso para administrar este contacto." : fallback);
+}
+
+function contactValues(contact: ClientContact): ContactFormValues {
+  return { scope: contact.scope, branchId: contact.branchId, fullName: contact.fullName, position: contact.position,
+    phone: contact.phone, email: contact.email, isPrimary: contact.isPrimary };
+}
 
 function branchMutationError(error: unknown, fallback: string): string {
   if (!(error instanceof ApiClientError)) return errorMessage(error, fallback);
@@ -223,10 +273,15 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const [lifecycle, setLifecycle] = useState<ClientLifecycleState>(emptyLifecycle);
   const [branchForm, setBranchForm] = useState<BranchFormState>(emptyBranchForm);
   const [branchLifecycle, setBranchLifecycle] = useState<BranchLifecycleState>(emptyBranchLifecycle);
+  const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
+  const [contactLifecycle, setContactLifecycle] = useState<ContactLifecycleState>(emptyContactLifecycle);
   const createPendingRef = useRef(false);
   const editPendingRef = useRef(false);
   const lifecyclePendingRef = useRef(false);
   const branchPendingRef = useRef(false);
+  const contactPendingRef = useRef(false);
+  const contactFormRef = useRef(contactForm);
+  const contactLifecycleRef = useRef(contactLifecycle);
   const branchFormRef = useRef(branchForm);
   const branchLifecycleRef = useRef(branchLifecycle);
   const editRef = useRef(edit);
@@ -236,12 +291,16 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   lifecycleRef.current = lifecycle;
   branchFormRef.current = branchForm;
   branchLifecycleRef.current = branchLifecycle;
+  contactFormRef.current = contactForm;
+  contactLifecycleRef.current = contactLifecycle;
   detailRef.current = detail;
 
   const updateEdit = useCallback((next: ClientEditState) => { editRef.current = next; setEdit(next); }, []);
   const updateLifecycle = useCallback((next: ClientLifecycleState) => { lifecycleRef.current = next; setLifecycle(next); }, []);
   const updateBranchForm = useCallback((next: BranchFormState) => { branchFormRef.current = next; setBranchForm(next); }, []);
   const updateBranchLifecycle = useCallback((next: BranchLifecycleState) => { branchLifecycleRef.current = next; setBranchLifecycle(next); }, []);
+  const updateContactForm = useCallback((next: ContactFormState) => { contactFormRef.current = next; setContactForm(next); }, []);
+  const updateContactLifecycle = useCallback((next: ContactLifecycleState) => { contactLifecycleRef.current = next; setContactLifecycle(next); }, []);
 
   const queryRef = useRef(query);
   const canViewRef = useRef(capabilities.canView);
@@ -262,6 +321,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const mutationWatchedIdsRef = useRef<Set<string>>(new Set());
   const knownClientStatesRef = useRef<Map<string, { version: number; isActive: boolean }>>(new Map());
   const confirmedBranchesRef = useRef<Map<string, ClientBranch>>(new Map());
+  const confirmedContactsRef = useRef<Map<string, ClientContact>>(new Map());
   const searchTimerRef = useRef<number | null>(null);
   const searchGenerationRef = useRef(0);
 
@@ -282,14 +342,26 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     ...client, branches: client.branches.map(withKnownBranch),
   }), [withKnownBranch]);
 
+  const withKnownContact = useCallback((contact: ClientContact): ClientContact => {
+    const key = `${contact.clientId}\u0000${contact.id}`;
+    const known = confirmedContactsRef.current.get(key);
+    if (known && known.version > contact.version) return known;
+    confirmedContactsRef.current.set(key, contact);
+    return contact;
+  }, []);
+
+  const withKnownContacts = useCallback((client: ClientDetail): ClientDetail => ({
+    ...client, contacts: client.contacts.map(withKnownContact),
+  }), [withKnownContact]);
+
   const withConfirmedDetail = useCallback((incoming: ClientDetail): ClientDetail => {
     observeClientState(incoming);
-    const normalized = withKnownBranches(incoming);
+    const normalized = withKnownContacts(withKnownBranches(incoming));
     const confirmed = confirmedClientsRef.current.get(incoming.id);
-    if (confirmed && confirmed.version > incoming.version) return withKnownBranches(confirmed);
+    if (confirmed && confirmed.version > incoming.version) return withKnownContacts(withKnownBranches(confirmed));
     if (!confirmed || incoming.version > confirmed.version) confirmedClientsRef.current.set(incoming.id, normalized);
     return normalized;
-  }, [observeClientState, withKnownBranches]);
+  }, [observeClientState, withKnownBranches, withKnownContacts]);
 
   const withConfirmedSummary = useCallback((incoming: ClientPage["items"][number]): ClientPage["items"][number] => {
     observeClientState(incoming);
@@ -401,7 +473,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
         state: {
           status: "success",
           data: current.key === key && current.state.data
-            ? withKnownBranches(reconcileClient(current.state.data, authoritative)) : authoritative,
+            ? withKnownContacts(withKnownBranches(reconcileClient(current.state.data, authoritative))) : authoritative,
           error: null,
           stale: false,
         },
@@ -423,7 +495,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     } finally {
       if (detailControllerRef.current === controller) detailControllerRef.current = null;
     }
-  }, [api, invalidateDetail, withConfirmedDetail, withKnownBranches]);
+  }, [api, invalidateDetail, withConfirmedDetail, withKnownBranches, withKnownContacts]);
 
   const refreshBranches = useCallback(async (): Promise<void> => {
     invalidateBranches();
@@ -481,7 +553,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== contactGenerationRef.current
         || queryRef.current.clientId !== clientId || queryRef.current.tab !== "contacts"
         || JSON.stringify([queryRef.current.clientId, queryRef.current.contacts]) !== key) return;
-      setContactSnapshot({ key, state: { status: "success", data: incoming, error: null, stale: false } });
+      setContactSnapshot({ key, state: { status: "success", data: { ...incoming, items: incoming.items.map(withKnownContact) }, error: null, stale: false } });
     } catch (error: unknown) {
       if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== contactGenerationRef.current
         || isAbortError(error) || queryRef.current.clientId !== clientId || queryRef.current.tab !== "contacts"
@@ -493,7 +565,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     } finally {
       if (contactControllerRef.current === controller) contactControllerRef.current = null;
     }
-  }, [api, invalidateContacts]);
+  }, [api, invalidateContacts, withKnownContact]);
 
   const refresh = useCallback(async (): Promise<void> => {
     const activeTab = queryRef.current.tab;
@@ -555,6 +627,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     updateLifecycle(emptyLifecycle());
     updateBranchForm(emptyBranchForm());
     updateBranchLifecycle(emptyBranchLifecycle());
+    updateContactForm(emptyContactForm());
+    updateContactLifecycle(emptyContactLifecycle());
     searchGenerationRef.current += 1;
     if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
     searchTimerRef.current = null;
@@ -567,7 +641,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     const defaults = parseClientSearch("");
     commitQuery({ ...defaults, clients: defaults.clients }, "replace");
     void refreshList();
-  }, [commitQuery, invalidateBranches, invalidateContacts, invalidateDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateContacts, invalidateDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   const selectClient = useCallback((id: string) => {
     if (!canViewRef.current || !id.trim()) return;
@@ -580,6 +654,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     updateLifecycle(emptyLifecycle());
     updateBranchForm(emptyBranchForm());
     updateBranchLifecycle(emptyBranchLifecycle());
+    updateContactForm(emptyContactForm());
+    updateContactLifecycle(emptyContactLifecycle());
     invalidateBranches();
     setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     invalidateContacts();
@@ -587,7 +663,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     const defaults = parseClientSearch("");
     commitQuery({ ...current, clientId: id.trim(), tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
     void refreshDetail();
-  }, [commitQuery, invalidateBranches, invalidateContacts, refreshDetail, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateContacts, refreshDetail, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   const closeDetail = useCallback(() => {
     const current = queryRef.current;
@@ -596,6 +672,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     updateLifecycle(emptyLifecycle());
     updateBranchForm(emptyBranchForm());
     updateBranchLifecycle(emptyBranchLifecycle());
+    updateContactForm(emptyContactForm());
+    updateContactLifecycle(emptyContactLifecycle());
     invalidateDetail();
     invalidateBranches();
     invalidateContacts();
@@ -604,7 +682,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     setContactSnapshot({ key: null, state: idle<ContactPage>() });
     commitQuery({ ...current, clientId: null, tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
-  }, [commitQuery, invalidateBranches, invalidateContacts, invalidateDetail, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateContacts, invalidateDetail, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   const setTab = useCallback((tab: ClientTab) => {
     const previous = queryRef.current.tab;
@@ -1006,14 +1084,142 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     }
   }, [updateBranchForm, updateBranchLifecycle]);
 
+  const canMutateContact = useCallback((clientId: string): boolean => {
+    const client = detailRef.current.data;
+    const known = knownClientStatesRef.current.get(clientId);
+    return Boolean(canViewRef.current && canManageRef.current && client?.id === clientId
+      && queryRef.current.clientId === clientId && client.isActive && known?.isActive !== false);
+  }, []);
+
+  const closeContactDialogs = useCallback(() => {
+    if (contactPendingRef.current) return;
+    updateContactForm(emptyContactForm());
+    updateContactLifecycle(emptyContactLifecycle());
+  }, [updateContactForm, updateContactLifecycle]);
+
+  const openContactCreate = useCallback(() => {
+    const client = detailRef.current.data;
+    if (!client || !canMutateContact(client.id) || contactPendingRef.current) return;
+    updateContactLifecycle(emptyContactLifecycle());
+    updateContactForm({ ...emptyContactForm(), open: true, draft: { clientId: client.id, contactId: null, baseVersion: null,
+      values: { scope: "CLIENT", branchId: null, fullName: "", position: null, phone: null, email: null, isPrimary: false } } });
+  }, [canMutateContact, updateContactForm, updateContactLifecycle]);
+
+  const openContactEdit = useCallback((contact: ClientContact) => {
+    if (!canMutateContact(contact.clientId) || !contact.isActive || contactPendingRef.current) return;
+    updateContactLifecycle(emptyContactLifecycle());
+    updateContactForm({ ...emptyContactForm(), mode: "edit", open: true, draft: { clientId: contact.clientId,
+      contactId: contact.id, baseVersion: contact.version, values: contactValues(contact) } });
+  }, [canMutateContact, updateContactForm, updateContactLifecycle]);
+
+  const changeContactForm = useCallback((patch: Partial<ContactFormValues>) => {
+    const state = contactFormRef.current;
+    if (!state.open || !state.draft || contactPendingRef.current) return;
+    updateContactForm({ ...state, error: null, fieldErrors: [], draft: { ...state.draft, values: { ...state.draft.values, ...patch } } });
+  }, [updateContactForm]);
+
+  const reconcileContactMutation = useCallback((contact: ClientContact) => {
+    const authoritative = withKnownContact(contact);
+    setDetailSnapshot((current) => {
+      const client = current.state.data;
+      if (!client || client.id !== contact.clientId) return current;
+      const exists = client.contacts.some((item) => item.id === contact.id);
+      return { ...current, state: { ...current.state, data: { ...client, contacts: exists
+        ? client.contacts.map((item) => item.id === contact.id ? authoritative : item)
+        : [...client.contacts, authoritative] } } };
+    });
+    setContactSnapshot((current) => current.state.data && queryRef.current.clientId === contact.clientId
+      ? { ...current, state: { ...current.state, data: { ...current.state.data, items: current.state.data.items.map((item) => item.id === contact.id ? authoritative : item) } } }
+      : current);
+  }, [withKnownContact]);
+
+  const afterContactSuccess = useCallback((contact: ClientContact) => {
+    invalidateContacts();
+    invalidateDetail();
+    invalidateList();
+    reconcileContactMutation(contact);
+    void refreshContacts();
+    void refreshDetail();
+    void refreshList();
+  }, [invalidateContacts, invalidateDetail, invalidateList, reconcileContactMutation, refreshContacts, refreshDetail, refreshList]);
+
+  const submitContactForm = useCallback(async (values: ContactFormValues): Promise<void> => {
+    const state = contactFormRef.current;
+    const draft = state.draft;
+    if (!state.open || !draft || !canMutateContact(draft.clientId) || contactPendingRef.current) return;
+    const client = detailRef.current.data;
+    const branchMap = new Map<string, ClientBranch>();
+    for (const branch of client?.branches ?? []) branchMap.set(branch.id, branch);
+    for (const branch of confirmedBranchesRef.current.values()) {
+      if (branch.clientId === draft.clientId && (!branchMap.has(branch.id) || branch.version > branchMap.get(branch.id)!.version)) branchMap.set(branch.id, branch);
+    }
+    const nextDraft = { ...draft, values };
+    let input;
+    try { input = toContactInput(values, [...branchMap.values()], draft.clientId); }
+    catch (error) {
+      updateContactForm({ ...state, draft: nextDraft, error: errorMessage(error, "Revisa los datos del contacto.") });
+      return;
+    }
+    contactPendingRef.current = true;
+    updateContactForm({ ...state, draft: nextDraft, pending: true, error: null, fieldErrors: [] });
+    try {
+      const contact = state.mode === "create"
+        ? await api.createContact(draft.clientId, input)
+        : await api.updateContact(draft.clientId, draft.contactId!, { ...input, version: draft.baseVersion! });
+      if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      updateContactForm(emptyContactForm());
+      afterContactSuccess(contact);
+    } catch (error: unknown) {
+      if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      updateContactForm({ ...contactFormRef.current, pending: false, error: contactMutationError(error, "No fue posible guardar el contacto."),
+        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [] });
+    } finally { contactPendingRef.current = false; }
+  }, [afterContactSuccess, api, canMutateContact, updateContactForm]);
+
+  const openContactLifecycle = useCallback((contact: ClientContact, action: "deactivate" | "reactivate") => {
+    if (!canMutateContact(contact.clientId) || contact.isActive !== (action === "deactivate") || contactPendingRef.current) return;
+    updateContactForm(emptyContactForm());
+    updateContactLifecycle({ ...emptyContactLifecycle(), open: true, action, clientId: contact.clientId, contactId: contact.id, baseVersion: contact.version });
+  }, [canMutateContact, updateContactForm, updateContactLifecycle]);
+
+  const changeContactLifecycleReason = useCallback((reason: string) => {
+    const state = contactLifecycleRef.current;
+    if (!state.open || contactPendingRef.current) return;
+    updateContactLifecycle({ ...state, reason, error: null, fieldErrors: [] });
+  }, [updateContactLifecycle]);
+
+  const submitContactLifecycle = useCallback(async (reason: string): Promise<void> => {
+    const state = contactLifecycleRef.current;
+    if (!state.open || !canMutateContact(state.clientId) || contactPendingRef.current) return;
+    const normalized = reason.trim();
+    if (normalized.length < 10 || normalized.length > 500) {
+      updateContactLifecycle({ ...state, reason, error: "El motivo debe tener entre 10 y 500 caracteres." });
+      return;
+    }
+    contactPendingRef.current = true;
+    updateContactLifecycle({ ...state, reason, pending: true, error: null, fieldErrors: [] });
+    try {
+      const contact = await (state.action === "deactivate" ? api.deactivateContact : api.reactivateContact)(state.clientId, state.contactId, { version: state.baseVersion, reason: normalized });
+      if (!mountedRef.current || queryRef.current.clientId !== state.clientId) return;
+      updateContactLifecycle(emptyContactLifecycle());
+      afterContactSuccess(contact);
+    } catch (error: unknown) {
+      if (!mountedRef.current || queryRef.current.clientId !== state.clientId) return;
+      updateContactLifecycle({ ...contactLifecycleRef.current, pending: false, error: contactMutationError(error, "No fue posible cambiar el estado del contacto."),
+        fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [] });
+    } finally { contactPendingRef.current = false; }
+  }, [afterContactSuccess, api, canMutateContact, updateContactLifecycle]);
+
   useEffect(() => {
     if (!capabilities.canManage || !capabilities.canView) {
       updateEdit(emptyEdit());
       updateLifecycle(emptyLifecycle());
       updateBranchForm(emptyBranchForm());
       updateBranchLifecycle(emptyBranchLifecycle());
+      updateContactForm(emptyContactForm());
+      updateContactLifecycle(emptyContactLifecycle());
     }
-  }, [capabilities.canManage, capabilities.canView, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
+  }, [capabilities.canManage, capabilities.canView, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1049,6 +1255,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
         updateLifecycle(emptyLifecycle());
         updateBranchForm(emptyBranchForm());
         updateBranchLifecycle(emptyBranchLifecycle());
+        updateContactForm(emptyContactForm());
+        updateContactLifecycle(emptyContactLifecycle());
       }
       queryRef.current = restored;
       setQuery(restored);
@@ -1059,7 +1267,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [refreshBranches, refreshContacts, refreshDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateEdit, updateLifecycle]);
+  }, [refreshBranches, refreshContacts, refreshDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   useEffect(() => {
     const normalized = search.trim();
@@ -1105,11 +1313,13 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   }
   const contactBranches = [...contactBranchMap.values()];
 
-  return { query, capabilities, list, detail, branches, contacts, contactBranches, create, edit, lifecycle, branchForm, branchLifecycle, branchClientActive,
-    openCreate, closeForm: () => { closeForm(); closeClientForms(); closeBranchDialogs(); }, submitCreate, openEdit,
+  return { query, capabilities, list, detail, branches, contacts, contactBranches, create, edit, lifecycle, branchForm, branchLifecycle, contactForm, contactLifecycle, branchClientActive,
+    openCreate, closeForm: () => { closeForm(); closeClientForms(); closeBranchDialogs(); closeContactDialogs(); }, submitCreate, openEdit,
     changeClientEdit, submitClientEdit, openClientLifecycle, changeClientLifecycleReason, submitClientLifecycle,
     reviewClientConflict, adoptClientConflict, openBranchCreate, openBranchEdit, changeBranchForm, submitBranchForm,
     openBranchLifecycle, changeBranchLifecycleReason, submitBranchLifecycle, reviewBranchConflict, adoptBranchConflict,
-    closeBranchDialogs, setClientFilters, setBranchFilters, setContactFilters, clearClientFilters, selectClient, closeDetail, setTab,
+    closeBranchDialogs, openContactCreate, openContactEdit, changeContactForm, submitContactForm, openContactLifecycle,
+    changeContactLifecycleReason, submitContactLifecycle, closeContactDialogs,
+    setClientFilters, setBranchFilters, setContactFilters, clearClientFilters, selectClient, closeDetail, setTab,
     refreshList, refreshDetail, refreshBranches, refreshContacts, refresh };
 }

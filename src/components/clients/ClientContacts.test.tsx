@@ -10,6 +10,22 @@ const page = (items: ClientContact[]): ContactPage => ({ items, pagination: { pa
 const filters = { page: 1, pageSize: 20, includeInactive: false };
 
 describe("ClientContacts", () => {
+  it("expone crear, editar y ciclo de vida sólo con permiso de gestión", async () => {
+    const onCreate = vi.fn();
+    const onEdit = vi.fn();
+    const onLifecycle = vi.fn();
+    const props = { clientActive: true, branches: [branch], filters, contacts: { status: "success" as const, data: page([base]), error: null, stale: false }, onChange: vi.fn(), onRetry: vi.fn(), onCreate, onEdit, onLifecycle };
+    const view = render(<ClientContacts {...props} canManage={false} />);
+    expect(screen.queryByRole("button", { name: "Nuevo contacto" })).not.toBeInTheDocument();
+    view.rerender(<ClientContacts {...props} canManage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Nuevo contacto" }));
+    await user.click(within(screen.getByRole("article", { name: "Contacto Ana General" })).getByRole("button", { name: "Editar contacto" }));
+    await user.click(within(screen.getByRole("article", { name: "Contacto Ana General" })).getByRole("button", { name: "Desactivar contacto" }));
+    expect(onCreate).toHaveBeenCalledOnce();
+    expect(onEdit).toHaveBeenCalledWith(base);
+    expect(onLifecycle).toHaveBeenCalledWith(base, "deactivate");
+  });
   it("agrupa visualmente sin alterar el orden de cada grupo, expone principalidad y estado efectivo", () => {
     const items = [
       { ...base, id: "b1", scope: "BRANCH" as const, branchId: branch.id, branchName: branch.name, fullName: "Bea Primera", isPrimary: true },

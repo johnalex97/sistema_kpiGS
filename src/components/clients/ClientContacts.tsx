@@ -8,6 +8,10 @@ interface ClientContactsProps {
   contacts: AsyncState<ContactPage>;
   onChange(patch: Partial<ContactListFilters>): void;
   onRetry(): void;
+  canManage?: boolean;
+  onCreate?(): void;
+  onEdit?(contact: ClientContact): void;
+  onLifecycle?(contact: ClientContact, action: "deactivate" | "reactivate"): void;
 }
 
 function hasControlCharacter(value: string): boolean {
@@ -26,7 +30,7 @@ function phoneHref(value: string | null): string | null {
   return /^\+?\d{3,20}$/.test(dial) ? `tel:${dial}` : null;
 }
 
-function ContactCard({ contact, clientActive, branch }: { contact: ClientContact; clientActive: boolean; branch?: ClientBranch }) {
+function ContactCard({ contact, clientActive, branch, canManage, onEdit, onLifecycle }: { contact: ClientContact; clientActive: boolean; branch?: ClientBranch; canManage?: boolean; onEdit?(contact: ClientContact): void; onLifecycle?(contact: ClientContact, action: "deactivate" | "reactivate"): void }) {
   const effective = contact.isActive && contact.isEffectivelyActive && clientActive && (contact.scope === "CLIENT" || Boolean(branch?.isActive));
   const effectiveLabel = !clientActive && contact.isActive ? "No disponible por cliente inactivo"
     : contact.scope === "BRANCH" && branch && !branch.isActive && contact.isActive
@@ -48,10 +52,14 @@ function ContactCard({ contact, clientActive, branch }: { contact: ClientContact
       <span className={`clients-status ${contact.isActive ? "clients-status--active" : "clients-status--inactive"}`}><i aria-hidden="true" />Estado interno: {contact.isActive ? "Activo" : "Inactivo"}</span>
       <span className={`clients-branch__effective ${effective ? "clients-branch__effective--active" : ""}`}>{effectiveLabel}</span>
     </div>
+    {canManage && clientActive && <div className="clients-contact__actions">
+      {contact.isActive && <button className="button button--ghost" type="button" onClick={() => onEdit?.(contact)}>Editar contacto</button>}
+      <button className="button button--ghost" type="button" onClick={() => onLifecycle?.(contact, contact.isActive ? "deactivate" : "reactivate")}>{contact.isActive ? "Desactivar contacto" : "Reactivar contacto"}</button>
+    </div>}
   </article>;
 }
 
-export function ClientContacts({ clientActive, branches, filters, contacts, onChange, onRetry }: ClientContactsProps) {
+export function ClientContacts({ clientActive, branches, filters, contacts, onChange, onRetry, canManage, onCreate, onEdit, onLifecycle }: ClientContactsProps) {
   const branchById = new Map(branches.map((branch) => [branch.id, branch]));
   const general: ClientContact[] = [];
   const grouped = new Map<string, ClientContact[]>();
@@ -65,6 +73,7 @@ export function ClientContacts({ clientActive, branches, filters, contacts, onCh
   }
   const pagination = contacts.data?.pagination;
   return <div className="clients-contacts">
+    {canManage && clientActive && <button className="button button--primary" type="button" onClick={onCreate}>Nuevo contacto</button>}
     <div className="clients-contacts__filters">
       <label>Buscar contactos<input type="search" maxLength={100} value={filters.search ?? ""} onChange={(event) => onChange({ search: event.target.value || undefined })} /></label>
       <label>Ámbito<select value={filters.scope ?? "all"} onChange={(event) => onChange({ scope: event.target.value === "all" ? undefined : event.target.value as ContactListFilters["scope"], branchId: event.target.value === "CLIENT" ? undefined : filters.branchId })}><option value="all">Todos</option><option value="CLIENT">Generales</option><option value="BRANCH">De sucursal</option></select></label>
@@ -76,11 +85,11 @@ export function ClientContacts({ clientActive, branches, filters, contacts, onCh
     {contacts.status === "loading" && <p className="clients-state" role="status">{contacts.data ? "Actualizando contactos…" : "Cargando contactos…"}</p>}
     {contacts.status === "error" && !contacts.data && <div className="clients-state" role="alert"><strong>No fue posible cargar los contactos</strong><p>{contacts.error}</p><button className="button button--ghost" type="button" onClick={onRetry}>Reintentar contactos</button></div>}
     {contacts.status === "success" && contacts.data?.items.length === 0 && <div className="clients-state"><strong>No hay contactos para estos filtros</strong><p>Cambia la búsqueda o el estado para ampliar los resultados.</p></div>}
-    {general.length > 0 && <section className="clients-contact-group" aria-label="Contactos generales"><h3>Contactos generales</h3><div className="clients-contacts__list">{general.map((item) => <ContactCard key={item.id} contact={item} clientActive={clientActive} />)}</div></section>}
+    {general.length > 0 && <section className="clients-contact-group" aria-label="Contactos generales"><h3>Contactos generales</h3><div className="clients-contacts__list">{general.map((item) => <ContactCard key={item.id} contact={item} clientActive={clientActive} canManage={canManage} onEdit={onEdit} onLifecycle={onLifecycle} />)}</div></section>}
     {[...grouped].map(([key, items]) => {
       const branch = branchById.get(key);
       const name = branch?.name || items[0]?.branchName || "Sucursal no registrada";
-      return <section key={key} className="clients-contact-group" role="region" aria-label={name}><h3>{name}</h3><div className="clients-contacts__list">{items.map((item) => <ContactCard key={item.id} contact={item} clientActive={clientActive} branch={branch} />)}</div></section>;
+      return <section key={key} className="clients-contact-group" role="region" aria-label={name}><h3>{name}</h3><div className="clients-contacts__list">{items.map((item) => <ContactCard key={item.id} contact={item} clientActive={clientActive} branch={branch} canManage={canManage} onEdit={onEdit} onLifecycle={onLifecycle} />)}</div></section>;
     })}
     {pagination && pagination.totalPages > 1 && <nav className="clients-pagination" aria-label="Paginación de contactos"><button className="button button--ghost" type="button" disabled={pagination.page <= 1} onClick={() => onChange({ page: pagination.page - 1 })}>Anterior</button><span>Página {pagination.page} de {pagination.totalPages}</span><button className="button button--ghost" type="button" disabled={pagination.page >= pagination.totalPages} onClick={() => onChange({ page: pagination.page + 1 })}>Siguiente</button></nav>}
   </div>;
