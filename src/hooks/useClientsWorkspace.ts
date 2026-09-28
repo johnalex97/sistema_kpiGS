@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientsApi } from "../api/clients";
 import { ApiClientError, type ApiFieldError } from "../api/http";
-import type { ClientDetail, ClientListFilters, ClientPage, ClientTab, CreateClientInput, UpdateClientInput } from "../models/client";
+import type { BranchListFilters, BranchPage, ClientDetail, ClientListFilters, ClientPage, ClientTab, CreateClientInput, UpdateClientInput } from "../models/client";
 import {
   deriveClientCapabilities,
   parseClientSearch,
@@ -23,6 +23,7 @@ export interface ClientsWorkspace {
   capabilities: ClientCapabilities;
   list: AsyncState<ClientPage>;
   detail: AsyncState<ClientDetail>;
+  branches: AsyncState<BranchPage>;
   create?: { open: boolean; pending: boolean; error: string | null; fieldErrors: ApiFieldError[] };
   edit?: ClientEditState;
   lifecycle?: ClientLifecycleState;
@@ -38,12 +39,14 @@ export interface ClientsWorkspace {
   reviewClientConflict?(): Promise<void>;
   adoptClientConflict?(): void;
   setClientFilters(patch: Partial<ClientListFilters>): void;
+  setBranchFilters(patch: Partial<BranchListFilters>): void;
   clearClientFilters(): void;
   selectClient(id: string): void;
   closeDetail(): void;
   setTab(tab: ClientTab): void;
   refreshList(): Promise<void>;
   refreshDetail(): Promise<void>;
+  refreshBranches(): Promise<void>;
   refresh(): Promise<void>;
 }
 
@@ -138,6 +141,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       : idle<ClientDetail>(),
   }));
   const detail = detailSnapshot.state;
+  const [branchSnapshot, setBranchSnapshot] = useState<{ key: string | null; state: AsyncState<BranchPage> }>(() => ({
+    key: null, state: idle<BranchPage>(),
+  }));
+  const branches = branchSnapshot.state;
   const [create, setCreate] = useState<NonNullable<ClientsWorkspace["create"]>>({ open: false, pending: false, error: null, fieldErrors: [] });
   const [edit, setEdit] = useState<ClientEditState>(emptyEdit);
   const [lifecycle, setLifecycle] = useState<ClientLifecycleState>(emptyLifecycle);
@@ -161,8 +168,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const mountedRef = useRef(true);
   const listControllerRef = useRef<AbortController | null>(null);
   const detailControllerRef = useRef<AbortController | null>(null);
+  const branchControllerRef = useRef<AbortController | null>(null);
   const listGenerationRef = useRef(0);
   const detailGenerationRef = useRef(0);
+  const branchGenerationRef = useRef(0);
   const listDataKeyRef = useRef<string | null>(null);
   const confirmedClientsRef = useRef<Map<string, ClientDetail>>(new Map());
   const observedSummariesRef = useRef<Map<string, ClientPage["items"][number]>>(new Map());
@@ -210,6 +219,12 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     detailGenerationRef.current += 1;
     detailControllerRef.current?.abort();
     detailControllerRef.current = null;
+  }, []);
+
+  const invalidateBranches = useCallback(() => {
+    branchGenerationRef.current += 1;
+    branchControllerRef.current?.abort();
+    branchControllerRef.current = null;
   }, []);
 
   const refreshList = useCallback(async (): Promise<void> => {
@@ -305,6 +320,39 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     }
   }, [api, invalidateDetail, withConfirmedDetail]);
 
+  const refreshBranches = useCallback(async (): Promise<void> => {
+    invalidateBranches();
+    const { clientId, tab, branches: filters } = queryRef.current;
+    if (!mountedRef.current || !canViewRef.current || !clientId || tab !== "branches") {
+      if (mountedRef.current) setBranchSnapshot({ key: null, state: idle<BranchPage>() });
+      return;
+    }
+    const key = JSON.stringify([clientId, filters]);
+    const controller = new AbortController();
+    const generation = branchGenerationRef.current;
+    branchControllerRef.current = controller;
+    setBranchSnapshot((current) => ({ key, state: {
+      status: "loading", data: current.key === key ? current.state.data : null, error: null, stale: false,
+    } }));
+    try {
+      const incoming = await api.listBranches(clientId, { ...filters }, controller.signal);
+      if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== branchGenerationRef.current
+        || queryRef.current.clientId !== clientId || queryRef.current.tab !== "branches"
+        || JSON.stringify([queryRef.current.clientId, queryRef.current.branches]) !== key) return;
+      setBranchSnapshot({ key, state: { status: "success", data: incoming, error: null, stale: false } });
+    } catch (error: unknown) {
+      if (!mountedRef.current || !canViewRef.current || controller.signal.aborted || generation !== branchGenerationRef.current
+        || isAbortError(error) || queryRef.current.clientId !== clientId || queryRef.current.tab !== "branches"
+        || JSON.stringify([queryRef.current.clientId, queryRef.current.branches]) !== key) return;
+      setBranchSnapshot((current) => {
+        const data = current.key === key ? current.state.data : null;
+        return { key, state: { status: "error", data, error: errorMessage(error, "No fue posible cargar las sucursales"), stale: data !== null } };
+      });
+    } finally {
+      if (branchControllerRef.current === controller) branchControllerRef.current = null;
+    }
+  }, [api, invalidateBranches]);
+
   const refresh = useCallback(async (): Promise<void> => {
     await Promise.all([refreshList(), refreshDetail()]);
   }, [refreshDetail, refreshList]);
@@ -335,6 +383,17 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     if (includeInactiveChanged && next.clientId) void refreshDetail();
   }, [commitQuery, refreshDetail, refreshList]);
 
+  const setBranchFilters = useCallback((patch: Partial<BranchListFilters>) => {
+    const current = queryRef.current;
+    if (!current.clientId) return;
+    const filters = { ...current.branches, ...patch, page: patch.page ?? 1 };
+    if (filters.isActive === false) filters.includeInactive = true;
+    else if (Object.prototype.hasOwnProperty.call(patch, "isActive")
+      && !Object.prototype.hasOwnProperty.call(patch, "includeInactive")) filters.includeInactive = false;
+    commitQuery({ ...current, branches: filters }, "replace");
+    if (current.tab === "branches") void refreshBranches();
+  }, [commitQuery, refreshBranches]);
+
   const clearClientFilters = useCallback(() => {
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
@@ -342,11 +401,13 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
     searchTimerRef.current = null;
     invalidateDetail();
+    invalidateBranches();
+    setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     setDetailSnapshot({ key: null, state: idle<ClientDetail>() });
     const defaults = parseClientSearch("");
     commitQuery({ ...defaults, clients: defaults.clients }, "replace");
     void refreshList();
-  }, [commitQuery, invalidateDetail, refreshList, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateDetail, refreshList, updateEdit, updateLifecycle]);
 
   const selectClient = useCallback((id: string) => {
     if (!canViewRef.current || !id.trim()) return;
@@ -357,10 +418,12 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     }
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
+    invalidateBranches();
+    setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     const defaults = parseClientSearch("");
     commitQuery({ ...current, clientId: id.trim(), tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
     void refreshDetail();
-  }, [commitQuery, refreshDetail, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, refreshDetail, updateEdit, updateLifecycle]);
 
   const closeDetail = useCallback(() => {
     const current = queryRef.current;
@@ -368,14 +431,23 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
     invalidateDetail();
+    invalidateBranches();
     const defaults = parseClientSearch("");
     setDetailSnapshot({ key: null, state: idle<ClientDetail>() });
+    setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     commitQuery({ ...current, clientId: null, tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
-  }, [commitQuery, invalidateDetail, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateDetail, updateEdit, updateLifecycle]);
 
   const setTab = useCallback((tab: ClientTab) => {
+    const previous = queryRef.current.tab;
+    if (previous === tab) return;
     commitQuery({ ...queryRef.current, tab }, "replace");
-  }, [commitQuery]);
+    if (tab === "branches") void refreshBranches();
+    else {
+      invalidateBranches();
+      setBranchSnapshot({ key: null, state: idle<BranchPage>() });
+    }
+  }, [commitQuery, invalidateBranches, refreshBranches]);
 
   const openCreate = useCallback(() => {
     if (!canManageRef.current || createPendingRef.current) return;
@@ -615,13 +687,16 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     if (capabilities.canView) {
       void refreshList();
       if (queryRef.current.clientId) void refreshDetail();
+      if (queryRef.current.clientId && queryRef.current.tab === "branches") void refreshBranches();
     } else {
       invalidateList();
       invalidateDetail();
+      invalidateBranches();
       setList(idle<ClientPage>());
       setDetailSnapshot({ key: null, state: idle<ClientDetail>() });
+      setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     }
-  }, [capabilities.canView, invalidateDetail, invalidateList, refreshDetail, refreshList]);
+  }, [capabilities.canView, invalidateBranches, invalidateDetail, invalidateList, refreshBranches, refreshDetail, refreshList]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -637,10 +712,11 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       setQuery(restored);
       void refreshList();
       void refreshDetail();
+      void refreshBranches();
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [refreshDetail, refreshList, updateEdit, updateLifecycle]);
+  }, [refreshBranches, refreshDetail, refreshList, updateEdit, updateLifecycle]);
 
   useEffect(() => {
     const normalized = search.trim();
@@ -668,7 +744,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     mountedRef.current = false;
     invalidateList();
     invalidateDetail();
-  }, [invalidateDetail, invalidateList]);
+    invalidateBranches();
+  }, [invalidateBranches, invalidateDetail, invalidateList]);
 
-  return { query, capabilities, list, detail, create, edit, lifecycle, openCreate, closeForm: () => { closeForm(); closeClientForms(); }, submitCreate, openEdit, changeClientEdit, submitClientEdit, openClientLifecycle, changeClientLifecycleReason, submitClientLifecycle, reviewClientConflict, adoptClientConflict, setClientFilters, clearClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refresh };
+  return { query, capabilities, list, detail, branches, create, edit, lifecycle, openCreate, closeForm: () => { closeForm(); closeClientForms(); }, submitCreate, openEdit, changeClientEdit, submitClientEdit, openClientLifecycle, changeClientLifecycleReason, submitClientLifecycle, reviewClientConflict, adoptClientConflict, setClientFilters, setBranchFilters, clearClientFilters, selectClient, closeDetail, setTab, refreshList, refreshDetail, refreshBranches, refresh };
 }

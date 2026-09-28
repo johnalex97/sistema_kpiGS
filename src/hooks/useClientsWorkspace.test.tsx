@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientsApi } from "../api/clients";
-import type { ClientDetail, ClientListFilters, ClientPage, ClientSummary, CreateClientInput } from "../models/client";
+import type { BranchPage, ClientBranch, ClientDetail, ClientListFilters, ClientPage, ClientSummary, CreateClientInput } from "../models/client";
 import { useClientsWorkspace } from "./useClientsWorkspace";
 import { ApiClientError } from "../api/http";
 
@@ -466,14 +466,95 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function apiWith(overrides: Partial<Pick<ClientsApi, "listClients" | "getClient" | "createClient" | "updateClient" | "deactivateClient" | "reactivateClient">> = {}): ClientsApi {
+function apiWith(overrides: Partial<Pick<ClientsApi, "listClients" | "getClient" | "createClient" | "updateClient" | "deactivateClient" | "reactivateClient" | "listBranches">> = {}): ClientsApi {
   return {
     listClients: vi.fn(async () => page([clientA, clientB])),
     getClient: vi.fn(async (id: string) => id === clientA.id ? detailA : detailB),
     createClient: vi.fn(async () => detailB),
+    listBranches: vi.fn(async () => branchPage([])),
     ...overrides,
   } as ClientsApi;
 }
+
+const branchA: ClientBranch = { id: "branch-a", clientId: clientA.id, code: "S-1", name: "Principal", address: "Centro", city: "Tegucigalpa", region: "Francisco Morazán", country: "HN", lat: "14.1", long: "-87.2", locationReference: "Frente al parque", isActive: true, isEffectivelyActive: true, createdAt: clientA.createdAt, updatedAt: clientA.updatedAt, version: 1 };
+const branchPage = (items: ClientBranch[], pageNumber = 1): BranchPage => ({ items, pagination: { page: pageNumber, pageSize: 20, totalItems: items.length, totalPages: items.length ? 1 : 0 } });
+
+describe("consulta de sucursales", () => {
+  it("consulta sólo al abrir la pestaña y aborta al salir a Contactos", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const pending = deferred<BranchPage>();
+    const api = apiWith({ listBranches: vi.fn(() => pending.promise) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    expect(api.listBranches).not.toHaveBeenCalled();
+    act(() => result.current.setTab("branches"));
+    expect(api.listBranches).toHaveBeenCalledTimes(1);
+    const signal = vi.mocked(api.listBranches).mock.calls[0]?.[2];
+    act(() => result.current.setTab("contacts"));
+    expect(signal?.aborted).toBe(true);
+    await act(async () => pending.resolve(branchPage([branchA])));
+    expect(result.current.branches.data).toBeNull();
+  });
+
+  it("descarta la respuesta de A al seleccionar B aunque el transporte ignore abort", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=branches");
+    const a = deferred<BranchPage>();
+    const b = deferred<BranchPage>();
+    const api = apiWith({ listBranches: vi.fn((id: string) => id === clientA.id ? a.promise : b.promise) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(api.listBranches).toHaveBeenCalledTimes(1));
+    act(() => result.current.selectClient(clientB.id));
+    act(() => result.current.setTab("branches"));
+    await waitFor(() => expect(api.listBranches).toHaveBeenCalledTimes(2));
+    await act(async () => b.resolve(branchPage([{ ...branchA, id: "branch-b", clientId: clientB.id, name: "Norte" }])));
+    await act(async () => a.resolve(branchPage([branchA])));
+    expect(result.current.branches.data?.items[0]?.name).toBe("Norte");
+  });
+
+  it("mantiene filtros independientes en URL y pagina con parámetros del servidor", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&source=shell");
+    const api = apiWith();
+    const { result } = renderHook(() => useWorkspace(api));
+    act(() => result.current.setTab("branches"));
+    act(() => result.current.setBranchFilters({ search: "Centro", city: "Tegucigalpa", region: "Francisco Morazán", isActive: false, page: 3 }));
+    await waitFor(() => expect(result.current.branches.status).toBe("success"));
+    expect(api.listBranches).toHaveBeenLastCalledWith(clientA.id, expect.objectContaining({ search: "Centro", city: "Tegucigalpa", region: "Francisco Morazán", isActive: false, includeInactive: true, page: 3 }), expect.any(AbortSignal));
+    const url = new URLSearchParams(window.location.search);
+    expect(url.get("branchPage")).toBe("3");
+    expect(url.get("branchCity")).toBe("Tegucigalpa");
+    expect(url.get("branchRegion")).toBe("Francisco Morazán");
+    expect(url.get("source")).toBe("shell");
+    expect(result.current.query.clients.page).toBe(1);
+    expect(result.current.query.contacts.page).toBe(1);
+  });
+
+  it("conserva datos previos ante fallo de refresh y permite reintentar", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=branches");
+    const api = apiWith({ listBranches: vi.fn().mockResolvedValueOnce(branchPage([branchA])).mockRejectedValueOnce(new Error("Red inestable")).mockResolvedValueOnce(branchPage([{ ...branchA, version: 2, name: "Renovada" }])) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.branches.status).toBe("success"));
+    await act(async () => result.current.refreshBranches());
+    expect(result.current.branches).toMatchObject({ status: "error", stale: true, error: "Red inestable" });
+    expect(result.current.branches.data?.items[0]?.name).toBe("Principal");
+    await act(async () => result.current.refreshBranches());
+    expect(result.current.branches.data?.items[0]?.name).toBe("Renovada");
+  });
+
+  it("descarta respuestas tardías tras cambiar filtros y restaura URL por popstate", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=branches&branchCity=Antes");
+    const old = deferred<BranchPage>();
+    const api = apiWith({ listBranches: vi.fn().mockImplementationOnce(() => old.promise).mockResolvedValue(branchPage([{ ...branchA, name: "Nueva" }])) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(api.listBranches).toHaveBeenCalledTimes(1));
+    act(() => result.current.setBranchFilters({ city: "Ahora" }));
+    await waitFor(() => expect(result.current.branches.data?.items[0]?.name).toBe("Nueva"));
+    await act(async () => old.resolve(branchPage([branchA])));
+    expect(result.current.branches.data?.items[0]?.name).toBe("Nueva");
+    window.history.pushState({}, "", "/clientes?clientId=client-a&clientTab=branches&branchCity=Restaurada");
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await waitFor(() => expect(api.listBranches).toHaveBeenLastCalledWith(clientA.id, expect.objectContaining({ city: "Restaurada" }), expect.any(AbortSignal)));
+  });
+});
 
 const useWorkspace = (api: ClientsApi, search = "", permissions = ["CLIENTS_VIEW"]) =>
   useClientsWorkspace({ api, search, permissions });

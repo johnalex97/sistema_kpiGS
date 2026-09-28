@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { ClientDetail as ClientRecord, ClientTab } from "../../models/client";
+import type { BranchListFilters, BranchPage } from "../../models/client";
+import type { AsyncState } from "../../hooks/useClientsWorkspace";
+import { ClientBranches } from "./ClientBranches";
 
 interface ClientDetailProps {
   client: ClientRecord;
@@ -10,6 +13,10 @@ interface ClientDetailProps {
   canManage?: boolean;
   onEdit?(): void;
   onLifecycle?(action: "deactivate" | "reactivate"): void;
+  branches: AsyncState<BranchPage>;
+  branchFilters: BranchListFilters;
+  onBranchFiltersChange(patch: Partial<BranchListFilters>): void;
+  onRefreshBranches(): void;
 }
 
 const tabs: { id: ClientTab; label: string }[] = [
@@ -21,7 +28,7 @@ const tabs: { id: ClientTab; label: string }[] = [
 function value(text: string | null) { return text || "No registrado"; }
 function date(text: string) { return new Intl.DateTimeFormat("es-HN", { dateStyle: "medium" }).format(new Date(text)); }
 
-export function ClientDetail({ client, tab, onTabChange, onClose, canManage, onEdit, onLifecycle }: ClientDetailProps) {
+export function ClientDetail({ client, tab, onTabChange, onClose, canManage, onEdit, onLifecycle, branches, branchFilters, onBranchFiltersChange, onRefreshBranches }: ClientDetailProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeRef.current?.focus(); }, [client.id]);
 
@@ -64,7 +71,7 @@ export function ClientDetail({ client, tab, onTabChange, onClose, canManage, onE
         <button className="button button--ghost" type="button" onClick={() => onLifecycle?.(client.isActive ? "deactivate" : "reactivate")}>{client.isActive ? "Desactivar cliente" : "Reactivar cliente"}</button>
       </div>}
     </section>
-    <section role="tabpanel" id="client-panel-branches" aria-labelledby="client-tab-branches" tabIndex={0} hidden={tab !== "branches"} className="clients-detail__body"><p className="clients-detail__next">La consulta de sucursales estará disponible en esta sección.</p></section>
+    <section role="tabpanel" id="client-panel-branches" aria-labelledby="client-tab-branches" tabIndex={0} hidden={tab !== "branches"} className="clients-detail__body">{tab === "branches" && <ClientBranches clientActive={client.isActive} filters={branchFilters} branches={branches} onChange={onBranchFiltersChange} onRetry={onRefreshBranches} />}</section>
     <section role="tabpanel" id="client-panel-contacts" aria-labelledby="client-tab-contacts" tabIndex={0} hidden={tab !== "contacts"} className="clients-detail__body"><p className="clients-detail__next">La consulta de contactos estará disponible en esta sección.</p></section>
   </article>;
 }

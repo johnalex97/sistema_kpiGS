@@ -22,7 +22,9 @@ function workspace(overrides: Partial<ClientsWorkspace> = {}): ClientsWorkspace 
     capabilities: { canView: true, canManage: false },
     list: { status: "success", data: { items: [client], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }, error: null, stale: false },
     detail: { status: "idle", data: null, error: null, stale: false },
+    branches: { status: "idle", data: null, error: null, stale: false },
     setClientFilters: vi.fn(), clearClientFilters: vi.fn(), selectClient: vi.fn(), closeDetail: vi.fn(), setTab: vi.fn(),
+    setBranchFilters: vi.fn(), refreshBranches: vi.fn(async () => {}),
     refreshList: vi.fn(async () => {}), refreshDetail: vi.fn(async () => {}), refresh: vi.fn(async () => {}),
     ...overrides,
   };
@@ -34,6 +36,15 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
+  it("presenta la colección paginada al abrir Sucursales", () => {
+    const current = workspace({
+      query: { ...workspace().query, clientId: "client-1", tab: "branches" },
+      detail: { status: "success", data: detail, error: null, stale: false },
+      branches: { status: "success", data: { items: [{ id: "branch-1", clientId: "client-1", code: "S-001", name: "Centro", address: "Palmira", city: null, region: null, country: "HN", lat: null, long: null, locationReference: null, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 1 }], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }, error: null, stale: false },
+    });
+    renderPage(current);
+    expect(screen.getByRole("article", { name: "Sucursal Centro" })).toHaveTextContent("Palmira");
+  });
   it("muestra la ficha conservada con advertencia y reintento tras un error", async () => {
     const current = workspace({
       query: { ...workspace().query, clientId: "client-1" },
