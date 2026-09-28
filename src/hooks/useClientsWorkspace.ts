@@ -413,6 +413,11 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     contactControllerRef.current = null;
   }, []);
 
+  const invalidateContactReview = useCallback(() => {
+    contactReviewControllerRef.current?.abort();
+    contactReviewControllerRef.current = null;
+  }, []);
+
   const refreshList = useCallback(async (): Promise<void> => {
     invalidateList();
     if (!mountedRef.current || !canViewRef.current) return;
@@ -633,6 +638,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   }, [commitQuery, refreshContacts]);
 
   const clearClientFilters = useCallback(() => {
+    invalidateContactReview();
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
     updateBranchForm(emptyBranchForm());
@@ -651,7 +657,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     const defaults = parseClientSearch("");
     commitQuery({ ...defaults, clients: defaults.clients }, "replace");
     void refreshList();
-  }, [commitQuery, invalidateBranches, invalidateContacts, invalidateDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateContactReview, invalidateContacts, invalidateDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   const selectClient = useCallback((id: string) => {
     if (!canViewRef.current || !id.trim()) return;
@@ -660,6 +666,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       void refreshDetail();
       return;
     }
+    invalidateContactReview();
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
     updateBranchForm(emptyBranchForm());
@@ -673,11 +680,12 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     const defaults = parseClientSearch("");
     commitQuery({ ...current, clientId: id.trim(), tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
     void refreshDetail();
-  }, [commitQuery, invalidateBranches, invalidateContacts, refreshDetail, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateContactReview, invalidateContacts, refreshDetail, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   const closeDetail = useCallback(() => {
     const current = queryRef.current;
     if (!current.clientId) return;
+    invalidateContactReview();
     updateEdit(emptyEdit());
     updateLifecycle(emptyLifecycle());
     updateBranchForm(emptyBranchForm());
@@ -692,7 +700,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     setBranchSnapshot({ key: null, state: idle<BranchPage>() });
     setContactSnapshot({ key: null, state: idle<ContactPage>() });
     commitQuery({ ...current, clientId: null, tab: "summary", branches: defaults.branches, contacts: defaults.contacts }, "push");
-  }, [commitQuery, invalidateBranches, invalidateContacts, invalidateDetail, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
+  }, [commitQuery, invalidateBranches, invalidateContactReview, invalidateContacts, invalidateDetail, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   const setTab = useCallback((tab: ClientTab) => {
     const previous = queryRef.current.tab;
@@ -1103,11 +1111,10 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
 
   const closeContactDialogs = useCallback(() => {
     if (contactPendingRef.current) return;
-    contactReviewControllerRef.current?.abort();
-    contactReviewControllerRef.current = null;
+    invalidateContactReview();
     updateContactForm(emptyContactForm());
     updateContactLifecycle(emptyContactLifecycle());
-  }, [updateContactForm, updateContactLifecycle]);
+  }, [invalidateContactReview, updateContactForm, updateContactLifecycle]);
 
   const openContactCreate = useCallback(() => {
     const client = detailRef.current.data;
@@ -1283,6 +1290,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
 
   useEffect(() => {
     if (!capabilities.canManage || !capabilities.canView) {
+      invalidateContactReview();
       updateEdit(emptyEdit());
       updateLifecycle(emptyLifecycle());
       updateBranchForm(emptyBranchForm());
@@ -1290,7 +1298,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       updateContactForm(emptyContactForm());
       updateContactLifecycle(emptyContactLifecycle());
     }
-  }, [capabilities.canManage, capabilities.canView, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
+  }, [capabilities.canManage, capabilities.canView, invalidateContactReview, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1322,6 +1330,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       searchTimerRef.current = null;
       const restored = parseClientSearch(window.location.search);
       if (restored.clientId !== queryRef.current.clientId) {
+        invalidateContactReview();
         updateEdit(emptyEdit());
         updateLifecycle(emptyLifecycle());
         updateBranchForm(emptyBranchForm());
@@ -1338,7 +1347,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [refreshBranches, refreshContacts, refreshDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
+  }, [invalidateContactReview, refreshBranches, refreshContacts, refreshDetail, refreshList, updateBranchForm, updateBranchLifecycle, updateContactForm, updateContactLifecycle, updateEdit, updateLifecycle]);
 
   useEffect(() => {
     const normalized = search.trim();
@@ -1364,11 +1373,12 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
 
   useEffect(() => () => {
     mountedRef.current = false;
+    invalidateContactReview();
     invalidateList();
     invalidateDetail();
     invalidateBranches();
     invalidateContacts();
-  }, [invalidateBranches, invalidateContacts, invalidateDetail, invalidateList]);
+  }, [invalidateBranches, invalidateContactReview, invalidateContacts, invalidateDetail, invalidateList]);
 
   const currentClient = detail.data?.id === query.clientId ? detail.data : null;
   const knownClient = currentClient ? knownClientStatesRef.current.get(currentClient.id) : null;

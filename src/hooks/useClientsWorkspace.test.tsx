@@ -193,6 +193,40 @@ describe("mutaciones de contactos", () => {
     expect(result.current.contactForm?.open).toBe(false);
     expect(result.current.detail.data?.id).toBe("client-b");
   });
+
+  it("libera revisión A pendiente para revisar y adoptar conflicto de B sin esperar A", async () => {
+    const pendingA = deferred<ClientDetail>();
+    const contactA = { ...contact, version: 3 };
+    const contactB = { ...contact, id: "contact-b", clientId: "client-b", fullName: "Berta", version: 3 };
+    const currentB = { ...contactB, fullName: "Berta vigente", version: 9 };
+    const getClient = vi.fn((id: string, includeInactive: boolean) => {
+      if (id === "client-a") return includeInactive ? pendingA.promise : Promise.resolve({ ...detailA, contacts: [contactA] });
+      return Promise.resolve({ ...detailB, contacts: [includeInactive ? currentB : contactB] });
+    });
+    const updateContact = vi.fn().mockRejectedValue(new ApiClientError(409, "VERSION_CONFLICT", "conflict"));
+    const { result, api } = setup({ getClient, updateContact });
+    await waitFor(() => expect(result.current.detail.data?.id).toBe("client-a"));
+    act(() => result.current.openContactEdit(contactA));
+    await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
+    let reviewA!: Promise<void>;
+    act(() => { reviewA = result.current.reviewContactConflict(); });
+    const requestA = vi.mocked(api.getClient).mock.calls.find(([id, includeInactive]) => id === "client-a" && includeInactive);
+    expect(requestA).toBeDefined();
+
+    act(() => result.current.selectClient("client-b"));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe("client-b"));
+    act(() => result.current.openContactEdit(contactB));
+    await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
+    await act(async () => result.current.reviewContactConflict());
+    expect(requestA?.[2]?.aborted).toBe(true);
+    expect(getClient.mock.calls.filter(([id, includeInactive]) => id === "client-b" && includeInactive)).toHaveLength(1);
+    expect(result.current.contactForm?.draft?.conflict).toMatchObject({ id: "contact-b", version: 9, fullName: "Berta vigente" });
+    act(() => result.current.adoptContactConflict());
+    expect(result.current.contactForm?.draft).toMatchObject({ clientId: "client-b", baseVersion: 9, conflict: null });
+    await act(async () => pendingA.resolve({ ...detailA, contacts: [{ ...contactA, version: 17 }] }));
+    await reviewA;
+    expect(result.current.contactForm?.draft).toMatchObject({ clientId: "client-b", baseVersion: 9, conflict: null });
+  });
 });
 
 describe("consulta de contactos", () => {
