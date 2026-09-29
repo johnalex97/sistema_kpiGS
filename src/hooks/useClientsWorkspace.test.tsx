@@ -20,6 +20,153 @@ const page = (items: ClientSummary[]): ClientPage => ({
 const contact: ClientContact = { id: "contact-a", clientId: clientA.id, branchId: null, scope: "CLIENT", branchName: null, fullName: "Ana", position: null, phone: null, email: null, isPrimary: true, isActive: true, isEffectivelyActive: true, createdAt: clientA.createdAt, updatedAt: clientA.updatedAt, version: 1 };
 const contactPage = (items: ClientContact[]): ContactPage => ({ items, pagination: { page: 1, pageSize: 20, totalItems: items.length, totalPages: 1 } });
 
+describe("lecturas frescas con igual versión del cliente", () => {
+  it("actualiza conteos y membresía externa conservando pisos por ID y el padre mayor", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const initial = { ...detailA, version: 9, branches: [{ ...branchA, version: 8 }, { ...branchA, id: "removed-branch" }],
+      contacts: [{ ...contact, version: 8 }, { ...contact, id: "removed-contact" }] };
+    const fresh = { ...initial,
+      branches: [{ ...branchA, version: 3 }, { ...branchA, id: "new-branch" }, { ...branchA, id: "new-branch-2" }],
+      contacts: [{ ...contact, version: 3 }, { ...contact, id: "new-contact" }, { ...contact, id: "new-contact-2" }] };
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce(initial).mockResolvedValue(fresh),
+      listClients: vi.fn().mockResolvedValueOnce(page([{ ...clientA, version: 9, activeBranchCount: 2, activeContactCount: 2 }]))
+        .mockResolvedValue(page([{ ...clientA, version: 9, activeBranchCount: 3, activeContactCount: 3 }])) });
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    await act(async () => result.current.refresh());
+    expect(result.current.list.data?.items[0]).toMatchObject({ version: 9, activeBranchCount: 3, activeContactCount: 3 });
+    expect(result.current.detail.data?.branches.map(({ id, version }) => ({ id, version }))).toEqual([
+      { id: branchA.id, version: 8 }, { id: "new-branch", version: 1 }, { id: "new-branch-2", version: 1 },
+    ]);
+    expect(result.current.detail.data?.contacts.map(({ id, version }) => ({ id, version }))).toEqual([
+      { id: contact.id, version: 8 }, { id: "new-contact", version: 1 }, { id: "new-contact-2", version: 1 },
+    ]);
+    vi.mocked(api.getClient).mockResolvedValue({ ...detailA, version: 3 });
+    vi.mocked(api.listClients).mockResolvedValue(page([{ ...clientA, version: 3 }]));
+    await act(async () => result.current.refresh());
+    expect(result.current.detail.data?.version).toBe(9);
+    expect(result.current.detail.data?.branches.map(({ id }) => id)).toEqual([branchA.id, "new-branch", "new-branch-2"]);
+    expect(result.current.list.data?.items[0]).toMatchObject({ version: 9, activeBranchCount: 3, activeContactCount: 3 });
+  });
+
+  it("refresca conteos y retira hijos desactivados tras mutaciones propias sin subir versión del padre", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const otherBranch = { ...branchA, id: "other-branch" };
+    const api = apiWith({ getClient: vi.fn().mockResolvedValue({ ...detailA, branches: [branchA, otherBranch], contacts: [contact] }),
+      listClients: vi.fn().mockResolvedValue(page([{ ...clientA, activeBranchCount: 2 }])),
+      deactivateBranch: vi.fn().mockResolvedValue({ ...branchA, version: 8, isActive: false, isEffectivelyActive: false }),
+      deactivateContact: vi.fn().mockResolvedValue({ ...contact, version: 8, isActive: false, isEffectivelyActive: false }) });
+    const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    vi.mocked(api.getClient).mockResolvedValue({ ...detailA, branches: [otherBranch], contacts: [contact] });
+    vi.mocked(api.listClients).mockResolvedValue(page([clientA]));
+    act(() => result.current.openBranchLifecycle(branchA, "deactivate"));
+    await act(async () => result.current.submitBranchLifecycle("Motivo documentado"));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    expect(result.current.detail.data?.branches).toEqual([otherBranch]);
+    expect(result.current.list.data?.items[0].activeBranchCount).toBe(1);
+    vi.mocked(api.getClient).mockResolvedValue({ ...detailA, branches: [otherBranch] });
+    vi.mocked(api.listClients).mockResolvedValue(page([{ ...clientA, activeContactCount: 0 }]));
+    act(() => result.current.openContactLifecycle(contact, "deactivate"));
+    await act(async () => result.current.submitContactLifecycle("Motivo documentado"));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    expect(result.current.detail.data?.contacts).toEqual([]);
+    expect(result.current.list.data?.items[0]).toMatchObject({ version: 1, activeBranchCount: 1, activeContactCount: 0 });
+  });
+});
+
+describe("sesiones de revisión de conflictos", () => {
+  const managed = ["CLIENTS_VIEW", "CLIENTS_MANAGE"];
+  it.each([
+    ["cliente", "edición"], ["cliente", "ciclo de vida"],
+    ["sucursal", "edición"], ["sucursal", "ciclo de vida"],
+  ])("%s %s: cancelar y reabrir descarta v17 y no finaliza la nueva revisión", async (resource, dialog) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const old = deferred<ClientDetail>();
+    const fresh = deferred<ClientDetail>();
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, branches: [branchA] })
+      .mockImplementationOnce(() => old.promise).mockImplementationOnce(() => fresh.promise) });
+    const { result } = renderHook(() => useWorkspace(api, "", managed));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    const open = () => resource === "cliente"
+      ? dialog === "edición" ? result.current.openEdit() : result.current.openClientLifecycle("deactivate")
+      : dialog === "edición" ? result.current.openBranchEdit(branchA) : result.current.openBranchLifecycle(branchA, "deactivate");
+    const review = () => resource === "cliente" ? result.current.reviewClientConflict() : result.current.reviewBranchConflict();
+    const state = () => resource === "cliente"
+      ? dialog === "edición" ? result.current.edit : result.current.lifecycle
+      : dialog === "edición" ? result.current.branchForm : result.current.branchLifecycle;
+    const conflict = () => { const current = state(); return "draft" in current ? current.draft?.conflict : current.conflict; };
+    act(open);
+    let first!: Promise<void>;
+    act(() => { first = review(); });
+    const signal = vi.mocked(api.getClient).mock.calls[1]?.[2];
+    act(() => result.current.closeForm());
+    act(open);
+    let second!: Promise<void>;
+    act(() => { second = review(); });
+    await act(async () => { old.resolve({ ...detailA, version: 17, branches: [{ ...branchA, version: 17 }] }); await first; });
+    expect(conflict()).toBeNull();
+    expect(state().reviewPending).toBe(true);
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { fresh.resolve({ ...detailA, version: 9, branches: [{ ...branchA, version: 9 }] }); await second; });
+    expect(conflict()?.version).toBe(9);
+    expect(state().reviewPending).toBe(false);
+  });
+
+  it.each(["cliente", "sucursal"])("%s: edición a ciclo de vida del mismo recurso no hereda revisión", async (resource) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const pending = deferred<ClientDetail>();
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, branches: [branchA] }).mockImplementationOnce(() => pending.promise) });
+    const { result } = renderHook(() => useWorkspace(api, "", managed));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    act(() => resource === "cliente" ? result.current.openEdit() : result.current.openBranchEdit(branchA));
+    let review!: Promise<void>;
+    act(() => { review = resource === "cliente" ? result.current.reviewClientConflict() : result.current.reviewBranchConflict(); });
+    const signal = vi.mocked(api.getClient).mock.calls[1]?.[2];
+    act(() => resource === "cliente" ? result.current.openClientLifecycle("deactivate") : result.current.openBranchLifecycle(branchA, "deactivate"));
+    await act(async () => { pending.resolve({ ...detailA, version: 17, branches: [{ ...branchA, version: 17 }] }); await review; });
+    const state = resource === "cliente" ? result.current.lifecycle : result.current.branchLifecycle;
+    expect(state).toMatchObject({ open: true, baseVersion: 1, conflict: null, reviewError: null, reviewPending: false });
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it.each(["edición", "ciclo de vida"])("sucursal A a B: error tardío no contamina %s", async (dialog) => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const pending = deferred<ClientDetail>();
+    const branchB = { ...branchA, id: "branch-b" };
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, branches: [branchA, branchB] }).mockImplementationOnce(() => pending.promise) });
+    const { result } = renderHook(() => useWorkspace(api, "", managed));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    const open = (branch: ClientBranch) => dialog === "edición" ? result.current.openBranchEdit(branch) : result.current.openBranchLifecycle(branch, "deactivate");
+    act(() => open(branchA));
+    let review!: Promise<void>;
+    act(() => { review = result.current.reviewBranchConflict(); });
+    act(() => open(branchB));
+    await act(async () => { pending.reject(new Error("Error tardío de A")); await review; });
+    expect(dialog === "edición" ? result.current.branchForm : result.current.branchLifecycle).toMatchObject({
+      open: true, reviewError: null, reviewPending: false,
+    });
+  });
+
+  it("cambiar cliente invalida el GET de revisión y un 403 tardío no revoca la nueva sesión", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a");
+    const pending = deferred<ClientDetail>();
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, branches: [branchA] })
+      .mockImplementationOnce(() => pending.promise).mockResolvedValue(detailB) });
+    const { result } = renderHook(() => useWorkspace(api, "", managed));
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    act(() => result.current.openBranchEdit(branchA));
+    let review!: Promise<void>;
+    act(() => { review = result.current.reviewBranchConflict(); });
+    act(() => result.current.selectClient(clientB.id));
+    await waitFor(() => expect(result.current.detail.data?.id).toBe(clientB.id));
+    act(() => result.current.openEdit());
+    await act(async () => { pending.reject(new ApiClientError(403, "FORBIDDEN", "Respuesta antigua")); await review; });
+    expect(result.current.capabilities).toEqual({ canView: true, canManage: true });
+    expect(result.current.edit).toMatchObject({ open: true, reviewError: null, draft: { clientId: clientB.id } });
+  });
+});
+
 describe("revocación dinámica", () => {
   it("revocar manage aborta revisión de sucursal y no contamina un borrador reabierto", async () => {
     window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=branches");

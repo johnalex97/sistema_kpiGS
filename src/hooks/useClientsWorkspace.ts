@@ -293,6 +293,8 @@ export function useClientsWorkspace({ api: sourceApi, permissions, search }: Use
   const branchPendingRef = useRef(false);
   const contactPendingRef = useRef(false);
   const mutationControllers = useRef(new Set<AbortController>());
+  const clientReviewControllerRef = useRef<AbortController | null>(null);
+  const branchReviewControllerRef = useRef<AbortController | null>(null);
   const contactReviewControllerRef = useRef<AbortController | null>(null);
   const contactFormRef = useRef(contactForm);
   const contactLifecycleRef = useRef(contactLifecycle);
@@ -309,10 +311,35 @@ export function useClientsWorkspace({ api: sourceApi, permissions, search }: Use
   contactLifecycleRef.current = contactLifecycle;
   detailRef.current = detail;
 
-  const updateEdit = useCallback((next: ClientEditState) => { editRef.current = next; setEdit(next); }, []);
-  const updateLifecycle = useCallback((next: ClientLifecycleState) => { lifecycleRef.current = next; setLifecycle(next); }, []);
-  const updateBranchForm = useCallback((next: BranchFormState) => { branchFormRef.current = next; setBranchForm(next); }, []);
-  const updateBranchLifecycle = useCallback((next: BranchLifecycleState) => { branchLifecycleRef.current = next; setBranchLifecycle(next); }, []);
+  const invalidateClientReview = useCallback(() => {
+    clientReviewControllerRef.current?.abort();
+    clientReviewControllerRef.current = null;
+  }, []);
+  const invalidateBranchReview = useCallback(() => {
+    branchReviewControllerRef.current?.abort();
+    branchReviewControllerRef.current = null;
+  }, []);
+
+  // Closing/resetting either dialog ends its review session, including when an
+  // opener resets the other dialog before reopening the same resource.
+  const updateEdit = useCallback((next: ClientEditState) => {
+    if (!next.open || !editRef.current.open || next.draft?.clientId !== editRef.current.draft?.clientId) invalidateClientReview();
+    editRef.current = next; setEdit(next);
+  }, [invalidateClientReview]);
+  const updateLifecycle = useCallback((next: ClientLifecycleState) => {
+    if (!next.open || !lifecycleRef.current.open || next.clientId !== lifecycleRef.current.clientId || next.action !== lifecycleRef.current.action) invalidateClientReview();
+    lifecycleRef.current = next; setLifecycle(next);
+  }, [invalidateClientReview]);
+  const updateBranchForm = useCallback((next: BranchFormState) => {
+    if (!next.open || !branchFormRef.current.open || next.draft?.clientId !== branchFormRef.current.draft?.clientId
+      || next.draft?.branchId !== branchFormRef.current.draft?.branchId) invalidateBranchReview();
+    branchFormRef.current = next; setBranchForm(next);
+  }, [invalidateBranchReview]);
+  const updateBranchLifecycle = useCallback((next: BranchLifecycleState) => {
+    if (!next.open || !branchLifecycleRef.current.open || next.clientId !== branchLifecycleRef.current.clientId
+      || next.branchId !== branchLifecycleRef.current.branchId || next.action !== branchLifecycleRef.current.action) invalidateBranchReview();
+    branchLifecycleRef.current = next; setBranchLifecycle(next);
+  }, [invalidateBranchReview]);
   const updateContactForm = useCallback((next: ContactFormState) => { contactFormRef.current = next; setContactForm(next); }, []);
   const updateContactLifecycle = useCallback((next: ContactLifecycleState) => { contactLifecycleRef.current = next; setContactLifecycle(next); }, []);
 
@@ -373,14 +400,14 @@ export function useClientsWorkspace({ api: sourceApi, permissions, search }: Use
     const normalized = withKnownContacts(withKnownBranches(incoming));
     const confirmed = confirmedClientsRef.current.get(incoming.id);
     if (confirmed && confirmed.version > incoming.version) return withKnownContacts(withKnownBranches(confirmed));
-    if (!confirmed || incoming.version > confirmed.version) confirmedClientsRef.current.set(incoming.id, normalized);
+    if (!confirmed || incoming.version >= confirmed.version) confirmedClientsRef.current.set(incoming.id, normalized);
     return normalized;
   }, [observeClientState, withKnownBranches, withKnownContacts]);
 
   const withConfirmedSummary = useCallback((incoming: ClientPage["items"][number]): ClientPage["items"][number] => {
     observeClientState(incoming);
     const observed = observedSummariesRef.current.get(incoming.id);
-    if (!observed || incoming.version > observed.version) observedSummariesRef.current.set(incoming.id, incoming);
+    if (!observed || incoming.version >= observed.version) observedSummariesRef.current.set(incoming.id, incoming);
     if (!mutationWatchedIdsRef.current.has(incoming.id)) return incoming;
     const highestSummary = observed && observed.version > incoming.version ? observed : incoming;
     const confirmed = confirmedClientsRef.current.get(incoming.id);
@@ -479,7 +506,9 @@ export function useClientsWorkspace({ api: sourceApi, permissions, search }: Use
           ? { ...incoming, items: incoming.items.map((raw) => {
             const item = withConfirmedSummary(raw);
             const previous = current.data?.items.find((candidate) => candidate.id === item.id);
-            return previous ? reconcileClient(previous, item) : item;
+            // Child mutations do not advance the parent's version. A guarded
+            // fresh read owns counts and membership even at the same version.
+            return previous && previous.version > item.version ? previous : item;
           }) }
           : { ...incoming, items: incoming.items.map(withConfirmedSummary) },
         error: null,
@@ -526,7 +555,7 @@ export function useClientsWorkspace({ api: sourceApi, permissions, search }: Use
         state: {
           status: "success",
           data: current.key === key && current.state.data
-            ? withKnownContacts(withKnownBranches(reconcileClient(current.state.data, authoritative))) : authoritative,
+            ? withKnownContacts(withKnownBranches(current.state.data.version > authoritative.version ? current.state.data : authoritative)) : authoritative,
           error: null,
           stale: false,
         },
@@ -945,28 +974,41 @@ export function useClientsWorkspace({ api: sourceApi, permissions, search }: Use
   const reviewClientConflict = useCallback(async (): Promise<void> => {
     const editNow = editRef.current;
     const lifeNow = lifecycleRef.current;
-    const clientId = editNow.open ? editNow.draft?.clientId : lifeNow.open ? lifeNow.clientId : null;
-    if (!clientId || !canViewRef.current || clientId !== queryRef.current.clientId || editNow.reviewPending || lifeNow.reviewPending) return;
-    if (editNow.open) updateEdit({ ...editNow, reviewPending: true, reviewError: null });
+    const reviewingEdit = editNow.open;
+    const clientId = reviewingEdit ? editNow.draft?.clientId : lifeNow.open ? lifeNow.clientId : null;
+    const baseVersion = reviewingEdit ? editNow.draft?.baseVersion : lifeNow.baseVersion;
+    if (!clientId || !canViewRef.current || !canManageRef.current || clientId !== queryRef.current.clientId
+      || clientReviewControllerRef.current || editNow.pending || lifeNow.pending || editNow.reviewPending || lifeNow.reviewPending) return;
+    const controller = new AbortController();
+    clientReviewControllerRef.current = controller;
+    const isCurrentReview = () => clientReviewControllerRef.current === controller && !controller.signal.aborted
+      && mountedRef.current && canViewRef.current && canManageRef.current && queryRef.current.clientId === clientId
+      && (reviewingEdit
+        ? editRef.current.open && editRef.current.draft?.clientId === clientId && editRef.current.draft.baseVersion === baseVersion
+        : lifecycleRef.current.open && lifecycleRef.current.clientId === clientId && lifecycleRef.current.baseVersion === baseVersion);
+    if (reviewingEdit) updateEdit({ ...editNow, reviewPending: true, reviewError: null });
     else updateLifecycle({ ...lifeNow, reviewPending: true, reviewError: null });
     try {
-      const current = withConfirmedDetail(await api.getClient(clientId, true));
-      if (!mountedRef.current || queryRef.current.clientId !== clientId) return;
-      if (editRef.current.open && editRef.current.draft?.clientId === clientId) {
+      const response = await api.getClient(clientId, true, controller.signal);
+      if (!isCurrentReview()) return;
+      if (response.id !== clientId) throw new Error("El servidor devolvió otro cliente.");
+      const current = withConfirmedDetail(response);
+      if (reviewingEdit) {
         const state = editRef.current;
         const draft = state.draft;
         if (!draft) return;
         updateEdit({ ...state, reviewPending: false, draft: { ...draft, conflict: current.version > draft.baseVersion ? current : null }, reviewError: current.version > draft.baseVersion ? null : "No hay una versión más reciente disponible." });
-      } else if (lifecycleRef.current.open && lifecycleRef.current.clientId === clientId) {
+      } else {
         const state = lifecycleRef.current;
         updateLifecycle({ ...state, reviewPending: false, conflict: current.version > state.baseVersion ? current : null, reviewError: current.version > state.baseVersion ? null : "No hay una versión más reciente disponible." });
       }
     } catch (error: unknown) {
-      if (!mountedRef.current || queryRef.current.clientId !== clientId) return;
-      if (isAbortError(error) || !canManageRef.current) return;
+      if (!isCurrentReview() || isAbortError(error)) return;
       if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
-      if (editRef.current.open) updateEdit({ ...editRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
-      else if (lifecycleRef.current.open) updateLifecycle({ ...lifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+      if (reviewingEdit) updateEdit({ ...editRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+      else updateLifecycle({ ...lifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+    } finally {
+      if (clientReviewControllerRef.current === controller) clientReviewControllerRef.current = null;
     }
   }, [api, handleMissingClient, updateEdit, updateLifecycle, withConfirmedDetail]);
 
@@ -1110,27 +1152,40 @@ export function useClientsWorkspace({ api: sourceApi, permissions, search }: Use
     const clientId = form.open ? form.draft?.clientId : life.open ? life.clientId : null;
     const branchId = form.open ? form.draft?.branchId : life.open ? life.branchId : null;
     const baseVersion = form.open ? form.draft?.baseVersion : life.open ? life.baseVersion : null;
-    if (!clientId || !branchId || baseVersion === null || baseVersion === undefined || !canViewRef.current || queryRef.current.clientId !== clientId) return;
+    if (!clientId || !branchId || baseVersion === null || baseVersion === undefined || !canViewRef.current || !canManageRef.current
+      || queryRef.current.clientId !== clientId || branchReviewControllerRef.current || form.pending || life.pending) return;
+    const controller = new AbortController();
+    branchReviewControllerRef.current = controller;
+    const isCurrentReview = () => branchReviewControllerRef.current === controller && !controller.signal.aborted
+      && mountedRef.current && canViewRef.current && canManageRef.current && queryRef.current.clientId === clientId
+      && (form.open
+        ? branchFormRef.current.open && branchFormRef.current.draft?.clientId === clientId
+          && branchFormRef.current.draft.branchId === branchId && branchFormRef.current.draft.baseVersion === baseVersion
+        : branchLifecycleRef.current.open && branchLifecycleRef.current.clientId === clientId
+          && branchLifecycleRef.current.branchId === branchId && branchLifecycleRef.current.baseVersion === baseVersion);
     if (form.open) updateBranchForm({ ...form, reviewPending: true, reviewError: null });
     else updateBranchLifecycle({ ...life, reviewPending: true, reviewError: null });
     try {
-      const client = await api.getClient(clientId, true);
-      if (!mountedRef.current || queryRef.current.clientId !== clientId) return;
+      const client = await api.getClient(clientId, true, controller.signal);
+      if (!isCurrentReview()) return;
+      if (client.id !== clientId) throw new Error("El servidor devolvió otro cliente.");
       observeClientState(client);
-      const current = client.branches.find((item) => item.id === branchId) ?? null;
+      const current = client.branches.find((item) => item.id === branchId && item.clientId === clientId) ?? null;
       const observed = current ? withKnownBranch(current) : null;
       const latest = observed && observed.version > baseVersion ? observed : null;
       const reviewError = latest ? null : "No hay una versión más reciente disponible.";
-      if (form.open && branchFormRef.current.open && branchFormRef.current.draft?.branchId === branchId) {
+      if (form.open) {
         const state = branchFormRef.current;
         updateBranchForm({ ...state, reviewPending: false, reviewError, draft: { ...state.draft!, conflict: latest } });
-      } else if (life.open && branchLifecycleRef.current.open && branchLifecycleRef.current.branchId === branchId) {
+      } else {
         updateBranchLifecycle({ ...branchLifecycleRef.current, reviewPending: false, reviewError, conflict: latest });
       }
     } catch (error) {
-      if (isAbortError(error) || !canManageRef.current) return;
-      if (form.open && branchFormRef.current.open) updateBranchForm({ ...branchFormRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
-      else if (life.open && branchLifecycleRef.current.open) updateBranchLifecycle({ ...branchLifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+      if (!isCurrentReview() || isAbortError(error)) return;
+      if (form.open) updateBranchForm({ ...branchFormRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+      else updateBranchLifecycle({ ...branchLifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
+    } finally {
+      if (branchReviewControllerRef.current === controller) branchReviewControllerRef.current = null;
     }
   }, [api, observeClientState, updateBranchForm, updateBranchLifecycle, withKnownBranch]);
 
@@ -1431,11 +1486,13 @@ export function useClientsWorkspace({ api: sourceApi, permissions, search }: Use
     mountedRef.current = false;
     for (const controller of mutationControllers.current) controller.abort();
     invalidateContactReview();
+    invalidateClientReview();
+    invalidateBranchReview();
     invalidateList();
     invalidateDetail();
     invalidateBranches();
     invalidateContacts();
-  }, [invalidateBranches, invalidateContactReview, invalidateContacts, invalidateDetail, invalidateList]);
+  }, [invalidateBranches, invalidateBranchReview, invalidateClientReview, invalidateContactReview, invalidateContacts, invalidateDetail, invalidateList]);
 
   const currentClient = detail.data?.id === query.clientId ? detail.data : null;
   const knownClient = currentClient ? knownClientStatesRef.current.get(currentClient.id) : null;

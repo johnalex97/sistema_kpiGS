@@ -31,16 +31,22 @@ describe("BranchForm", () => {
     expect(onAdopt).toHaveBeenCalledOnce();
     expect(screen.getByRole("textbox", { name: "Nombre" })).toHaveValue("Mi borrador");
   });
-  it("exige par de coordenadas y país HN antes de enviar", async () => {
+  it("exige par de coordenadas y código de país de dos letras antes de enviar", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     const view = render(<BranchForm {...props} draft={{ ...props.draft, values: { ...props.draft.values, lat: "14.1" } }} onSubmit={onSubmit} />);
     await user.click(screen.getByRole("button", { name: "Guardar sucursal" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Latitud y longitud deben registrarse juntas");
     expect(onSubmit).not.toHaveBeenCalled();
-    view.rerender(<BranchForm {...props} draft={{ ...props.draft, values: { ...props.draft.values, country: "US" } }} onSubmit={onSubmit} />);
+    view.rerender(<BranchForm {...props} draft={{ ...props.draft, values: { ...props.draft.values, country: "U1" } }} onSubmit={onSubmit} />);
     await user.click(screen.getByRole("button", { name: "Guardar sucursal" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("País debe ser HN");
+    expect(screen.getByRole("textbox", { name: /^País/ })).toHaveAttribute("aria-invalid", "true");
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+  it.each(["US", "us", "hn"])("acepta y normaliza el país %s", async (country) => {
+    const onSubmit = vi.fn();
+    render(<BranchForm {...props} draft={{ ...props.draft, values: { ...props.draft.values, country } }} onSubmit={onSubmit} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Guardar sucursal" }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ country: country.toUpperCase() }));
   });
 });

@@ -33,7 +33,7 @@ function validate(values: BranchInput): { field: Field; message: string } | null
     if ((field === "name" || field === "address") && !value) return { field, message: `${label} es obligatorio.` };
     if (value.length > max) return { field, message: `${label} admite hasta ${max} caracteres.` };
   }
-  if (values.country.trim().toUpperCase() !== "HN") return { field: "country", message: "País debe ser HN." };
+  if (!/^[A-Z]{2}$/.test(values.country.trim().toUpperCase())) return { field: "country", message: "País debe ser un código de dos letras." };
   for (const [field, limit] of [["lat", 90], ["long", 180]] as const) {
     const value = values[field]?.trim();
     if (value && (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) || !Number.isFinite(Number(value)) || Math.abs(Number(value)) > limit)) {
@@ -54,7 +54,7 @@ export function BranchForm({ mode, draft, pending, reviewPending, error, reviewE
     if (issue) return;
     setSubmitGuard(true);
     const values: BranchInput = {
-      name: draft.values.name.trim(), address: draft.values.address.trim(), country: "HN",
+      name: draft.values.name.trim(), address: draft.values.address.trim(), country: draft.values.country.trim().toUpperCase(),
       city: draft.values.city?.trim() || null, region: draft.values.region?.trim() || null,
       lat: draft.values.lat?.trim() || null, long: draft.values.long?.trim() || null,
       locationReference: draft.values.locationReference?.trim() || null,

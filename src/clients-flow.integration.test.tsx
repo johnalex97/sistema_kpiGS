@@ -37,6 +37,46 @@ beforeEach(() => {
 afterEach(() => { document.getElementById("clients-jsdom-viewport")?.remove(); vi.unstubAllGlobals(); vi.mocked(fetch).mockReset(); });
 
 describe("aceptación integrada de Clientes", () => {
+  it("crea en wizard con US y conserva el país al editar la sucursal", async () => {
+    const usBranch = { ...branch, country: "US" };
+    let creation: unknown;
+    let update: unknown;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/clients") && init?.method === "POST") {
+        creation = JSON.parse(String(init.body));
+        return response({ ...client, branches: [usBranch] });
+      }
+      if (path.endsWith("/branches/b1") && init?.method === "PATCH") {
+        update = JSON.parse(String(init.body));
+        return response({ ...usBranch, name: "Renovada", version: 9 });
+      }
+      if (path.endsWith("/branches")) return response(page([usBranch]));
+      if (path.endsWith("/c1")) return response({ ...client, branches: [usBranch] });
+      return response(page([{ ...client, activeBranchCount: 1, activeContactCount: 1 }]));
+    });
+    const user = userEvent.setup();
+    render(shell());
+    await user.click(await screen.findByRole("button", { name: "Nuevo cliente" }));
+    await user.type(screen.getByRole("textbox", { name: /Nombre comercial/ }), "Acme");
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await user.type(screen.getByRole("textbox", { name: /Nombre de la sucursal/ }), "Centro");
+    await user.type(screen.getByRole("textbox", { name: /Dirección/ }), "Principal");
+    expect(screen.getByRole("textbox", { name: /País/ })).toHaveValue("HN");
+    await user.clear(screen.getByRole("textbox", { name: /País/ }));
+    await user.type(screen.getByRole("textbox", { name: /País/ }), "US");
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await user.click(screen.getByRole("button", { name: "Crear cliente" }));
+    await user.click(await screen.findByRole("tab", { name: "Sucursales" }));
+    await user.click(await screen.findByRole("button", { name: "Editar sucursal" }));
+    expect(screen.getByRole("textbox", { name: "País" })).toHaveValue("US");
+    await user.clear(screen.getByRole("textbox", { name: "Nombre" }));
+    await user.type(screen.getByRole("textbox", { name: "Nombre" }), "Renovada");
+    await user.click(screen.getByRole("button", { name: "Guardar sucursal" }));
+    await waitFor(() => expect(update).toMatchObject({ name: "Renovada", country: "US", version: 3 }));
+    expect(creation).toMatchObject({ mainBranch: { country: "US" } });
+    expect(screen.queryByRole("dialog", { name: "Editar sucursal" })).toBeNull();
+  });
   it("cambiar a móvil con formulario abierto no pone el detalle encima del diálogo", async () => {
     const user = userEvent.setup();
     render(shell());
