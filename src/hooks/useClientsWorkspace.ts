@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClientsApi } from "../api/clients";
 import { ApiClientError, type ApiFieldError } from "../api/http";
 import type { BranchInput, BranchListFilters, BranchPage, ClientBranch, ClientContact, ClientDetail, ClientListFilters, ClientPage, ClientTab, ContactListFilters, ContactPage, CreateClientInput, UpdateClientInput } from "../models/client";
@@ -254,8 +254,11 @@ function urlWith(search: URLSearchParams): string {
   return `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
 }
 
-export function useClientsWorkspace({ api, permissions, search }: UseClientsWorkspaceOptions) {
-  const capabilities = deriveClientCapabilities(permissions);
+export function useClientsWorkspace({ api: sourceApi, permissions, search }: UseClientsWorkspaceOptions) {
+  const [denied, setDenied] = useState({ view: false, manage: false });
+  const granted = deriveClientCapabilities(permissions);
+  const capabilities = { canView: granted.canView && !denied.view,
+    canManage: granted.canView && granted.canManage && !denied.view && !denied.manage };
   const [query, setQuery] = useState<ClientQueryState>(() => {
     const parsed = parseClientSearch(window.location.search);
     const externalSearch = search.trim();
@@ -289,6 +292,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
   const lifecyclePendingRef = useRef(false);
   const branchPendingRef = useRef(false);
   const contactPendingRef = useRef(false);
+  const mutationControllers = useRef(new Set<AbortController>());
   const contactReviewControllerRef = useRef<AbortController | null>(null);
   const contactFormRef = useRef(contactForm);
   const contactLifecycleRef = useRef(contactLifecycle);
@@ -417,6 +421,40 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
     contactReviewControllerRef.current?.abort();
     contactReviewControllerRef.current = null;
   }, []);
+
+  // The boundary cancels transport and ignores late mutation responses; it cannot
+  // roll back an operation already committed by the server.
+  const api = useMemo(() => new Proxy(sourceApi, {
+    get(target, property, receiver) {
+      const method: unknown = Reflect.get(target, property, receiver);
+      if (typeof method !== "function") return method;
+      const reading = String(property).startsWith("list") || property === "getClient";
+      return async (...args: unknown[]) => {
+        // Reviews without a caller-owned signal belong to the edit session.
+        const reviewing = property === "getClient" && args.length < 3;
+        const controller = !reading || reviewing ? new AbortController() : null;
+        if (controller) mutationControllers.current.add(controller);
+        const signal = controller?.signal ?? args[args.length - 1];
+        const cancelled = () => !mountedRef.current || (signal instanceof AbortSignal && signal.aborted)
+          || !canViewRef.current || ((!reading || reviewing) && !canManageRef.current);
+        try {
+          if (cancelled()) throw new DOMException("Solicitud invalidada", "AbortError");
+          const result: unknown = await Reflect.apply(method, target, controller ? [...args, controller.signal] : args);
+          if (cancelled()) throw new DOMException("Solicitud invalidada", "AbortError");
+          return result;
+        } catch (error) {
+          if (cancelled()) throw new DOMException("Solicitud invalidada", "AbortError");
+          if (error instanceof ApiClientError && error.status === 403) {
+            if (reading) canViewRef.current = false;
+            canManageRef.current = false;
+            setDenied((current) => ({ view: current.view || reading, manage: true }));
+            throw new DOMException("Permiso revocado", "AbortError");
+          }
+          throw error;
+        } finally { if (controller) mutationControllers.current.delete(controller); }
+      };
+    },
+  }), [sourceApi]);
 
   const refreshList = useCallback(async (): Promise<void> => {
     invalidateList();
@@ -743,6 +781,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       void refreshList();
     } catch (error: unknown) {
       if (!mountedRef.current) return;
+      if (isAbortError(error) || !canManageRef.current) return;
       const fieldErrors = error && typeof error === "object" && "fieldErrors" in error && Array.isArray(error.fieldErrors)
         ? error.fieldErrors as ApiFieldError[] : [];
       setCreate((current) => ({ ...current, pending: false, error: errorMessage(error, "No fue posible crear el cliente"), fieldErrors }));
@@ -805,6 +844,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       void refreshDetail();
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      if (isAbortError(error) || !canManageRef.current) return;
       if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
       if (error instanceof ApiClientError && (error.status === 401 || error.status === 403)) { updateEdit(emptyEdit()); return; }
       const fieldErrors = error instanceof ApiClientError ? error.fieldErrors : [];
@@ -875,6 +915,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       void refreshDetail();
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== current.clientId) return;
+      if (isAbortError(error) || !canManageRef.current) return;
       if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
       if (error instanceof ApiClientError && (error.status === 401 || error.status === 403)) { updateLifecycle(emptyLifecycle()); return; }
       const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
@@ -922,6 +963,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       }
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== clientId) return;
+      if (isAbortError(error) || !canManageRef.current) return;
       if (error instanceof ApiClientError && error.status === 404) { handleMissingClient(); return; }
       if (editRef.current.open) updateEdit({ ...editRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
       else if (lifecycleRef.current.open) updateLifecycle({ ...lifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
@@ -1015,6 +1057,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       afterBranchSuccess(branch);
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      if (isAbortError(error) || !canManageRef.current) return;
       const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
       updateBranchForm({ ...branchFormRef.current, pending: false, error: branchMutationError(error, "No fue posible guardar la sucursal."),
         fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [], versionConflict });
@@ -1052,6 +1095,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       afterBranchSuccess(branch);
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== state.clientId) return;
+      if (isAbortError(error) || !canManageRef.current) return;
       const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
       updateBranchLifecycle({ ...branchLifecycleRef.current, pending: false, error: branchMutationError(error, "No fue posible cambiar el estado de la sucursal."),
         fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [], versionConflict });
@@ -1083,7 +1127,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       } else if (life.open && branchLifecycleRef.current.open && branchLifecycleRef.current.branchId === branchId) {
         updateBranchLifecycle({ ...branchLifecycleRef.current, reviewPending: false, reviewError, conflict: latest });
       }
-    } catch {
+    } catch (error) {
+      if (isAbortError(error) || !canManageRef.current) return;
       if (form.open && branchFormRef.current.open) updateBranchForm({ ...branchFormRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
       else if (life.open && branchLifecycleRef.current.open) updateBranchLifecycle({ ...branchLifecycleRef.current, reviewPending: false, reviewError: "No fue posible cargar la versión vigente. Reintenta la consulta." });
     }
@@ -1190,6 +1235,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       afterContactSuccess(contact);
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== draft.clientId) return;
+      if (isAbortError(error) || !canManageRef.current) return;
       const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
       updateContactForm({ ...contactFormRef.current, pending: false, error: contactMutationError(error, "No fue posible guardar el contacto."),
         fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [], versionConflict: contactFormRef.current.versionConflict || versionConflict });
@@ -1225,6 +1271,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       afterContactSuccess(contact);
     } catch (error: unknown) {
       if (!mountedRef.current || queryRef.current.clientId !== state.clientId) return;
+      if (isAbortError(error) || !canManageRef.current) return;
       const versionConflict = error instanceof ApiClientError && error.status === 409 && error.code === "VERSION_CONFLICT";
       updateContactLifecycle({ ...contactLifecycleRef.current, pending: false, error: contactMutationError(error, "No fue posible cambiar el estado del contacto."),
         fieldErrors: error instanceof ApiClientError ? error.fieldErrors : [], versionConflict: contactLifecycleRef.current.versionConflict || versionConflict });
@@ -1290,6 +1337,8 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
 
   useEffect(() => {
     if (!capabilities.canManage || !capabilities.canView) {
+      for (const controller of mutationControllers.current) controller.abort();
+      setCreate({ open: false, pending: false, error: null, fieldErrors: [] });
       invalidateContactReview();
       updateEdit(emptyEdit());
       updateLifecycle(emptyLifecycle());
@@ -1320,6 +1369,13 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
       setDetailSnapshot({ key: null, state: idle<ClientDetail>() });
       setBranchSnapshot({ key: null, state: idle<BranchPage>() });
       setContactSnapshot({ key: null, state: idle<ContactPage>() });
+      confirmedClientsRef.current.clear();
+      observedSummariesRef.current.clear();
+      mutationWatchedIdsRef.current.clear();
+      knownClientStatesRef.current.clear();
+      confirmedBranchesRef.current.clear();
+      confirmedContactsRef.current.clear();
+      listDataKeyRef.current = null;
     }
   }, [capabilities.canView, invalidateBranches, invalidateContacts, invalidateDetail, invalidateList, refreshBranches, refreshContacts, refreshDetail, refreshList]);
 
@@ -1373,6 +1429,7 @@ export function useClientsWorkspace({ api, permissions, search }: UseClientsWork
 
   useEffect(() => () => {
     mountedRef.current = false;
+    for (const controller of mutationControllers.current) controller.abort();
     invalidateContactReview();
     invalidateList();
     invalidateDetail();

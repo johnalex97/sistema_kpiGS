@@ -21,20 +21,20 @@ import type {
 export interface ClientsApi {
   listClients(filters: ClientListFilters, signal?: AbortSignal): Promise<ClientPage>;
   getClient(id: string, includeInactive: boolean, signal?: AbortSignal): Promise<ClientDetail>;
-  createClient(input: CreateClientInput): Promise<ClientDetail>;
-  updateClient(id: string, input: UpdateClientInput): Promise<ClientDetail>;
-  deactivateClient(id: string, input: LifecycleInput): Promise<ClientDetail>;
-  reactivateClient(id: string, input: LifecycleInput): Promise<ClientDetail>;
+  createClient(input: CreateClientInput, signal?: AbortSignal): Promise<ClientDetail>;
+  updateClient(id: string, input: UpdateClientInput, signal?: AbortSignal): Promise<ClientDetail>;
+  deactivateClient(id: string, input: LifecycleInput, signal?: AbortSignal): Promise<ClientDetail>;
+  reactivateClient(id: string, input: LifecycleInput, signal?: AbortSignal): Promise<ClientDetail>;
   listBranches(clientId: string, filters: BranchListFilters, signal?: AbortSignal): Promise<BranchPage>;
-  createBranch(clientId: string, input: CreateBranchInput): Promise<ClientBranch>;
-  updateBranch(clientId: string, branchId: string, input: UpdateBranchInput): Promise<ClientBranch>;
-  deactivateBranch(clientId: string, branchId: string, input: LifecycleInput): Promise<ClientBranch>;
-  reactivateBranch(clientId: string, branchId: string, input: LifecycleInput): Promise<ClientBranch>;
+  createBranch(clientId: string, input: CreateBranchInput, signal?: AbortSignal): Promise<ClientBranch>;
+  updateBranch(clientId: string, branchId: string, input: UpdateBranchInput, signal?: AbortSignal): Promise<ClientBranch>;
+  deactivateBranch(clientId: string, branchId: string, input: LifecycleInput, signal?: AbortSignal): Promise<ClientBranch>;
+  reactivateBranch(clientId: string, branchId: string, input: LifecycleInput, signal?: AbortSignal): Promise<ClientBranch>;
   listContacts(clientId: string, filters: ContactListFilters, signal?: AbortSignal): Promise<ContactPage>;
-  createContact(clientId: string, input: CreateContactInput): Promise<ClientContact>;
-  updateContact(clientId: string, contactId: string, input: UpdateContactInput): Promise<ClientContact>;
-  deactivateContact(clientId: string, contactId: string, input: LifecycleInput): Promise<ClientContact>;
-  reactivateContact(clientId: string, contactId: string, input: LifecycleInput): Promise<ClientContact>;
+  createContact(clientId: string, input: CreateContactInput, signal?: AbortSignal): Promise<ClientContact>;
+  updateContact(clientId: string, contactId: string, input: UpdateContactInput, signal?: AbortSignal): Promise<ClientContact>;
+  deactivateContact(clientId: string, contactId: string, input: LifecycleInput, signal?: AbortSignal): Promise<ClientContact>;
+  reactivateContact(clientId: string, contactId: string, input: LifecycleInput, signal?: AbortSignal): Promise<ClientContact>;
 }
 
 function clientPath(clientId: string): string {
@@ -65,8 +65,8 @@ function setTrimmed(query: URLSearchParams, key: string, value?: string): void {
   if (trimmed) query.set(key, trimmed);
 }
 
-function mutation<T>(path: string, method: "POST" | "PATCH" | "DELETE", input: unknown): Promise<T> {
-  return requestJson<T>(path, { method, body: JSON.stringify(input) });
+function mutation<T>(path: string, method: "POST" | "PATCH" | "DELETE", input: unknown, signal?: AbortSignal): Promise<T> {
+  return requestJson<T>(path, { method, body: JSON.stringify(input), signal });
 }
 
 export function createClientsApi(): ClientsApi {
@@ -75,29 +75,29 @@ export function createClientsApi(): ClientsApi {
     getClient: (id, includeInactive, signal) => requestJson<ClientDetail>(
       `${clientPath(id)}?includeInactive=${includeInactive}`, { method: "GET", signal },
     ),
-    createClient: (input) => mutation<ClientDetail>("/clients", "POST", input),
-    updateClient: (id, input) => mutation<ClientDetail>(clientPath(id), "PATCH", input),
-    deactivateClient: (id, input) => mutation<ClientDetail>(clientPath(id), "DELETE", input),
-    reactivateClient: (id, input) => mutation<ClientDetail>(`${clientPath(id)}/reactivate`, "POST", input),
+    createClient: (input, signal) => mutation<ClientDetail>("/clients", "POST", input, signal),
+    updateClient: (id, input, signal) => mutation<ClientDetail>(clientPath(id), "PATCH", input, signal),
+    deactivateClient: (id, input, signal) => mutation<ClientDetail>(clientPath(id), "DELETE", input, signal),
+    reactivateClient: (id, input, signal) => mutation<ClientDetail>(`${clientPath(id)}/reactivate`, "POST", input, signal),
     listBranches: (clientId, filters, signal) => {
       const query = listQuery(filters);
       setTrimmed(query, "city", filters.city);
       setTrimmed(query, "region", filters.region);
       return requestJson<BranchPage>(`${clientPath(clientId)}/branches?${query}`, { method: "GET", signal });
     },
-    createBranch: (clientId, input) => mutation<ClientBranch>(`${clientPath(clientId)}/branches`, "POST", input),
-    updateBranch: (clientId, branchId, input) => mutation<ClientBranch>(branchPath(clientId, branchId), "PATCH", input),
-    deactivateBranch: (clientId, branchId, input) => mutation<ClientBranch>(branchPath(clientId, branchId), "DELETE", input),
-    reactivateBranch: (clientId, branchId, input) => mutation<ClientBranch>(`${branchPath(clientId, branchId)}/reactivate`, "POST", input),
+    createBranch: (clientId, input, signal) => mutation<ClientBranch>(`${clientPath(clientId)}/branches`, "POST", input, signal),
+    updateBranch: (clientId, branchId, input, signal) => mutation<ClientBranch>(branchPath(clientId, branchId), "PATCH", input, signal),
+    deactivateBranch: (clientId, branchId, input, signal) => mutation<ClientBranch>(branchPath(clientId, branchId), "DELETE", input, signal),
+    reactivateBranch: (clientId, branchId, input, signal) => mutation<ClientBranch>(`${branchPath(clientId, branchId)}/reactivate`, "POST", input, signal),
     listContacts: (clientId, filters, signal) => {
       const query = listQuery(filters);
       setTrimmed(query, "branchId", filters.branchId);
       if (filters.scope !== undefined) query.set("scope", filters.scope);
       return requestJson<ContactPage>(`${clientPath(clientId)}/contacts?${query}`, { method: "GET", signal });
     },
-    createContact: (clientId, input) => mutation<ClientContact>(`${clientPath(clientId)}/contacts`, "POST", input),
-    updateContact: (clientId, contactId, input) => mutation<ClientContact>(contactPath(clientId, contactId), "PATCH", input),
-    deactivateContact: (clientId, contactId, input) => mutation<ClientContact>(contactPath(clientId, contactId), "DELETE", input),
-    reactivateContact: (clientId, contactId, input) => mutation<ClientContact>(`${contactPath(clientId, contactId)}/reactivate`, "POST", input),
+    createContact: (clientId, input, signal) => mutation<ClientContact>(`${clientPath(clientId)}/contacts`, "POST", input, signal),
+    updateContact: (clientId, contactId, input, signal) => mutation<ClientContact>(contactPath(clientId, contactId), "PATCH", input, signal),
+    deactivateContact: (clientId, contactId, input, signal) => mutation<ClientContact>(contactPath(clientId, contactId), "DELETE", input, signal),
+    reactivateContact: (clientId, contactId, input, signal) => mutation<ClientContact>(`${contactPath(clientId, contactId)}/reactivate`, "POST", input, signal),
   };
 }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ClientDialogFrame } from "./ClientDialogFrame";
 import type { ApiFieldError } from "../../api/http";
 import type { BranchInput } from "../../models/client";
 import type { BranchFormDraft } from "../../hooks/useClientsWorkspace";
@@ -61,7 +62,7 @@ export function BranchForm({ mode, draft, pending, reviewPending, error, reviewE
     void Promise.resolve(onSubmit(values)).finally(() => setSubmitGuard(false));
   };
   const fieldError = (field: Field) => fieldErrors.find((issue) => issue.field === field)?.message ?? (localError?.field === field ? localError.message : null);
-  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={mode === "create" ? "Nueva sucursal" : "Editar sucursal"}>
+  return <ClientDialogFrame open pending={pending || submitGuard} label={mode === "create" ? "Nueva sucursal" : "Editar sucursal"} onClose={onClose}>
     <header className="clients-wizard__head"><p className="eyebrow">Sucursales</p><h2>{mode === "create" ? "Nueva sucursal" : "Editar sucursal"}</h2>{mode === "edit" && <p>Versión base {draft.baseVersion}</p>}</header>
     <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <div className="clients-wizard__grid">{fields.map(([field, label, max]) => {
@@ -81,5 +82,5 @@ export function BranchForm({ mode, draft, pending, reviewPending, error, reviewE
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
       <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Guardando…" : "Guardar sucursal"}</button></footer>
     </form>
-  </section></div>;
+  </ClientDialogFrame>;
 }

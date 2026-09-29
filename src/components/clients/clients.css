@@ -170,3 +170,7 @@
 @media (prefers-reduced-motion: reduce) {
   .clients-workspace * { scroll-behavior: auto; }
 }
+
+/* Applied to the controls themselves, including modal forms and checkboxes. */
+.clients-workspace :is(button, a, input, select, textarea) { min-width: 44px; min-height: 44px; }
+.clients-workspace a { display: inline-flex; align-items: center; overflow-wrap: anywhere; }

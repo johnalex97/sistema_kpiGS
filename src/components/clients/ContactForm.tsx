@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ClientDialogFrame } from "./ClientDialogFrame";
 import type { ApiFieldError } from "../../api/http";
 import type { ClientBranch, ClientContact, ContactScope, CreateContactInput } from "../../models/client";
 
@@ -77,7 +78,7 @@ export function ContactForm({ mode, values, branches, clientId, baseVersion, pen
   };
   const fieldError = (field: ContactField) => fieldErrors.find((issue) => issue.field === field)?.message ?? (localError?.field === field ? localError.message : null);
   const display = (value: string | null) => value || "No registrado";
-  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={mode === "create" ? "Nuevo contacto" : "Editar contacto"}>
+  return <ClientDialogFrame open pending={pending || submitGuard} label={mode === "create" ? "Nuevo contacto" : "Editar contacto"} onClose={onClose}>
     <header className="clients-wizard__head"><p className="eyebrow">Contactos</p><h2>{mode === "create" ? "Nuevo contacto" : "Editar contacto"}</h2>{baseVersion != null && <p>Versión base {baseVersion}</p>}</header>
     <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <label className="clients-wizard__field">Nombre completo<input aria-label="Nombre completo" value={values.fullName} maxLength={161} disabled={pending} aria-invalid={Boolean(fieldError("fullName"))} aria-describedby={fieldError("fullName") ? "contact-fullName-error" : undefined} onChange={(event) => { setLocalError(null); onChange({ fullName: event.target.value }); }} />{fieldError("fullName") && <span id="contact-fullName-error" className="clients-wizard__error" role="alert">{fieldError("fullName")}</span>}</label>
@@ -99,5 +100,5 @@ export function ContactForm({ mode, values, branches, clientId, baseVersion, pen
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview?.()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
       <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Guardando…" : "Guardar contacto"}</button></footer>
     </form>
-  </section></div>;
+  </ClientDialogFrame>;
 }

@@ -9,7 +9,7 @@ cumplimiento, eficiencia y calidad.
 El repositorio contiene un frontend modular conectado gradualmente a una API
 Express independiente, persistencia PostgreSQL administrada mediante Prisma y
 autenticación con sesiones revocables. La sesión, el dashboard KPI y los módulos
-de Actividades, Técnicos, Órdenes y Reincidencias ya consumen la API real. La jornada
+de Actividades, Técnicos, Órdenes, Reincidencias y Clientes ya consumen la API real. La jornada
 visual del resumen general todavía usa datos de demostración mientras avanza la
 fase 12.
 
@@ -223,7 +223,36 @@ sus hijos, una sucursal no puede cerrarse si es la última activa o tiene
 trabajo activo, y desactivar un contacto principal no promueve otro. Solo
 puede existir un principal general activo y uno activo por cada sucursal.
 Todas las ediciones y transiciones usan `version` para evitar sobrescrituras.
-El frontend React todavía no consume esta API de clientes.
+La SPA consume el módulo completo en `/clientes`: filtros y selección en URL,
+pestañas Resumen/Sucursales/Contactos, creación atómica y edición/ciclo de vida
+con versiones del servidor. Los conflictos preservan el borrador hasta adoptar
+explícitamente la versión vigente. Perder `CLIENTS_MANAGE` cierra formularios
+y descarta borradores; perder `CLIENTS_VIEW` elimina datos y muestra acceso
+denegado. Un 403 aplica la misma regla según lectura/escritura; el 401 usa la
+expiración global. Abortar una solicitud evita publicar su respuesta, pero no
+garantiza deshacer una transacción ya confirmada por el servidor.
+El detalle móvil y los diálogos aíslan el fondo y contienen/restauran el foco;
+Escape se consume durante un envío pendiente.
+
+Matriz reproducible de Clientes (sin dependencias ni router adicionales):
+
+```powershell
+npm test -- src/components/clients src/pages/ClientsPage.test.tsx src/hooks/useClientsWorkspace.test.tsx src/hooks/client-workspace.helpers.test.ts src/clients-flow.integration.test.tsx src/api/clients.test.ts
+npm test -- --pool=threads --maxWorkers=1
+npm run lint
+npm run build
+Set-Location server
+npm test -- tests/clients
+npm run test:db -- tests/database/clients-persistence.test.ts tests/clients/clients-http.test.ts
+npm run typecheck
+npm run lint
+npm run build
+```
+
+Para PostgreSQL, carga el `.env` local sólo en el proceso y confirma
+`DATABASE_TEST_URL` con `schema=test`; no copies credenciales a comandos,
+informes ni archivos versionados. La matriz de Clientes del 29 de septiembre
+incluye 21 pruebas unitarias backend y 14 de persistencia/HTTP en PostgreSQL.
 
 La API de órdenes usa cuatro permisos. `ORDERS_VIEW_ALL` permite a ADMIN y
 SUPERVISOR consultar todas las órdenes; `ORDERS_VIEW_OWN` limita a TECHNICIAN a
@@ -589,10 +618,11 @@ Las vistas utilizan URLs reales mediante una capa pequeña sobre la History API:
 - `/tecnicos`
 - `/ordenes`
 - `/reincidencias`
+- `/clientes`
 
 React Router fue evaluado durante la Etapa 2, pero las versiones disponibles
 presentaban vulnerabilidades altas en la auditoría de dependencias. Para estas
-cinco rutas se prefirió una implementación local pequeña y probada.
+seis rutas se prefirió una implementación local pequeña y probada.
 
 ## Seguridad y limitaciones
 
@@ -602,8 +632,8 @@ sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 La SPA restaura sesiones con `GET /api/v1/auth/me`, usa la cookie opaca
 `gs_session` y obliga el cambio de contraseña provisional. Dashboard KPI,
-Actividades, Técnicos, Órdenes y Reincidencias aplican permisos y alcance desde
-la API. La gestión global de Evidencias, las pantallas de Clientes, los
+Actividades, Técnicos, Órdenes, Reincidencias y Clientes aplican permisos y alcance desde
+la API. La gestión global de Evidencias, los
 reportes/exportaciones y el despliegue HTTPS siguen pendientes; también quedan
 los mocks del Dashboard indicados arriba. No utilices el sistema para
 información sensible o datos personales reales hasta completar esas fases.

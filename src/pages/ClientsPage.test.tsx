@@ -40,6 +40,12 @@ function renderPage(current: ClientsWorkspace, permissions = ["CLIENTS_VIEW"]) {
 }
 
 describe("ClientsPage", () => {
+  it("oculta datos conservados si workspace revoca vista aunque la sesión aún la declare", () => {
+    renderPage(workspace({ capabilities: { canView: false, canManage: false } }));
+    expect(screen.getByRole("heading", { name: "Acceso denegado" })).toBeVisible();
+    expect(screen.queryByText("Café Central")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
   it("conecta creación y edición de contactos desde la ficha", async () => {
     const item: ClientContact = { id: "contact-1", clientId: client.id, branchId: null, scope: "CLIENT", branchName: null, fullName: "Ana", position: null, phone: null, email: null, isPrimary: true, isActive: true, isEffectivelyActive: true, createdAt: client.createdAt, updatedAt: client.updatedAt, version: 3 };
     const onCreate = vi.fn();

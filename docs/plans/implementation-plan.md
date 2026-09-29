@@ -90,8 +90,8 @@ crear, editar, desactivar y reactivar clientes, sucursales y contactos. Incluye
 códigos automáticos, RTN histórico único, contactos generales o por sucursal,
 reasignación atómica del principal, control de versión, reglas de trabajo
 activo, permisos `CLIENTS_VIEW`/`CLIENTS_MANAGE` y auditoría transaccional.
-La cuarta migración está aplicada en `public` y `test`. El frontend React no
-consume todavía estos endpoints; esa integración permanece en la etapa 12.
+La cuarta migración está aplicada en `public` y `test`. El frontend React consume
+estos endpoints en `/clientes` desde el subbloque de la etapa 12.
 
 Salida: maestros operativos conectados a datos reales.
 
@@ -214,11 +214,11 @@ Salida: indicadores reproducibles y explicables, verificados con
 Salida: interfaz existente conectada a datos persistentes.
 
 Estado: en progreso. Los subbloques de autenticación, KPI,
-Actividades/Jornada operativa, Técnicos, Órdenes y Reincidencias están completados. Actividades consume
+Actividades/Jornada operativa, Técnicos, Órdenes, Reincidencias y Clientes están completados. Actividades consume
 catálogo, listado, detalle, búsquedas auxiliares y todas sus mutaciones desde la
 API, con URL, polling, control optimista y recuperación de conflictos. La
-jornada visual del Dashboard y las interfaces globales de Evidencias y
-Clientes continúan pendientes; por eso la fase 12 completa sigue
+jornada visual del Dashboard y la interfaz global de Evidencias
+continúan pendientes; por eso la fase 12 completa sigue
 abierta.
 
 Subbloque de autenticación frontend: completado. La SPA restaura la sesión con
@@ -263,8 +263,28 @@ incremento. `recurrenceJobs`, `RecurrenceJob` y el contador lateral ficticio se
 retiraron. El diseño mantiene tabla y detalle lateral en escritorio, y tarjetas,
 filtros apilados, detalle y formularios a pantalla completa en móvil.
 
-Estos subbloques no completan la gestión global de Evidencias, las pantallas de
-Clientes, reportes/exportaciones ni el despliegue. La matriz exacta de Órdenes
+Subbloque de Clientes: completado. `/clientes` integra lista, detalle, pestañas,
+creación atómica, edición y ciclos de vida mediante API. Mantiene filtros y
+paginación independientes en URL y versiones autoritativas no consecutivas.
+Los conflictos conservan borrador y requieren adopción explícita. CLIENTS_VIEW
+permite consultar y CLIENTS_MANAGE administrar; revocación y 403 invalidan
+lecturas/borradores según alcance. Abortar transporte descarta respuestas tardías,
+sin garantizar rollback del servidor. 401 conserva la expiración global.
+El marco modal común resuelve foco inicial, Tab/Shift+Tab, Escape seguro,
+aislamiento del fondo y restauración en detalle móvil y todos los formularios.
+Las pestañas admiten flechas/Home/End y los controles tienen al menos 44 × 44 px.
+
+Matriz de Clientes: focales de API, helpers, workspace, componentes, página y
+flujo integrado; suite frontend completa, lint y build. Desde `server/`:
+`npm test -- tests/clients`,
+`npm run test:db -- tests/database/clients-persistence.test.ts tests/clients/clients-http.test.ts`,
+typecheck, lint y build. El 29 de septiembre se verificaron 21 unitarias y 14
+PostgreSQL/HTTP con `.env` cargado sólo en el proceso y `schema=test`.
+Comandos frontend reproducibles en README; se comprueba también diff y ausencia
+de almacenamiento de tokens, Bearer e imports de mocks en producción del módulo.
+
+Estos subbloques no completan la gestión global de Evidencias, Dashboard visual,
+reportes/exportaciones ni el despliegue Docker/VPS/HTTPS. La matriz exacta de Órdenes
 es `npm test -- src/orders-flow.integration.test.tsx`, seguida de
 `npm test -- --pool=threads --maxWorkers=1`, `npm run lint` y `npm run build` en
 la raíz; y, desde `server/`, `npm test -- tests/orders`,

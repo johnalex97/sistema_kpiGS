@@ -63,6 +63,16 @@ beforeEach(() => vi.mocked(fetch).mockReset());
 afterEach(() => vi.mocked(fetch).mockReset());
 
 describe("createClientsApi", () => {
+  it("propaga AbortSignal en transporte mutador sin alterar el cuerpo", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(contact));
+    const controller = new AbortController();
+    await createClientsApi().createContact("client-1", createContactInput, controller.signal);
+    const init = vi.mocked(fetch).mock.calls[0][1];
+    expect(init?.signal).toBe(controller.signal);
+    expect(JSON.parse(String(init?.body))).toEqual(createContactInput);
+    controller.abort();
+    expect(init?.signal?.aborted).toBe(true);
+  });
   it("serializa los filtros de clientes y fuerza includeInactive para inactivos", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(jsonResponse(clientPage));

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ClientDialogFrame } from "./ClientDialogFrame";
 import type { ApiFieldError } from "../../api/http";
 import type { ClientDetail, UpdateClientInput } from "../../models/client";
 import type { ClientEditDraft } from "../../hooks/useClientsWorkspace";
@@ -47,7 +48,7 @@ export function ClientForm({ client, draft, pending, reviewPending, error, revie
     void Promise.resolve(onSubmit(values)).finally(() => setSubmitGuard(false));
   };
   const fieldError = (key: Field) => fieldErrors.find((issue) => issue.field === key)?.message ?? (localError?.field === key ? localError.message : undefined);
-  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={`Editar cliente ${client.tradeName}`}>
+  return <ClientDialogFrame open pending={pending || submitGuard} label={`Editar cliente ${client.tradeName}`} onClose={onClose}>
     <header className="clients-wizard__head"><p className="eyebrow">Registro de clientes</p><h2>Editar cliente</h2><p>Versión base {draft.baseVersion}. Los cambios en sucursales y contactos se gestionan por separado.</p></header>
     <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <div className="clients-wizard__grid">{fields.map((field) => <label key={field.key} className="clients-wizard__field">{field.label}
@@ -71,5 +72,5 @@ export function ClientForm({ client, draft, pending, reviewPending, error, revie
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
       <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Guardando…" : "Guardar cambios"}</button></footer>
     </form>
-  </section></div>;
+  </ClientDialogFrame>;
 }

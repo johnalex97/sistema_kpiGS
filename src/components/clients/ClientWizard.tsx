@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ClientDialogFrame } from "./ClientDialogFrame";
 import type { ApiFieldError } from "../../api/http";
 import type { CreateClientInput, InitialContactScope } from "../../models/client";
 
@@ -128,7 +129,7 @@ export function ClientWizard({ pending, error, fieldErrors, onSubmit, onClose }:
     {errors[field] && <span id={`client-create-${field}-error`} role="alert" className="clients-wizard__error">{errors[field]}</span>}
   </label>;
   const titles = ["Empresa", "Sucursal principal", "Contacto principal"];
-  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label="Nuevo cliente">
+  return <ClientDialogFrame open pending={pending} label="Nuevo cliente" onClose={onClose}>
     <header className="clients-wizard__head"><p className="eyebrow">Creación de cliente</p><h2>{titles[step]}</h2><p>Los datos se guardarán juntos al crear el cliente.</p></header>
     <ol className="clients-wizard__steps" aria-label="Pasos de creación">{titles.map((title, index) => <li key={title} aria-current={step === index ? "step" : undefined}><span>{index + 1}</span>{title}</li>)}</ol>
     <form className="clients-wizard__form" aria-label={`Paso ${step + 1}: ${titles[step]}`} onSubmit={(event) => { event.preventDefault(); if (step < 2) next(); else submit(); }} noValidate>
@@ -140,5 +141,5 @@ export function ClientWizard({ pending, error, fieldErrors, onSubmit, onClose }:
       {error && <p className="clients-wizard__server-error" role="alert">{error}</p>}
       <footer className="clients-wizard__actions"><button type="button" className="button button--ghost" disabled={pending} onClick={onClose}>Cancelar</button>{step > 0 && <button type="button" className="button button--ghost" disabled={pending} onClick={() => { setErrors({}); setStep(step - 1); }}>Atrás</button>}<button type="submit" className="button button--primary" disabled={pending}>{step === 2 ? pending ? "Creando cliente…" : "Crear cliente" : "Siguiente"}</button></footer>
     </form>
-  </section></div>;
+  </ClientDialogFrame>;
 }

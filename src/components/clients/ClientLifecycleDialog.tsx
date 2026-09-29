@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ClientDialogFrame } from "./ClientDialogFrame";
 import type { ApiFieldError } from "../../api/http";
 import type { ClientBranch, ClientContact, ClientDetail } from "../../models/client";
 
@@ -35,7 +36,7 @@ export function ClientLifecycleDialog({ client, action, baseVersion, reason, pen
     setSubmitGuard(true);
     void Promise.resolve(onSubmit(normalized)).finally(() => setSubmitGuard(false));
   };
-  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={`${deactivating ? "Desactivar" : "Reactivar"} cliente ${client.tradeName}`}>
+  return <ClientDialogFrame open pending={pending || submitGuard} label={`${deactivating ? "Desactivar" : "Reactivar"} cliente ${client.tradeName}`} onClose={onClose}>
     <header className="clients-wizard__head"><p className="eyebrow">Ciclo de vida</p><h2>{deactivating ? "Desactivar" : "Reactivar"} cliente</h2><p>{client.tradeName} · versión base {baseVersion}</p></header>
     <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <p>{deactivating ? "El cliente dejará de estar disponible. Las sucursales y contactos conservarán su estado interno." : "El cliente volverá a estar disponible según el estado interno de sus sucursales y contactos."}</p>
@@ -50,7 +51,7 @@ export function ClientLifecycleDialog({ client, action, baseVersion, reason, pen
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
       <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Procesando…" : `Confirmar ${verb}`}</button></footer>
     </form>
-  </section></div>;
+  </ClientDialogFrame>;
 }
 
 interface BranchLifecycleDialogProps extends Omit<ClientLifecycleDialogProps, "client" | "conflict"> {
@@ -71,7 +72,7 @@ export function BranchLifecycleDialog({ branch, action, baseVersion, reason, pen
     setSubmitGuard(true);
     void Promise.resolve(onSubmit(normalized)).finally(() => setSubmitGuard(false));
   };
-  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={`${deactivating ? "Desactivar" : "Reactivar"} sucursal ${branch.name}`}>
+  return <ClientDialogFrame open pending={pending || submitGuard} label={`${deactivating ? "Desactivar" : "Reactivar"} sucursal ${branch.name}`} onClose={onClose}>
     <header className="clients-wizard__head"><p className="eyebrow">Ciclo de vida</p><h2>{deactivating ? "Desactivar" : "Reactivar"} sucursal</h2><p>{branch.name} · versión base {baseVersion}</p></header>
     <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <p>{deactivating ? "La sucursal dejará de estar disponible si el servidor confirma la operación. Otras sucursales conservan su estado interno." : "La sucursal volverá a estar disponible según el estado del cliente."}</p>
@@ -82,7 +83,7 @@ export function BranchLifecycleDialog({ branch, action, baseVersion, reason, pen
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
       <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Procesando…" : "Confirmar"}</button></footer>
     </form>
-  </section></div>;
+  </ClientDialogFrame>;
 }
 
 interface ContactLifecycleDialogProps {
@@ -117,7 +118,7 @@ export function ContactLifecycleDialog({ contact, action, baseVersion, reason, p
     setSubmitGuard(true);
     void Promise.resolve(onSubmit(normalized)).finally(() => setSubmitGuard(false));
   };
-  return <div className="clients-wizard-backdrop"><section className="clients-wizard" role="dialog" aria-modal="true" aria-label={`${deactivating ? "Desactivar" : "Reactivar"} contacto ${contact.fullName}`}>
+  return <ClientDialogFrame open pending={pending || submitGuard} label={`${deactivating ? "Desactivar" : "Reactivar"} contacto ${contact.fullName}`} onClose={onClose}>
     <header className="clients-wizard__head"><p className="eyebrow">Ciclo de vida</p><h2>{deactivating ? "Desactivar" : "Reactivar"} contacto</h2><p>{contact.fullName} · versión base {baseVersion}</p></header>
     <form className="clients-wizard__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <p>{deactivating ? "El contacto dejará de estar disponible. Ningún otro contacto se promoverá automáticamente a principal." : "El contacto volverá a estar disponible según el estado del cliente y su sucursal."}</p>
@@ -134,5 +135,5 @@ export function ContactLifecycleDialog({ contact, action, baseVersion, reason, p
       {versionConflict && <button className="button button--ghost" type="button" disabled={pending || reviewPending} onClick={() => void onReview?.()}>{reviewPending ? "Consultando versión…" : "Revisar versión vigente"}</button>}
       <footer className="clients-wizard__actions"><button className="button button--ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button><button className="button button--primary" type="submit" disabled={pending || submitGuard}>{pending ? "Procesando…" : "Confirmar"}</button></footer>
     </form>
-  </section></div>;
+  </ClientDialogFrame>;
 }

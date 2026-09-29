@@ -1,13 +1,13 @@
 # Diagnóstico de arquitectura actual
 
-Fecha de actualización: 24 de septiembre de 2026.
+Fecha de actualización: 29 de septiembre de 2026.
 
 ## Resumen
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express,
 persistencia PostgreSQL mediante Prisma y autenticación con sesiones opacas. La
 SPA ya integra sesión, KPI y los flujos completos de Actividades, Técnicos,
-Órdenes y Reincidencias; la gestión global de Evidencias y la actividad reciente del
+Órdenes, Reincidencias y Clientes; la gestión global de Evidencias y la actividad reciente del
 Dashboard continúan en migración gradual.
 
 ## Estructura encontrada
@@ -21,13 +21,14 @@ src/
 ├── layouts/      # Menú y estructura visual
 ├── mocks/        # Datos simulados identificados
 ├── models/       # Contratos TypeScript
-├── pages/        # Resumen, Actividades, Técnicos, Órdenes y Reincidencias
+├── pages/        # Resumen, Actividades, Técnicos, Órdenes, Reincidencias y Clientes
 ├── routes/       # Mapeo de URLs y páginas
 ├── test/         # Configuración de pruebas
 ├── App.tsx       # Composición de sesión y shell
 ├── activities-flow.integration.test.tsx
 ├── orders-flow.integration.test.tsx
 ├── recurrences-flow.integration.test.tsx
+├── clients-flow.integration.test.tsx
 ├── main.tsx      # Punto de entrada de React
 └── styles.css    # Estilos visuales existentes
 
@@ -53,13 +54,15 @@ server/
 ```
 
 El frontend dispone de cliente HTTP con cookies, recuperación de sesión y
-fronteras API tipadas para KPI, Actividades, Técnicos, Órdenes y Reincidencias. El backend consume persistencia
+fronteras API tipadas para KPI, Actividades, Técnicos, Órdenes, Reincidencias y Clientes. El backend consume persistencia
 para autenticación, técnicos, clientes, sucursales, contactos, órdenes,
 actividades, evidencias, reincidencias y KPI.
 
 ## Funcionalidades que operan en el navegador
 
-- Navegación con URL entre Resumen, Actividades, Técnicos, Órdenes y Reincidencias.
+- Navegación con URL entre Resumen, Actividades, Técnicos, Órdenes, Reincidencias y Clientes.
+- Clientes persistentes: consulta, filtros, ficha, creación atómica, sucursales,
+  contactos, principalidad por ámbito, versiones y ciclo de vida con permisos.
 - Búsqueda, filtros, URL, paginación y polling de actividades persistentes.
 - Creación programada/manual, edición pendiente y reemplazo de equipo.
 - Inicio, pausa, reanudación, finalización, cancelación y ajuste auditado.
@@ -78,7 +81,7 @@ actividades, evidencias, reincidencias y KPI.
 ## Funcionalidades únicamente visuales
 
 - Línea de jornada.
-- Gestión global de evidencias y clientes.
+- Gestión global de evidencias.
 - Reportes, configuración y notificaciones no implementados.
 - Fechas, tiempos, costos y porcentajes mostrados.
 
@@ -100,7 +103,7 @@ mediante la API; `recurrenceJobs` y `RecurrenceJob` fueron retirados.
 
 1. La gestión global de Evidencias todavía no consume su API en la SPA.
 2. La jornada y actividad reciente del Dashboard aún usan datos locales.
-3. Las pantallas de Clientes todavía no están integradas.
+3. Reportes/exportaciones y despliegue Docker/VPS/HTTPS siguen pendientes.
 4. Los usuarios demo no pueden iniciar sesión; el administrador requiere
    variables privadas de seed.
 5. Algunos controles visuales fuera de Actividades todavía no ejecutan acciones.
@@ -114,7 +117,8 @@ mediante la API; `recurrenceJobs` y `RecurrenceJob` fueron retirados.
 | `npm run dev -- --host 127.0.0.1 --port 5173` | Correcto; respuesta HTTP 200 |
 | `npm run lint` | Correcto; 0 advertencias |
 | `npm test -- src/orders-flow.integration.test.tsx` | Correcto; 3 pruebas integradas de Órdenes: limpieza de consulta y flujos administrativo/técnico con versiones no consecutivas |
-| `npm test -- --pool=threads --maxWorkers=1` | Correcto; 587 pruebas en 61 archivos, verificación frontend del 24 de septiembre |
+| `npm test -- --pool=threads --maxWorkers=1` | Correcto; 814 pruebas en 75 archivos, verificación frontend del 29 de septiembre |
+| Focales Clientes: API, helpers, workspace, componentes, página y flujo | Correcto; 220 pruebas en 14 archivos |
 | `npm audit --audit-level=moderate` | 0 vulnerabilidades |
 
 Backend, evidencia de las fases anteriores ejecutada desde `server/` (no se
@@ -279,6 +283,33 @@ HTTP route → middleware → controller → service → repository → Prisma/P
 - Los KPIs se calcularán en un servicio central configurable.
 - Evidencias dependerán de una interfaz de almacenamiento intercambiable.
 
+## Clientes en la SPA
+
+`/clientes` está protegido por `CLIENTS_VIEW`; ADMIN/SUPERVISOR administran con
+`CLIENTS_MANAGE` y TECHNICIAN consulta. `useClientsWorkspace` mantiene lista,
+detalle y colecciones paginadas con filtros URL independientes, invalida consultas
+obsoletas y reconcilia versiones autoritativas sin incrementarlas localmente.
+El wizard crea empresa, sucursal principal y contacto opcional en una solicitud;
+edición, conflictos y ciclos de vida preservan versión base y requieren adopción
+explícita. Principalidad general y por sucursal son independientes.
+
+La revocación de gestión destruye borradores y aborta transporte de mutaciones
+y revisiones; la de consulta aborta lecturas, vacía datos y cachés del módulo y
+muestra acceso denegado. Un 403 se aplica según endpoint; 401 mantiene la
+expiración global. El aborto del navegador no equivale a rollback del servidor.
+`ClientDialogFrame` coordina la pila modal, foco inicial, contención de teclado,
+Escape idle/pending, aislamiento del fondo y retorno a disparadores conectados.
+El detalle lateral se vuelve modal bajo 1024 px; formularios y ciclos usan el
+mismo marco. Pestañas responden flechas/Home/End y controles reales tienen
+mínimos de 44 × 44 px. No se agregaron dependencias ni router.
+
+Compatibilidad backend de Clientes reejecutada el 29 de septiembre: 21 pruebas
+unitarias (3 archivos), 14 PostgreSQL/HTTP (2 archivos, `schema=test`),
+typecheck, lint y build. Comandos reproducibles en README. Las pruebas integradas
+usan componentes/HTTP reales con respuestas de fetch controladas; jsdom requiere
+dimensiones fijas sólo en el test de diálogos porque no resuelve CSS `min()` con
+porcentajes/viewport. No reemplaza una auditoría visual en dispositivos reales.
+
 ## Riesgos a controlar
 
 - Diseñar demasiadas entidades antes de validar los flujos principales.
@@ -319,7 +350,7 @@ raíz, `npm test -- --pool=threads --maxWorkers=1`, `npm run lint` y
 `npm run build`. PostgreSQL puede emitir la
 advertencia no bloqueante conocida de `pg` sobre `client.query()` concurrente.
 La matriz vigente distingue el alcance para no mezclar pruebas y archivos:
-frontend completo con 587 pruebas en 61 archivos (24 de septiembre); la
+frontend completo con 814 pruebas en 75 archivos (29 de septiembre); la
 verificación previa focal de KPI conserva 30 pruebas unitarias en 2 archivos y
 13 de persistencia/HTTP en 2 archivos contra `schema=test`. Las cifras backend
 son del módulo KPI, no totales globales ni una reejecución de esta ronda de Órdenes.

@@ -20,6 +20,79 @@ const page = (items: ClientSummary[]): ClientPage => ({
 const contact: ClientContact = { id: "contact-a", clientId: clientA.id, branchId: null, scope: "CLIENT", branchName: null, fullName: "Ana", position: null, phone: null, email: null, isPrimary: true, isActive: true, isEffectivelyActive: true, createdAt: clientA.createdAt, updatedAt: clientA.updatedAt, version: 1 };
 const contactPage = (items: ClientContact[]): ContactPage => ({ items, pagination: { page: 1, pageSize: 20, totalItems: items.length, totalPages: 1 } });
 
+describe("revocación dinámica", () => {
+  it("revocar manage aborta revisión de sucursal y no contamina un borrador reabierto", async () => {
+    window.history.replaceState({}, "", "/clientes?clientId=client-a&clientTab=branches");
+    const pending = deferred<ClientDetail>();
+    const api = apiWith({ getClient: vi.fn().mockResolvedValueOnce({ ...detailA, branches: [branchA] }).mockImplementation(() => pending.promise) });
+    const managed = ["CLIENTS_VIEW", "CLIENTS_MANAGE"];
+    const { result, rerender } = renderHook(({ permissions }) => useWorkspace(api, "", permissions), { initialProps: { permissions: managed } });
+    await waitFor(() => expect(result.current.detail.status).toBe("success"));
+    act(() => result.current.openBranchEdit(branchA));
+    let review!: Promise<void>;
+    act(() => { review = result.current.reviewBranchConflict(); });
+    const signal = vi.mocked(api.getClient).mock.calls[1]?.[2];
+    rerender({ permissions: ["CLIENTS_VIEW"] });
+    expect(signal?.aborted).toBe(true);
+    rerender({ permissions: managed });
+    act(() => result.current.openBranchEdit(branchA));
+    await act(async () => { pending.resolve({ ...detailA, branches: [{ ...branchA, version: 17 }] }); await review; });
+    expect(result.current.branchForm.draft?.conflict).toBeNull();
+    expect(result.current.branchForm.draft?.baseVersion).toBe(branchA.version);
+  });
+  it("aborta transporte y descarta creación tardía después de revocar y recuperar manage", async () => {
+    const pending = deferred<ClientDetail>();
+    const api = apiWith({ createClient: vi.fn(() => pending.promise) });
+    const managed = ["CLIENTS_VIEW", "CLIENTS_MANAGE"];
+    const { result, rerender } = renderHook(({ permissions }) => useWorkspace(api, "", permissions), { initialProps: { permissions: managed } });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.openCreate());
+    let submission!: Promise<void>;
+    act(() => { submission = result.current.submitCreate({ tradeName: "Privado", mainBranch: { name: "Principal", address: "Centro", country: "HN" } }); });
+    const signal = vi.mocked(api.createClient).mock.calls[0]?.[1];
+    rerender({ permissions: ["CLIENTS_VIEW"] });
+    expect(signal?.aborted).toBe(true);
+    rerender({ permissions: managed });
+    await act(async () => { pending.resolve(detailB); await submission; });
+    expect(result.current.query.clientId).toBeNull();
+    expect(result.current.detail.data).toBeNull();
+    expect(result.current.create.open).toBe(false);
+  });
+  it("descarta creación abierta al perder manage y no la resucita al recuperarlo", async () => {
+    const api = apiWith();
+    const managed = ["CLIENTS_VIEW", "CLIENTS_MANAGE"];
+    const { result, rerender } = renderHook(({ permissions }) => useWorkspace(api, "", permissions), { initialProps: { permissions: managed } });
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.openCreate());
+    rerender({ permissions: ["CLIENTS_VIEW"] });
+    expect(result.current.create.open).toBe(false);
+    expect(result.current.list.data?.items[0].tradeName).toBe("Acme");
+    rerender({ permissions: managed });
+    expect(result.current.create.open).toBe(false);
+  });
+
+  it("403 de lectura elimina datos conservados y revoca vista", async () => {
+    const api = apiWith();
+    const { result } = renderHook(() => useWorkspace(api));
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    vi.mocked(api.listClients).mockRejectedValueOnce(new ApiClientError(403, "FORBIDDEN", "denegado"));
+    await act(async () => result.current.refreshList());
+    expect(result.current.capabilities.canView).toBe(false);
+    expect(result.current.list.data).toBeNull();
+  });
+
+  it("403 de escritura descarta borrador, revoca manage y conserva lectura", async () => {
+    const api = apiWith({ createClient: vi.fn().mockRejectedValue(new ApiClientError(403, "FORBIDDEN", "denegado")) });
+    const { result } = renderHook(() => useWorkspace(api, "", ["CLIENTS_VIEW", "CLIENTS_MANAGE"]));
+    await waitFor(() => expect(result.current.list.status).toBe("success"));
+    act(() => result.current.openCreate());
+    await act(async () => result.current.submitCreate({ tradeName: "Privado", mainBranch: { name: "Principal", address: "Centro", country: "HN" } }));
+    expect(result.current.capabilities).toEqual({ canView: true, canManage: false });
+    expect(result.current.create).toMatchObject({ open: false, error: null });
+    expect(result.current.list.data).not.toBeNull();
+  });
+});
+
 describe("mutaciones de contactos", () => {
   const managed = ["CLIENTS_VIEW", "CLIENTS_MANAGE"];
   const setup = (overrides: Partial<ClientsApi> = {}) => {
@@ -35,7 +108,7 @@ describe("mutaciones de contactos", () => {
     await waitFor(() => expect(result.current.contacts.status).toBe("success"));
     act(() => result.current.openContactCreate());
     await act(async () => result.current.submitContactForm({ scope: "CLIENT", fullName: "Ada", position: null, phone: null, email: null, isPrimary: true }));
-    expect(createContact).toHaveBeenCalledWith("client-a", expect.objectContaining({ scope: "CLIENT", fullName: "Ada", isPrimary: true }));
+    expect(createContact).toHaveBeenCalledWith("client-a", expect.objectContaining({ scope: "CLIENT", fullName: "Ada", isPrimary: true }), expect.any(AbortSignal));
     expect(vi.mocked(api.createContact).mock.calls[0]?.[1]).not.toHaveProperty("branchId");
     expect(api.listContacts).toHaveBeenCalledTimes(2);
     expect(api.getClient).toHaveBeenCalledTimes(2);
@@ -52,7 +125,7 @@ describe("mutaciones de contactos", () => {
     expect(updateContact).not.toHaveBeenCalled();
     act(() => result.current.changeContactForm({ branchId: branchA.id }));
     await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
-    expect(updateContact).toHaveBeenCalledWith("client-a", contact.id, expect.objectContaining({ version: 3, branchId: branchA.id, fullName: "Borrador" }));
+    expect(updateContact).toHaveBeenCalledWith("client-a", contact.id, expect.objectContaining({ version: 3, branchId: branchA.id, fullName: "Borrador" }), expect.any(AbortSignal));
     expect(result.current.contactForm?.draft?.values.fullName).toBe("Borrador");
     expect(result.current.contactForm?.draft?.baseVersion).toBe(3);
   });
@@ -64,7 +137,7 @@ describe("mutaciones de contactos", () => {
     await waitFor(() => expect(result.current.contacts.status).toBe("success"));
     act(() => result.current.openContactLifecycle(inactive, "reactivate"));
     await act(async () => result.current.submitContactLifecycle("Motivo suficientemente largo"));
-    expect(reactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 3, reason: "Motivo suficientemente largo" });
+    expect(reactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 3, reason: "Motivo suficientemente largo" }, expect.any(AbortSignal));
     expect(reactivateContact).toHaveBeenCalledTimes(1);
     expect(result.current.contactLifecycle).toMatchObject({ open: true, reason: "Motivo suficientemente largo", baseVersion: 3 });
     expect(result.current.contactLifecycle?.error).toMatch(/principal/i);
@@ -109,11 +182,11 @@ describe("mutaciones de contactos", () => {
     await waitFor(() => expect(result.current.contacts.status).toBe("success"));
     act(() => result.current.openContactLifecycle(contact, "deactivate"));
     await act(async () => result.current.submitContactLifecycle("Motivo suficientemente largo"));
-    expect(deactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 1, reason: "Motivo suficientemente largo" });
+    expect(deactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 1, reason: "Motivo suficientemente largo" }, expect.any(AbortSignal));
     expect(result.current.detail.data?.contacts.find((item) => item.id === other.id)?.isPrimary).toBe(false);
     act(() => result.current.openContactLifecycle(inactive, "reactivate"));
     await act(async () => result.current.submitContactLifecycle("Motivo para reactivar"));
-    expect(reactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 9, reason: "Motivo para reactivar" });
+    expect(reactivateContact).toHaveBeenCalledWith("client-a", contact.id, { version: 9, reason: "Motivo para reactivar" }, expect.any(AbortSignal));
     expect(result.current.detail.data?.contacts.find((item) => item.id === contact.id)?.version).toBe(17);
     expect(api.listContacts).toHaveBeenCalledTimes(3);
   });
@@ -137,7 +210,7 @@ describe("mutaciones de contactos", () => {
     act(() => result.current.adoptContactConflict());
     expect(result.current.contactForm?.draft).toMatchObject({ baseVersion: 9, values: { fullName: "Ana borrador" }, conflict: null });
     await act(async () => result.current.submitContactForm(result.current.contactForm!.draft!.values));
-    expect(updateContact).toHaveBeenLastCalledWith("client-a", edited.id, expect.objectContaining({ version: 9, fullName: "Ana borrador" }));
+    expect(updateContact).toHaveBeenLastCalledWith("client-a", edited.id, expect.objectContaining({ version: 9, fullName: "Ana borrador" }), expect.any(AbortSignal));
   });
 
   it("error posterior de consulta conserva conflicto y permite reintentar", async () => {
@@ -175,7 +248,7 @@ describe("mutaciones de contactos", () => {
     act(() => result.current.adoptContactConflict());
     expect(result.current.contactLifecycle).toMatchObject({ baseVersion: 9, reason: "Motivo suficientemente largo", conflict: null });
     await act(async () => result.current.submitContactLifecycle(result.current.contactLifecycle!.reason));
-    expect(reactivateContact).toHaveBeenLastCalledWith("client-a", inactive.id, { version: 9, reason: "Motivo suficientemente largo" });
+    expect(reactivateContact).toHaveBeenLastCalledWith("client-a", inactive.id, { version: 9, reason: "Motivo suficientemente largo" }, expect.any(AbortSignal));
   });
 
   it("descarta revisión tardía del contacto A después de elegir B", async () => {
@@ -356,7 +429,7 @@ describe("edición y ciclo de vida del cliente", () => {
     expect(result.current.detail.data?.version).toBe(9);
     expect(result.current.edit?.draft?.values.tradeName).toBe("Borrador");
     await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
-    expect(updateClient).toHaveBeenCalledWith(clientA.id, { version: 3, tradeName: "Borrador" });
+    expect(updateClient).toHaveBeenCalledWith(clientA.id, { version: 3, tradeName: "Borrador" }, expect.any(AbortSignal));
     expect(result.current.detail.data?.version).toBe(10);
   });
 
@@ -379,7 +452,7 @@ describe("edición y ciclo de vida del cliente", () => {
     expect(result.current.edit?.draft).toMatchObject({ baseVersion: 9, values: { tradeName: "Borrador" }, conflict: null });
     expect(updateClient).toHaveBeenCalledTimes(1);
     await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
-    expect(updateClient).toHaveBeenLastCalledWith(clientA.id, { version: 9, tradeName: "Borrador" });
+    expect(updateClient).toHaveBeenLastCalledWith(clientA.id, { version: 9, tradeName: "Borrador" }, expect.any(AbortSignal));
   });
 
   it.each([
@@ -411,12 +484,12 @@ describe("edición y ciclo de vida del cliente", () => {
     await waitFor(() => expect(result.current.detail.data?.version).toBe(3));
     act(() => result.current.openClientLifecycle("deactivate"));
     await act(async () => result.current.submitClientLifecycle("  Cierre administrativo  "));
-    expect(deactivateClient).toHaveBeenCalledWith(clientA.id, { version: 3, reason: "Cierre administrativo" });
+    expect(deactivateClient).toHaveBeenCalledWith(clientA.id, { version: 3, reason: "Cierre administrativo" }, expect.any(AbortSignal));
     expect(result.current.detail.data?.version).toBe(7);
     expect(result.current.detail.data?.branches[0]?.isActive).toBe(true);
     act(() => result.current.openClientLifecycle("reactivate"));
     await act(async () => result.current.submitClientLifecycle("  Apertura solicitada  "));
-    expect(reactivateClient).toHaveBeenCalledWith(clientA.id, { version: 7, reason: "Apertura solicitada" });
+    expect(reactivateClient).toHaveBeenCalledWith(clientA.id, { version: 7, reason: "Apertura solicitada" }, expect.any(AbortSignal));
     expect(result.current.detail.data?.version).toBe(11);
   });
 
@@ -516,7 +589,7 @@ describe("edición y ciclo de vida del cliente", () => {
     act(() => result.current.adoptClientConflict());
     expect(result.current.lifecycle).toMatchObject({ baseVersion: 9, reason: "Cierre administrativo", conflict: null });
     await act(async () => result.current.submitClientLifecycle(result.current.lifecycle.reason));
-    expect(deactivateClient).toHaveBeenLastCalledWith(clientA.id, { version: 9, reason: "Cierre administrativo" });
+    expect(deactivateClient).toHaveBeenLastCalledWith(clientA.id, { version: 9, reason: "Cierre administrativo" }, expect.any(AbortSignal));
   });
 
   it("no degrada versión confirmada al incluir inactivos y recibir GET anteriores", async () => {
@@ -635,7 +708,7 @@ describe("edición y ciclo de vida del cliente", () => {
     await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
     await act(async () => result.current.reviewClientConflict());
     await act(async () => result.current.submitClientEdit({ tradeName: "Borrador" }));
-    expect(updateClient).toHaveBeenNthCalledWith(2, clientA.id, { version: 3, tradeName: "Borrador" });
+    expect(updateClient).toHaveBeenNthCalledWith(2, clientA.id, { version: 3, tradeName: "Borrador" }, expect.any(AbortSignal));
     expect(result.current.edit).toMatchObject({ open: true, versionConflict: true, draft: { baseVersion: 3, values: { tradeName: "Borrador" }, conflict: { version: 9, tradeName: "Servidor" } } });
     expect(result.current.edit.error).toMatch(/No fue posible/);
   });
@@ -702,7 +775,7 @@ describe("edición y ciclo de vida del cliente", () => {
     await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
     await act(async () => result.current.reviewClientConflict());
     await act(async () => result.current.submitClientLifecycle("Cierre administrativo"));
-    expect(deactivateClient).toHaveBeenNthCalledWith(2, clientA.id, { version: 3, reason: "Cierre administrativo" });
+    expect(deactivateClient).toHaveBeenNthCalledWith(2, clientA.id, { version: 3, reason: "Cierre administrativo" }, expect.any(AbortSignal));
     expect(result.current.lifecycle).toMatchObject({ open: true, versionConflict: true, baseVersion: 3, reason: "Cierre administrativo", conflict: { version: 9, tradeName: "Servidor" } });
     expect(result.current.lifecycle.error).toMatch(/No fue posible/);
   });
@@ -812,7 +885,7 @@ describe("mutaciones de sucursales", () => {
     await waitFor(() => expect(result.current.branches.status).toBe("success"));
     act(() => result.current.openBranchCreate());
     await act(async () => result.current.submitBranchForm({ name: "Norte", address: "Centro", country: "HN", lat: null, long: null }));
-    expect(createBranch).toHaveBeenCalledWith(clientA.id, expect.not.objectContaining({ version: expect.anything() }));
+    expect(createBranch).toHaveBeenCalledWith(clientA.id, expect.not.objectContaining({ version: expect.anything() }), expect.any(AbortSignal));
     await waitFor(() => expect(api.listBranches).toHaveBeenCalledTimes(2));
     expect(api.listBranches).toHaveBeenLastCalledWith(clientA.id, expect.objectContaining({ city: "Tegucigalpa" }), expect.any(AbortSignal));
     await waitFor(() => expect(api.getClient).toHaveBeenCalledTimes(2));
@@ -825,7 +898,7 @@ describe("mutaciones de sucursales", () => {
     act(() => result.current.openBranchEdit(branchA));
     act(() => result.current.changeBranchForm({ name: "Mi borrador" }));
     await act(async () => result.current.submitBranchForm(result.current.branchForm.draft!.values));
-    expect(updateBranch).toHaveBeenCalledWith(clientA.id, branchA.id, expect.objectContaining({ version: 1, name: "Mi borrador" }));
+    expect(updateBranch).toHaveBeenCalledWith(clientA.id, branchA.id, expect.objectContaining({ version: 1, name: "Mi borrador" }), expect.any(AbortSignal));
     expect(result.current.branchForm.draft).toMatchObject({ baseVersion: 1, values: { name: "Mi borrador" }, conflict: null });
     expect(updateBranch).toHaveBeenCalledTimes(1);
     await act(async () => result.current.reviewBranchConflict());
@@ -833,7 +906,7 @@ describe("mutaciones de sucursales", () => {
     act(() => result.current.adoptBranchConflict());
     expect(result.current.branchForm.draft).toMatchObject({ baseVersion: 8, values: { name: "Mi borrador" } });
     await act(async () => result.current.submitBranchForm(result.current.branchForm.draft!.values));
-    expect(updateBranch).toHaveBeenLastCalledWith(clientA.id, branchA.id, expect.objectContaining({ version: 8, name: "Mi borrador" }));
+    expect(updateBranch).toHaveBeenLastCalledWith(clientA.id, branchA.id, expect.objectContaining({ version: 8, name: "Mi borrador" }), expect.any(AbortSignal));
   });
 
   it.each([["BRANCH_HAS_ACTIVE_WORK", "La sucursal tiene trabajo activo y no puede desactivarse."], ["CLIENT_REQUIRES_ACTIVE_BRANCH", "El cliente debe conservar al menos una sucursal activa."]])("muestra %s en el diálogo sin reintento automático", async (code, message) => {
@@ -856,7 +929,7 @@ describe("mutaciones de sucursales", () => {
     expect(result.current.detail.data?.branches[0]?.code).toBe("MAIN");
     act(() => result.current.openBranchLifecycle(main, "deactivate"));
     await act(async () => result.current.submitBranchLifecycle("Motivo documentado"));
-    expect(deactivateBranch).toHaveBeenCalledWith(clientA.id, branchA.id, { version: 1, reason: "Motivo documentado" });
+    expect(deactivateBranch).toHaveBeenCalledWith(clientA.id, branchA.id, { version: 1, reason: "Motivo documentado" }, expect.any(AbortSignal));
     expect(result.current.detail.data?.branches.find((item) => item.id === branchA.id)?.isActive).toBe(false);
     expect(result.current.detail.data?.branches.find((item) => item.id === other.id)?.isActive).toBe(true);
   });
@@ -950,7 +1023,7 @@ describe("mutaciones de sucursales", () => {
     act(() => result.current.adoptBranchConflict());
     expect(result.current.branchLifecycle).toMatchObject({ baseVersion: 8, reason: "Motivo documentado", conflict: null });
     await act(async () => result.current.submitBranchLifecycle(result.current.branchLifecycle.reason));
-    expect(deactivateBranch).toHaveBeenLastCalledWith(clientA.id, branchA.id, { version: 8, reason: "Motivo documentado" });
+    expect(deactivateBranch).toHaveBeenLastCalledWith(clientA.id, branchA.id, { version: 8, reason: "Motivo documentado" }, expect.any(AbortSignal));
   });
 
   it("conserva colección stale tras error de refresh, sin reintento automático", async () => {
@@ -1065,7 +1138,7 @@ describe("useClientsWorkspace", () => {
     expect(result.current.create?.open).toBe(true);
     await act(async () => result.current.submitCreate!(input));
     expect(api.createClient).toHaveBeenCalledOnce();
-    expect(api.createClient).toHaveBeenCalledWith(input);
+    expect(api.createClient).toHaveBeenCalledWith(input, expect.any(AbortSignal));
     expect(result.current.create?.open).toBe(false);
     expect(result.current.query.clientId).toBe("created");
     expect(result.current.detail.data?.version).toBe(47);
