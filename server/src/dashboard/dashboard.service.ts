@@ -44,10 +44,11 @@ export function createDashboardService(
         capabilities: { team, recentActivities, recurrences },
         team: team ? teamRecords.map((record) => {
           const active = record.actividades[0]?.actividad;
-          const pausedFromRows = active?.pausas.reduce((total, pause) => {
+          const pausedMilliseconds = active?.pausas.reduce((total, pause) => {
             const pauseEnd = pause.endedAt && pause.endedAt < generatedAt ? pause.endedAt : generatedAt;
-            return total + Math.max(0, Math.floor((pauseEnd.getTime() - pause.startedAt.getTime()) / 60_000));
+            return total + Math.max(0, pauseEnd.getTime() - pause.startedAt.getTime());
           }, 0) ?? 0;
+          const pausedFromRows = Math.floor(pausedMilliseconds / 60_000);
           return { id: record.id, code: record.code, fullName: record.fullName, specialty: record.specialty, status: record.status, activeActivity: active && active.startedAt ? { status: active.status, type: active.tipoActividad.name, client: active.sucursal.cliente.tradeName, branch: active.sucursal.name, description: active.description, startedAt: active.startedAt.toISOString(), pausedMinutes: Math.max(active.pausedMinutes, pausedFromRows) } : null };
         }) : [],
         recentActivities: recentActivities ? activityRecords.map((record) => ({ id: record.id, type: record.tipoActividad.name, description: record.description, orderNumber: record.orden?.orderNumber ?? null, client: record.sucursal.cliente.tradeName, branch: record.sucursal.name, responsible: record.tecnicos[0]?.tecnico.fullName ?? null, status: record.status, startedAt: record.startedAt?.toISOString() ?? null, endedAt: record.endedAt?.toISOString() ?? null, pausedMinutes: record.pausedMinutes, productiveMinutes: record.productiveMinutes, updatedAt: record.updatedAt.toISOString(), ...(recurrences && { isRecurrenceRelated: (record.orden?.reincidenciasOriginales?.length ?? 0) > 0 || (record.orden?.visitasReincidencia?.length ?? 0) > 0 }) })) : [],

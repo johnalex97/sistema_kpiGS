@@ -2,6 +2,32 @@ import { describe, expect, it, vi } from "vitest";
 import { createDashboardService } from "../../src/dashboard/dashboard.service.js";
 
 describe("dashboard service", () => {
+  it("rounds the sum of all pause intervals only once", async () => {
+    const repository = {
+      readOperationalDashboard: vi.fn(async () => ({
+        team: [{
+          id: "tech-1", code: "TEC-1", fullName: "Ana", specialty: null, status: "BUSY",
+          actividades: [{ actividad: {
+            status: "IN_PROGRESS", description: "En campo", startedAt: new Date("2026-09-30T12:00:00.000Z"),
+            pausedMinutes: 0,
+            pausas: [
+              { startedAt: new Date("2026-09-30T12:01:00.000Z"), endedAt: new Date("2026-09-30T12:01:45.000Z") },
+              { startedAt: new Date("2026-09-30T12:02:00.000Z"), endedAt: new Date("2026-09-30T12:02:45.000Z") },
+            ],
+            tipoActividad: { name: "Soporte" }, sucursal: { name: "Centro", cliente: { tradeName: "Cliente" } },
+          } }],
+        }], activities: [], recurrences: [],
+      })),
+    };
+    const service = createDashboardService(repository as never, "America/Tegucigalpa", () => new Date("2026-09-30T13:00:00.000Z"));
+
+    const dashboard = await service.getOperationalDashboard({ date: "2026-09-30" }, {
+      userId: "user-1", technicianId: null, permissions: ["ACTIVITIES_VIEW_ALL", "TECHNICIANS_VIEW"], requestId: "request-1",
+    });
+
+    expect(dashboard.team[0]).toMatchObject({ activeActivity: { pausedMinutes: 1 } });
+  });
+
   it("includes the current open pause in the active activity duration", async () => {
     const repository = {
       readOperationalDashboard: vi.fn(async () => ({
