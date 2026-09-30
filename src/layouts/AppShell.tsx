@@ -1,9 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
-import { Bell, CalendarDays, ChevronDown, Menu, Search } from "lucide-react";
+import { Bell, Menu, Search } from "lucide-react";
 import { ProfileMenu } from "../components/auth/ProfileMenu";
 import { useAuth } from "../auth/useAuth";
 import { useAppRoute } from "../hooks/useAppRoute";
-import { initialWorks } from "../mocks/data";
 import type { Page } from "../models/app";
 import { ActivitiesPage } from "../pages/ActivitiesPage";
 import { DashboardPage } from "../pages/DashboardPage";
@@ -15,14 +14,14 @@ import { canAccessPage, pageDescriptions } from "../routes/appRoutes";
 import { Sidebar } from "./Sidebar";
 import { AccessDeniedPage } from "../pages/AccessDeniedPage";
 
-function PageContent({ page, search, onGoRecurrence, onClearSearch }: { page: Page; search: string; onGoRecurrence: () => void; onClearSearch: () => void }) {
+function PageContent({ page, search, onGoRecurrence, onClearSearch, onGoActivities, onGoTechnicians }: { page: Page; search: string; onGoRecurrence: () => void; onClearSearch: () => void; onGoActivities: () => void; onGoTechnicians: () => void }) {
   switch (page) {
     case "Órdenes": return <OrdersPage search={search} onClearSearch={onClearSearch} />;
     case "Actividades": return <ActivitiesPage search={search} />;
     case "Técnicos": return <TechniciansPage search={search} />;
     case "Reincidencias": return <RecurrencesPage search={search} />;
     case "Clientes": return <ClientsPage search={search} onClearSearch={onClearSearch} />;
-    default: return <DashboardPage works={initialWorks} onGoRecurrence={onGoRecurrence} />;
+    default: return <DashboardPage onGoRecurrence={onGoRecurrence} onGoActivities={onGoActivities} onGoTechnicians={onGoTechnicians} />;
   }
 }
 
@@ -56,8 +55,8 @@ export function AppShell() {
         </header>
         <div className="page-wrap">
           {hasPageAccess ? <>
-            <section className="page-heading"><div><p className="eyebrow">{page === "Resumen" ? "Lunes · 28 de julio" : "Centro de control"}</p><h1>{page === "Resumen" ? "Así opera Geek Solution hoy" : page}</h1><p>{page === "Resumen" ? "El equipo alcanzó el 79% de la meta diaria. Hay una reincidencia que requiere seguimiento." : pageDescriptions[page]}</p></div><div className="heading-actions"><button className="button button--ghost" type="button"><CalendarDays size={17} /> 28 jul — 3 ago <ChevronDown size={15} /></button></div></section>
-            <PageContent page={page} search={search} onGoRecurrence={() => changePage("Reincidencias")} onClearSearch={() => setSearch("")} />
+            <section className="page-heading"><div><p className="eyebrow">Centro de control</p><h1>{page === "Resumen" ? "Así opera Geek Solution hoy" : page}</h1><p>{page === "Resumen" ? "Consulta la jornada operativa y los indicadores autorizados del equipo." : pageDescriptions[page]}</p></div></section>
+            <PageContent page={page} search={search} onGoRecurrence={() => changePage("Reincidencias")} onGoActivities={() => changePage("Actividades")} onGoTechnicians={() => changePage("Técnicos")} onClearSearch={() => setSearch("")} />
           </> : <AccessDeniedPage fallbackPage={visiblePages[0]} onGoToFallback={() => visiblePages[0] && changePage(visiblePages[0])} />}
         </div>
       </main>
