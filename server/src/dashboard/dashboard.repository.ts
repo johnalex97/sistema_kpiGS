@@ -41,7 +41,7 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
               tipoActividad: { select: { code: true, name: true } },
               sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } },
               orden: { select: { orderNumber: true } },
-              tecnicos: { select: { tecnico: { select: { fullName: true } } } },
+              tecnicos: { where: { role: "RESPONSIBLE" }, take: 1, select: { tecnico: { select: { fullName: true } } } },
             },
             orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
             take: 5,
@@ -50,6 +50,7 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
             ? transaction.reincidencia.findMany({
               where: {
                 status: { in: ["OPEN", "ANALYSIS", "CORRECTION"] },
+                ordenOriginal: { deletedAt: null, sucursal: { deletedAt: null, isActive: true, cliente: { deletedAt: null, isActive: true } } },
                 ...(input.recurrenceTechnicianId && { OR: [{ tecnicos: { some: { tecnicoId: input.recurrenceTechnicianId } } }, { reportedBy: { tecnico: { id: input.recurrenceTechnicianId } } }] }),
               },
               select: {
