@@ -12,7 +12,8 @@ export function OperationalTeamBoard({ team, generatedAt, onGoTechnicians }: { t
     <div className="operational-team__list">{team.map((technician) => {
       const active = technician.activeActivity;
       const label = active?.status === "PAUSED" ? "Actividad pausada" : active ? "En actividad" : "Sin actividad en curso";
-      return <article className="operational-team__row" key={technician.id}><div><strong>{technician.fullName}</strong><small>{technician.specialty ?? technician.code}</small></div><div><b>{label}</b>{active && <><span>{active.type} · {active.description}</span><small>{active.client} · {active.branch} · Inicio {new Date(active.startedAt).toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}</small></>}</div><time>{active ? duration(active.startedAt, generatedAt, active.pausedMinutes) : technician.status === "ON_ROUTE" ? "En ruta" : "Disponible"}</time></article>;
+      const availability = technician.status === "ON_ROUTE" ? "En ruta" : technician.status === "BUSY" ? "Ocupado" : "Disponible";
+      return <article className="operational-team__row" key={technician.id}><div><strong>{technician.fullName}</strong><small>{technician.specialty ?? technician.code}</small></div><div><b>{label}</b>{active && <><span>{active.type} · {active.description}</span><small>{active.client} · {active.branch} · Inicio {new Date(active.startedAt).toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}</small></>}</div><time>{active ? duration(active.startedAt, generatedAt, active.pausedMinutes) : availability}</time></article>;
     })}</div>
   </section>;
 }

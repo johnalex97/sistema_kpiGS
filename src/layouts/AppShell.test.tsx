@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
@@ -73,6 +73,16 @@ describe("AppShell", () => {
     expect(search).toHaveAttribute("name", "query");
     expect(search).toHaveAttribute("autocomplete", "off");
     expect(search).toHaveAttribute("placeholder", "Buscar orden, cliente…");
+  });
+
+  it("no muestra métricas ni fechas ficticias en el resumen", () => {
+    renderWithAuth(<AppShell />);
+    const heading = screen.getByRole("heading", { level: 1, name: "Así opera Geek Solution hoy" }).closest(".page-heading") as HTMLElement | null;
+
+    expect(heading).not.toBeNull();
+    expect(within(heading!).queryByText(/79%/)).not.toBeInTheDocument();
+    expect(within(heading!).queryByText(/28 jul/i)).not.toBeInTheDocument();
+    expect(within(heading!).queryByText(/requiere seguimiento/i)).not.toBeInTheDocument();
   });
 
   it("navega entre módulos y actualiza la URL", async () => {

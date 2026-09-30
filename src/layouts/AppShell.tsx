@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Bell, CalendarDays, ChevronDown, Menu, Search } from "lucide-react";
+import { Bell, Menu, Search } from "lucide-react";
 import { ProfileMenu } from "../components/auth/ProfileMenu";
 import { useAuth } from "../auth/useAuth";
 import { useAppRoute } from "../hooks/useAppRoute";
@@ -55,7 +55,7 @@ export function AppShell() {
         </header>
         <div className="page-wrap">
           {hasPageAccess ? <>
-            <section className="page-heading"><div><p className="eyebrow">{page === "Resumen" ? "Lunes · 28 de julio" : "Centro de control"}</p><h1>{page === "Resumen" ? "Así opera Geek Solution hoy" : page}</h1><p>{page === "Resumen" ? "El equipo alcanzó el 79% de la meta diaria. Hay una reincidencia que requiere seguimiento." : pageDescriptions[page]}</p></div><div className="heading-actions"><button className="button button--ghost" type="button"><CalendarDays size={17} /> 28 jul — 3 ago <ChevronDown size={15} /></button></div></section>
+            <section className="page-heading"><div><p className="eyebrow">Centro de control</p><h1>{page === "Resumen" ? "Así opera Geek Solution hoy" : page}</h1><p>{page === "Resumen" ? "Consulta la jornada operativa y los indicadores autorizados del equipo." : pageDescriptions[page]}</p></div></section>
             <PageContent page={page} search={search} onGoRecurrence={() => changePage("Reincidencias")} onGoActivities={() => changePage("Actividades")} onGoTechnicians={() => changePage("Técnicos")} onClearSearch={() => setSearch("")} />
           </> : <AccessDeniedPage fallbackPage={visiblePages[0]} onGoToFallback={() => visiblePages[0] && changePage(visiblePages[0])} />}
         </div>

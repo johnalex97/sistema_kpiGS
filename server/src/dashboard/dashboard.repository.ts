@@ -1,20 +1,31 @@
 import { Prisma } from "../../generated/prisma/client.js";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { EstadoReincidencia, PrismaClient } from "../../generated/prisma/client.js";
 import type { DashboardReadRepository } from "./dashboard.repository.types.js";
 
 const readOptions = {
   isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
 } as const;
 
+const openRecurrenceStatuses: EstadoReincidencia[] = ["OPEN", "ANALYSIS", "CORRECTION"];
+
 export function createDashboardReadRepository(database: PrismaClient): DashboardReadRepository {
   return {
     async readOperationalDashboard(input) {
+      const recurrenceScope = {
+        status: { in: openRecurrenceStatuses },
+        ...(input.recurrenceTechnicianId && {
+          OR: [
+            { tecnicos: { some: { tecnicoId: input.recurrenceTechnicianId } } },
+            { reportedBy: { tecnico: { id: input.recurrenceTechnicianId } } },
+          ],
+        }),
+      };
       return database.$transaction(async (transaction) => {
         const [team, activities, recurrences] = await Promise.all([
           input.includeTeam
             ? transaction.tecnico.findMany({
               where: { deletedAt: null, status: { not: "INACTIVE" }, ...(input.activityTechnicianId ? { id: input.activityTechnicianId } : {}) },
-              select: { id: true, code: true, fullName: true, specialty: true, status: true, actividades: { where: { actividad: { deletedAt: null, status: { in: ["IN_PROGRESS", "PAUSED"] }, tipoActividad: { deletedAt: null }, sucursal: { deletedAt: null, isActive: true, cliente: { deletedAt: null, isActive: true } } } }, take: 1, select: { actividad: { select: { status: true, description: true, startedAt: true, pausedMinutes: true, pausas: { where: { endedAt: null }, take: 1, select: { startedAt: true } }, tipoActividad: { select: { name: true } }, sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } } } } } } },
+              select: { id: true, code: true, fullName: true, specialty: true, status: true, actividades: { where: { actividad: { deletedAt: null, status: { in: ["IN_PROGRESS", "PAUSED"] }, tipoActividad: { deletedAt: null }, sucursal: { deletedAt: null, isActive: true, cliente: { deletedAt: null, isActive: true } }, AND: [{ OR: [{ ordenId: null }, { orden: { is: { deletedAt: null } } }] }] } }, take: 1, select: { actividad: { select: { status: true, description: true, startedAt: true, pausedMinutes: true, pausas: { where: { startedAt: { lte: input.generatedAt } }, orderBy: [{ startedAt: "asc" }, { id: "asc" }], select: { startedAt: true, endedAt: true } }, tipoActividad: { select: { name: true } }, sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } } } } } } },
               orderBy: [{ fullName: "asc" }, { id: "asc" }],
             })
             : [],
@@ -33,10 +44,13 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
               ],
               AND: [
                 { OR: [{ ordenId: null }, { orden: { is: { deletedAt: null } } }] },
+                ...(input.activityTechnicianId ? [{
+                  OR: [
+                    { tecnicos: { some: { tecnicoId: input.activityTechnicianId } } },
+                    { visibilidadTecnicos: { some: { tecnicoId: input.activityTechnicianId } } },
+                  ],
+                }] : []),
               ],
-              ...(input.activityTechnicianId && {
-                tecnicos: { some: { tecnicoId: input.activityTechnicianId } },
-              }),
             },
             select: {
               id: true, status: true, description: true, startedAt: true, endedAt: true,
@@ -47,12 +61,9 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
                 select: {
                   orderNumber: true,
                   ...(input.includeRecurrences && {
-                    reincidenciasOriginales: {
-                      where: { status: { in: ["OPEN", "ANALYSIS", "CORRECTION"] } },
-                      select: { id: true },
-                    },
+                    reincidenciasOriginales: { where: recurrenceScope, select: { id: true } },
                     visitasReincidencia: {
-                      where: { reincidencia: { status: { in: ["OPEN", "ANALYSIS", "CORRECTION"] } } },
+                      where: { reincidencia: recurrenceScope },
                       select: { id: true },
                     },
                   }),
@@ -66,9 +77,8 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
           input.includeRecurrences
             ? transaction.reincidencia.findMany({
               where: {
-                status: { in: ["OPEN", "ANALYSIS", "CORRECTION"] },
+                ...recurrenceScope,
                 ordenOriginal: { deletedAt: null, sucursal: { deletedAt: null, isActive: true, cliente: { deletedAt: null, isActive: true } } },
-                ...(input.recurrenceTechnicianId && { OR: [{ tecnicos: { some: { tecnicoId: input.recurrenceTechnicianId } } }, { reportedBy: { tecnico: { id: input.recurrenceTechnicianId } } }] }),
               },
               select: {
                 id: true, recurrenceNumber: true, detectedProblem: true, status: true,

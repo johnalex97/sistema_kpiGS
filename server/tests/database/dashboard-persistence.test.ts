@@ -25,6 +25,7 @@ describe("dashboard persistence", () => {
     const snapshot = await createDashboardReadRepository(database).readOperationalDashboard({
       start: new Date("2026-08-01T06:00:00.000Z"),
       end: new Date("2026-08-02T06:00:00.000Z"),
+      generatedAt: new Date("2026-08-01T12:00:00.000Z"),
       activityTechnicianId: fixture.technicianId,
       recurrenceTechnicianId: null,
       includeTeam: false,

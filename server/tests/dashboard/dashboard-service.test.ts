@@ -9,7 +9,10 @@ describe("dashboard service", () => {
           id: "tech-1", code: "TEC-1", fullName: "Ana", specialty: null, status: "BUSY",
           actividades: [{ actividad: {
             status: "PAUSED", description: "En espera", startedAt: new Date("2026-09-30T12:00:00.000Z"),
-            pausedMinutes: 5, pausas: [{ startedAt: new Date("2026-09-30T12:30:00.000Z") }],
+            pausedMinutes: 0, pausas: [
+              { startedAt: new Date("2026-09-30T12:10:00.000Z"), endedAt: new Date("2026-09-30T12:20:00.000Z") },
+              { startedAt: new Date("2026-09-30T12:30:00.000Z"), endedAt: null },
+            ],
             tipoActividad: { name: "Soporte" }, sucursal: { name: "Centro", cliente: { tradeName: "Cliente" } },
           } }],
         }], activities: [], recurrences: [],
@@ -21,7 +24,7 @@ describe("dashboard service", () => {
       userId: "user-1", technicianId: null, permissions: ["ACTIVITIES_VIEW_ALL", "TECHNICIANS_VIEW"], requestId: "request-1",
     });
 
-    expect(dashboard.team[0]).toMatchObject({ activeActivity: { pausedMinutes: 35 } });
+    expect(dashboard.team[0]).toMatchObject({ activeActivity: { pausedMinutes: 40 } });
   });
 
   it("only exposes an activity recurrence relation to actors allowed to view it", async () => {

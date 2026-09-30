@@ -1,6 +1,7 @@
 export interface DashboardReadInput {
   start: Date;
   end: Date;
+  generatedAt: Date;
   activityTechnicianId: string | null;
   recurrenceTechnicianId: string | null;
   includeTeam: boolean;
