@@ -19,5 +19,5 @@ export interface PublicOperationalDashboard {
   };
   team: readonly unknown[];
   recentActivities: readonly unknown[];
-  recurrences: readonly unknown[] | null;
+  recurrences: unknown | null;
 }

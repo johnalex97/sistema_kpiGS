@@ -14,7 +14,7 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
           input.includeTeam
             ? transaction.tecnico.findMany({
               where: { deletedAt: null, status: { not: "INACTIVE" } },
-              select: { id: true, code: true, fullName: true, specialty: true, status: true },
+              select: { id: true, code: true, fullName: true, specialty: true, status: true, actividades: { where: { actividad: { deletedAt: null, status: { in: ["IN_PROGRESS", "PAUSED"] } } }, take: 1, select: { actividad: { select: { status: true, description: true, startedAt: true, pausedMinutes: true, tipoActividad: { select: { name: true } }, sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } } } } } } },
               orderBy: [{ fullName: "asc" }, { id: "asc" }],
             })
             : [],
@@ -40,6 +40,8 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
               pausedMinutes: true, productiveMinutes: true, updatedAt: true,
               tipoActividad: { select: { code: true, name: true } },
               sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } },
+              orden: { select: { orderNumber: true } },
+              tecnicos: { select: { tecnico: { select: { fullName: true } } } },
             },
             orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
             take: 5,
@@ -53,10 +55,12 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
                 }),
               },
               select: {
-                id: true,
+                id: true, recurrenceNumber: true, detectedProblem: true, status: true,
                 impact: true,
                 updatedAt: true,
                 ordenes: { select: { id: true } },
+                ordenOriginal: { select: { sucursal: { select: { cliente: { select: { tradeName: true } } } } } },
+                tecnicos: { select: { tecnico: { select: { fullName: true } } } },
               },
               orderBy: [{ impact: "desc" }, { updatedAt: "desc" }, { id: "desc" }],
             })
