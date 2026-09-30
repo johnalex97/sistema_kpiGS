@@ -82,4 +82,11 @@ describe("dashboard read repository", () => {
       }),
     }));
   });
+
+  it("limits the team board to the authorized technician for own scope", async () => {
+    const transaction = { tecnico: { findMany: vi.fn(async () => []) }, actividad: { findMany: vi.fn(async () => []) }, reincidencia: { findMany: vi.fn(async () => []) } };
+    const repository = createDashboardReadRepository({ $transaction: vi.fn(async (operation: (client: typeof transaction) => unknown) => operation(transaction)) } as never);
+    await repository.readOperationalDashboard({ start: new Date(), end: new Date(), activityTechnicianId: "tech-own", recurrenceTechnicianId: "tech-own", includeTeam: true, includeRecurrences: false });
+    expect(transaction.tecnico.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "tech-own" }) }));
+  });
 });

@@ -13,7 +13,7 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
         const [team, activities, recurrences] = await Promise.all([
           input.includeTeam
             ? transaction.tecnico.findMany({
-              where: { deletedAt: null, status: { not: "INACTIVE" } },
+              where: { deletedAt: null, status: { not: "INACTIVE" }, ...(input.activityTechnicianId ? { id: input.activityTechnicianId } : {}) },
               select: { id: true, code: true, fullName: true, specialty: true, status: true, actividades: { where: { actividad: { deletedAt: null, status: { in: ["IN_PROGRESS", "PAUSED"] } } }, take: 1, select: { actividad: { select: { status: true, description: true, startedAt: true, pausedMinutes: true, tipoActividad: { select: { name: true } }, sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } } } } } } },
               orderBy: [{ fullName: "asc" }, { id: "asc" }],
             })
