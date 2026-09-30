@@ -83,6 +83,34 @@ describe("dashboard read repository", () => {
     }));
   });
 
+  it("excludes activities whose optional order is archived without excluding manual activities", async () => {
+    const transaction = {
+      tecnico: { findMany: vi.fn(async () => []) },
+      actividad: { findMany: vi.fn(async () => []) },
+      reincidencia: { findMany: vi.fn(async () => []) },
+    };
+    const repository = createDashboardReadRepository({
+      $transaction: vi.fn(async (operation: (client: typeof transaction) => unknown) => operation(transaction)),
+    } as never);
+
+    await repository.readOperationalDashboard({
+      start: new Date("2026-09-30T06:00:00.000Z"),
+      end: new Date("2026-10-01T06:00:00.000Z"),
+      activityTechnicianId: null,
+      recurrenceTechnicianId: null,
+      includeTeam: false,
+      includeRecurrences: false,
+    });
+
+    expect(transaction.actividad.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        AND: expect.arrayContaining([
+          { OR: [{ ordenId: null }, { orden: { is: { deletedAt: null } } }] },
+        ]),
+      }),
+    }));
+  });
+
   it("limits the team board to the authorized technician for own scope", async () => {
     const transaction = { tecnico: { findMany: vi.fn(async () => []) }, actividad: { findMany: vi.fn(async () => []) }, reincidencia: { findMany: vi.fn(async () => []) } };
     const repository = createDashboardReadRepository({ $transaction: vi.fn(async (operation: (client: typeof transaction) => unknown) => operation(transaction)) } as never);

@@ -14,7 +14,7 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
           input.includeTeam
             ? transaction.tecnico.findMany({
               where: { deletedAt: null, status: { not: "INACTIVE" }, ...(input.activityTechnicianId ? { id: input.activityTechnicianId } : {}) },
-              select: { id: true, code: true, fullName: true, specialty: true, status: true, actividades: { where: { actividad: { deletedAt: null, status: { in: ["IN_PROGRESS", "PAUSED"] }, tipoActividad: { deletedAt: null }, sucursal: { deletedAt: null, isActive: true, cliente: { deletedAt: null, isActive: true } } } }, take: 1, select: { actividad: { select: { status: true, description: true, startedAt: true, pausedMinutes: true, tipoActividad: { select: { name: true } }, sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } } } } } } },
+              select: { id: true, code: true, fullName: true, specialty: true, status: true, actividades: { where: { actividad: { deletedAt: null, status: { in: ["IN_PROGRESS", "PAUSED"] }, tipoActividad: { deletedAt: null }, sucursal: { deletedAt: null, isActive: true, cliente: { deletedAt: null, isActive: true } } } }, take: 1, select: { actividad: { select: { status: true, description: true, startedAt: true, pausedMinutes: true, pausas: { where: { endedAt: null }, take: 1, select: { startedAt: true } }, tipoActividad: { select: { name: true } }, sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } } } } } } },
               orderBy: [{ fullName: "asc" }, { id: "asc" }],
             })
             : [],
@@ -31,6 +31,9 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
                 { startedAt: { gte: input.start, lt: input.end } },
                 { updatedAt: { gte: input.start, lt: input.end } },
               ],
+              AND: [
+                { OR: [{ ordenId: null }, { orden: { is: { deletedAt: null } } }] },
+              ],
               ...(input.activityTechnicianId && {
                 tecnicos: { some: { tecnicoId: input.activityTechnicianId } },
               }),
@@ -40,7 +43,21 @@ export function createDashboardReadRepository(database: PrismaClient): Dashboard
               pausedMinutes: true, productiveMinutes: true, updatedAt: true,
               tipoActividad: { select: { code: true, name: true } },
               sucursal: { select: { name: true, cliente: { select: { tradeName: true } } } },
-              orden: { select: { orderNumber: true } },
+              orden: {
+                select: {
+                  orderNumber: true,
+                  ...(input.includeRecurrences && {
+                    reincidenciasOriginales: {
+                      where: { status: { in: ["OPEN", "ANALYSIS", "CORRECTION"] } },
+                      select: { id: true },
+                    },
+                    visitasReincidencia: {
+                      where: { reincidencia: { status: { in: ["OPEN", "ANALYSIS", "CORRECTION"] } } },
+                      select: { id: true },
+                    },
+                  }),
+                },
+              },
               tecnicos: { where: { role: "RESPONSIBLE" }, take: 1, select: { tecnico: { select: { fullName: true } } } },
             },
             orderBy: [{ updatedAt: "desc" }, { id: "desc" }],

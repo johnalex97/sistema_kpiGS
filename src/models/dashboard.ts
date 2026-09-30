@@ -37,7 +37,7 @@ export interface OperationalActivity {
   pausedMinutes: number;
   productiveMinutes: number | null;
   updatedAt: string;
-  isRecurrenceRelated: boolean;
+  isRecurrenceRelated?: boolean;
 }
 
 export interface RecurrenceFocus {
