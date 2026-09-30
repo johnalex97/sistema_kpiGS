@@ -87,7 +87,7 @@ describe("useOperationalDashboard", () => {
     vi.useFakeTimers();
     let visibility: DocumentVisibilityState = "visible";
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
-    const getOperationalDashboard = vi.fn(async () => dashboard);
+    const getOperationalDashboard = vi.fn(async (_date?: string, _signal?: AbortSignal) => dashboard);
     const api = apiMock(getOperationalDashboard);
     const { result } = renderHook(() => useOperationalDashboard(api));
     await flushPromises();
@@ -96,10 +96,12 @@ describe("useOperationalDashboard", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(getOperationalDashboard).toHaveBeenCalledTimes(1);
 
+    const visibleSignal = getOperationalDashboard.mock.calls[0]?.[1] as AbortSignal;
     act(() => {
       visibility = "hidden";
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    expect(visibleSignal.aborted).toBe(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(getOperationalDashboard).toHaveBeenCalledTimes(1);
 

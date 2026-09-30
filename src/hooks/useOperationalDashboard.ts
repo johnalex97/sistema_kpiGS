@@ -72,6 +72,10 @@ export function useOperationalDashboard(
     const timer = window.setInterval(poll, pollIntervalMs);
     const handleVisibility = () => {
       if (document.visibilityState === "visible") void load();
+      else {
+        generationRef.current += 1;
+        controllerRef.current?.abort();
+      }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
