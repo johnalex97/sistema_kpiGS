@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OperationalDashboardApi } from "../api/dashboard";
+import { ApiClientError } from "../api/http";
 import type { OperationalDashboard } from "../models/dashboard";
 
 export type OperationalDashboardState =
@@ -56,6 +57,11 @@ export function useOperationalDashboard(
       setState({ status: hasContent(data) ? "success" : "empty", data });
     } catch (error: unknown) {
       if (generation !== generationRef.current || controller.signal.aborted || isAbortError(error)) return;
+      if (error instanceof ApiClientError && error.status === 403) {
+        dataRef.current = undefined;
+        setState({ status: "error", message: errorMessage(error) });
+        return;
+      }
       const currentData = dataRef.current;
       setState({ status: "error", ...(currentData ? { data: currentData } : {}), message: errorMessage(error) });
     }

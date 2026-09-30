@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OperationalDashboardApi } from "../api/dashboard";
+import { ApiClientError } from "../api/http";
 import type { OperationalDashboard } from "../models/dashboard";
 import { useOperationalDashboard } from "./useOperationalDashboard";
 
@@ -60,6 +61,16 @@ describe("useOperationalDashboard", () => {
 
     await act(async () => { await result.current.retry(); });
     await waitFor(() => expect(result.current.state).toMatchObject({ status: "success", data: { date: "2026-10-01" } }));
+  });
+
+  it("retira la instantanea operativa cuando el servidor niega acceso", async () => {
+    const getOperationalDashboard = vi.fn().mockResolvedValueOnce(dashboard).mockRejectedValueOnce(new ApiClientError(403, "FORBIDDEN", "Sin permiso"));
+    const api = apiMock(getOperationalDashboard);
+    const { result } = renderHook(() => useOperationalDashboard(api));
+    await waitFor(() => expect(result.current.state.status).toBe("success"));
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.state).toMatchObject({ status: "error", message: "Sin permiso" });
+    expect(result.current.state.data).toBeUndefined();
   });
 
   it("aborta y descarta la respuesta anterior al cambiar fecha o desmontar", async () => {
