@@ -21,7 +21,7 @@ export interface OperationalDashboardController {
 }
 
 function hasContent(data: OperationalDashboard): boolean {
-  return data.team.length > 0 || data.recentActivities.length > 0 || (data.recurrences?.length ?? 0) > 0;
+  return data.team.length > 0 || data.recentActivities.length > 0 || (data.recurrences?.openCases ?? 0) > 0;
 }
 
 function errorMessage(error: unknown): string {

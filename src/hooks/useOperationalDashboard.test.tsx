@@ -8,9 +8,9 @@ const dashboard: OperationalDashboard = {
   date: "2026-09-30",
   generatedAt: "2026-09-30T12:00:00.000Z",
   capabilities: { team: true, recentActivities: true, recurrences: true },
-  team: [{ id: "tech-1", code: "TEC-001", fullName: "Ana Torres", specialty: null, status: "BUSY" }],
+  team: [{ id: "tech-1", code: "TEC-001", fullName: "Ana Torres", specialty: null, status: "BUSY", activeActivity: null }],
   recentActivities: [],
-  recurrences: [],
+  recurrences: { openCases: 0, highImpactOpenCases: 0, averageVisits: 0, priorityCase: null },
 };
 
 interface Deferred<T> {
@@ -38,7 +38,7 @@ afterEach(() => vi.useRealTimers());
 
 describe("useOperationalDashboard", () => {
   it("carga la jornada inicial y clasifica una respuesta sin contenido como vacia", async () => {
-    const api = apiMock(vi.fn(async () => ({ ...dashboard, team: [], recentActivities: [], recurrences: [] })));
+    const api = apiMock(vi.fn(async () => ({ ...dashboard, team: [], recentActivities: [], recurrences: { openCases: 0, highImpactOpenCases: 0, averageVisits: 0, priorityCase: null } })));
     const { result } = renderHook(() => useOperationalDashboard(api));
 
     expect(result.current.state.status).toBe("loading");
