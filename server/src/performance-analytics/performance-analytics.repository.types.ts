@@ -36,6 +36,7 @@ export interface PerformanceAnalyticsSnapshot {
   activities: PerformanceActivityFact[];
   recurrences: PerformanceRecurrenceFact[];
   officialResults: Prisma.ResultadoKPIGetPayload<object>[];
+  previousResults: Prisma.ResultadoKPIGetPayload<object>[];
 }
 
 export interface PerformanceAnalyticsRepository {

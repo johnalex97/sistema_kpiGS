@@ -49,12 +49,13 @@ export function createPerformanceAnalyticsRepository(database: PrismaClient): Pe
           ...(input.query.clientId ? { sucursal: { is: { clienteId: input.query.clientId, deletedAt: null, isActive: true, cliente: { is: { deletedAt: null, isActive: true } } } } } : {}),
           ...(input.query.serviceTypeId || input.query.orderStatus ? { orden: { is: { deletedAt: null, ...(input.query.serviceTypeId ? { tipoServicioId: input.query.serviceTypeId } : {}), ...(input.query.orderStatus ? { status: input.query.orderStatus } : {}) } } } : {}),
         };
-        const [technicians, orders, activities, recurrences, officialResults] = await Promise.all([
+        const [technicians, orders, activities, recurrences, officialResults, previousResults] = await Promise.all([
           transaction.tecnico.findMany({ where: technicianWhere, select: { id: true, code: true, fullName: true }, orderBy: [{ fullName: "asc" }, { id: "asc" }] }),
           transaction.ordenTrabajo.findMany({ where: scopedOrderWhere, select: { id: true, status: true, scheduledFor: true, endedAt: true, totalMinutes: true }, orderBy: [{ endedAt: "asc" }, { id: "asc" }] }),
           transaction.actividad.findMany({ where: activityWhere, select: { id: true, ordenId: true, startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, tecnicos: { select: { tecnicoId: true, participationPercentage: true } }, pausas: { select: { startedAt: true, endedAt: true } } }, orderBy: [{ endedAt: "asc" }, { id: "asc" }] }),
           transaction.reincidencia.findMany({ where: { status: "CLOSED", responsibility: "TECHNICAL_WORK", ordenOriginal: { is: scopedOrderWhere } }, select: { id: true, originalOrderId: true, tecnicos: { where: { affectsQuality: true }, select: { tecnicoId: true } } }, orderBy: { id: "asc" } }),
           transaction.resultadoKPI.findMany({ where: { isCurrent: true, periodStart: { gte: new Date(`${input.period.periodStart}T00:00:00.000Z`) }, periodEnd: { lte: new Date(`${input.period.periodEnd}T00:00:00.000Z`) }, ...(input.scope.kind === "TECHNICIAN" ? { tecnicoId: input.scope.technicianId } : {}), ...(input.query.technicianId ? { tecnicoId: input.query.technicianId } : {}) }, orderBy: [{ periodStart: "asc" }, { tecnicoId: "asc" }] }),
+          transaction.resultadoKPI.findMany({ where: { isCurrent: true, periodEnd: { lt: new Date(`${input.period.periodStart}T00:00:00.000Z`) }, ...(input.scope.kind === "TECHNICIAN" ? { tecnicoId: input.scope.technicianId } : {}), ...(input.query.technicianId ? { tecnicoId: input.query.technicianId } : {}) }, orderBy: [{ periodEnd: "desc" }, { tecnicoId: "asc" }] }),
         ]);
         const allowedIds = new Set(technicians.map(({ id }) => id));
         return {
@@ -71,6 +72,7 @@ export function createPerformanceAnalyticsRepository(database: PrismaClient): Pe
           }),
           recurrences: recurrences.map((recurrence) => ({ id: recurrence.id, originalOrderId: recurrence.originalOrderId, technicianIds: recurrence.tecnicos.map(({ tecnicoId }) => tecnicoId).filter((id) => allowedIds.has(id)) })).filter((recurrence) => recurrence.technicianIds.length > 0),
           officialResults,
+          previousResults,
         };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     },
