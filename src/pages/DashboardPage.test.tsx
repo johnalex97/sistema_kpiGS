@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DashboardPage } from "./DashboardPage";
 
@@ -17,5 +17,13 @@ describe("KPI dashboard", () => {
     expect(screen.getAllByText("Ana López")[0]).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /tendencia KPI/i })).toBeInTheDocument();
     expect(screen.getByText(/Oficial hasta/i)).toBeInTheDocument();
+  });
+
+  it("permite actualizar la jornada operativa manualmente", async () => {
+    const operationalApi = { getOperationalDashboard: vi.fn(async () => ({ date: "2026-09-30", generatedAt: "2026-09-30T12:00:00.000Z", capabilities: { team: false, recentActivities: false, recurrences: false }, team: [], recentActivities: [], recurrences: null })) };
+    render(<DashboardPage onGoRecurrence={() => undefined} onGoActivities={() => undefined} onGoTechnicians={() => undefined} operationalApi={operationalApi as never} />);
+    await screen.findByRole("button", { name: "Actualizar jornada" });
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar jornada" }));
+    expect(operationalApi.getOperationalDashboard).toHaveBeenCalledTimes(2);
   });
 });

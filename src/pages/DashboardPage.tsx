@@ -32,6 +32,7 @@ export function DashboardPage({ onGoRecurrence, onGoActivities, onGoTechnicians,
       <KpiScoreCards item={lead} />
       <section className="dashboard-grid kpi-analysis-grid"><KpiTrend items={data.items} /><KpiRanking items={data.items} /></section>
     </>}
+    <div className="dashboard-operational-actions"><button className="button button--ghost" type="button" onClick={() => void operational.refresh()}>Actualizar jornada</button>{operational.state.status === "loading" && operational.state.data && <span role="status">Actualizando jornada…</span>}</div>
     {operational.state.status === "loading" && !operational.state.data && <div className="kpi-message" role="status">Cargando jornada operativa…</div>}
     {operational.state.status === "error" && <div className="kpi-message kpi-message--error" role="alert">{operational.state.message}<button onClick={operational.retry}>Reintentar</button></div>}
     {operational.state.data && <>{operational.state.data.capabilities.team && <OperationalTeamBoard team={operational.state.data.team} generatedAt={operational.state.data.generatedAt} onGoTechnicians={onGoTechnicians} />}<section className="bottom-grid">{operational.state.data.capabilities.recentActivities && <RecentActivityTable activities={operational.state.data.recentActivities} onGoActivities={onGoActivities} />}{operational.state.data.capabilities.recurrences && <RecurrenceFocusPanel focus={operational.state.data.recurrences} onGoRecurrences={onGoRecurrence} />}</section></>}
