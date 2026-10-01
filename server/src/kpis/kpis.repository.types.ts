@@ -12,12 +12,14 @@ export interface KpiFactsRepository {
   loadWeeklySources(week: KpiWeek, scope: KpiAccessScope): Promise<WeeklySourceRows>;
 }
 
+export type KpiConfigurationRecord = Prisma.ConfiguracionKPIGetPayload<object>;
+
 export interface KpiManagementRepository {
   listTargets(week: KpiWeek): Promise<unknown[]>;
   createTarget(input: CreateTargetInput, actor: KpiActorContext): Promise<unknown>;
   updateTarget(targetId: string, input: UpdateTargetInput, actor: KpiActorContext): Promise<unknown>;
-  listConfigurations(): Promise<unknown[]>;
-  createConfiguration(input: CreateConfigurationInput, actor: KpiActorContext): Promise<unknown>;
+  listConfigurations(): Promise<KpiConfigurationRecord[]>;
+  createConfiguration(input: CreateConfigurationInput, actor: KpiActorContext): Promise<KpiConfigurationRecord>;
 }
 
 export type KpiRepository = KpiFactsRepository & KpiManagementRepository;

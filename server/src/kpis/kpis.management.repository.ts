@@ -128,6 +128,11 @@ export function createKpiManagementRepository(database: PrismaClient): KpiManage
             complianceWeight: input.complianceWeight,
             efficiencyWeight: input.efficiencyWeight,
             qualityWeight: input.qualityWeight,
+            qualityCriticalThreshold: input.qualityCriticalThreshold,
+            recurrenceCriticalThreshold: input.recurrenceCriticalThreshold,
+            productivityAttentionThreshold: input.productivityAttentionThreshold,
+            complianceAttentionThreshold: input.complianceAttentionThreshold,
+            efficiencyAttentionThreshold: input.efficiencyAttentionThreshold,
             ...(input.description !== undefined && { description: input.description }),
             createdById: actor.userId,
           } });
