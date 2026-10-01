@@ -1,12 +1,12 @@
 # Diagnóstico de arquitectura actual
 
-Fecha de actualización: 29 de septiembre de 2026.
+Fecha de actualización: 1 de octubre de 2026.
 
 ## Resumen
 
 Geek Solution · Service Control tiene un frontend SPA modular, una API Express,
 persistencia PostgreSQL mediante Prisma y autenticación con sesiones opacas. La
-SPA ya integra sesión, KPI y los flujos completos de Actividades, Técnicos,
+SPA ya integra sesión, KPI, análisis de rendimiento y los flujos completos de Actividades, Técnicos,
 Órdenes, Reincidencias y Clientes; la gestión global de Evidencias y la actividad reciente del
 Dashboard continúan en migración gradual.
 
@@ -21,7 +21,7 @@ src/
 ├── layouts/      # Menú y estructura visual
 ├── mocks/        # Datos simulados identificados
 ├── models/       # Contratos TypeScript
-├── pages/        # Resumen, Actividades, Técnicos, Órdenes, Reincidencias y Clientes
+├── pages/        # Resumen, Actividades, Técnicos, Análisis, Órdenes, Reincidencias y Clientes
 ├── routes/       # Mapeo de URLs y páginas
 ├── test/         # Configuración de pruebas
 ├── App.tsx       # Composición de sesión y shell
@@ -29,6 +29,7 @@ src/
 ├── orders-flow.integration.test.tsx
 ├── recurrences-flow.integration.test.tsx
 ├── clients-flow.integration.test.tsx
+├── performance-analytics-flow.integration.test.tsx
 ├── main.tsx      # Punto de entrada de React
 └── styles.css    # Estilos visuales existentes
 
@@ -54,7 +55,7 @@ server/
 ```
 
 El frontend dispone de cliente HTTP con cookies, recuperación de sesión y
-fronteras API tipadas para KPI, Actividades, Técnicos, Órdenes, Reincidencias y Clientes. El backend consume persistencia
+fronteras API tipadas para KPI, análisis de rendimiento, Actividades, Técnicos, Órdenes, Reincidencias y Clientes. El backend consume persistencia
 para autenticación, técnicos, clientes, sucursales, contactos, órdenes,
 actividades, evidencias, reincidencias y KPI.
 
@@ -68,6 +69,9 @@ actividades, evidencias, reincidencias y KPI.
 - Inicio, pausa, reanudación, finalización, cancelación y ajuste auditado.
 - Recuperación de red, permisos, eliminaciones y conflictos de versión.
 - Dashboard KPI real y administración según capacidades.
+- Análisis de rendimiento: periodos semanal, mensual y anual; comparativa
+  global o lectura propia; alertas explicables; detalle individual y CSV
+  efímero con el mismo alcance autorizado.
 - Técnicos persistentes: búsqueda, filtros y paginación en URL, detalle,
   ciclo laboral y selector de usuarios elegibles mediante API.
 - Reincidencias persistentes: resumen, filtros en URL, lista, detalle, flujo
@@ -82,7 +86,8 @@ actividades, evidencias, reincidencias y KPI.
 
 - Línea de jornada.
 - Gestión global de evidencias.
-- Reportes, configuración y notificaciones no implementados.
+- Reportes PDF/XLSX, envíos programados, auditoría global, configuración de
+  umbrales y notificaciones no implementados. El CSV de rendimiento sí opera.
 - Fechas, tiempos, costos y porcentajes mostrados.
 
 ## Datos mock identificados

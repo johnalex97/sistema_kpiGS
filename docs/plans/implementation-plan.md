@@ -213,7 +213,7 @@ Salida: indicadores reproducibles y explicables, verificados con
 
 Salida: interfaz existente conectada a datos persistentes.
 
-Estado: en progreso. Los subbloques de autenticación, KPI,
+Estado: en progreso. Los subbloques de autenticación, KPI, Análisis de rendimiento,
 Actividades/Jornada operativa, Técnicos, Órdenes, Reincidencias y Clientes están completados. Actividades consume
 catálogo, listado, detalle, búsquedas auxiliares y todas sus mutaciones desde la
 API, con URL, polling, control optimista y recuperación de conflictos. La
@@ -273,6 +273,25 @@ sin garantizar rollback del servidor. 401 conserva la expiración global.
 El marco modal común resuelve foco inicial, Tab/Shift+Tab, Escape seguro,
 aislamiento del fondo y restauración en detalle móvil y todos los formularios.
 Las pestañas admiten flechas/Home/End y los controles tienen al menos 44 × 44 px.
+
+Subbloque de Análisis de rendimiento: completado. `/analisis` consume el resumen
+y CSV autorizados de `/api/v1/performance-analytics`. Mantiene `granularity`
+semanal, mensual o anual y `periodStart` en URL; la API resuelve los límites con
+`KPI_TIME_ZONE`. `KPI_VIEW_ALL` habilita comparativa y promedio de equipo;
+`KPI_VIEW_OWN` sólo recibe la fila propia, sin ampliar el alcance mediante URL o
+CSV. La pantalla muestra resultados `OFFICIAL` o `PREVIEW`, alertas con su
+métrica de respaldo, carga, vacío, error reintentable, detalle accesible y
+tarjetas/detalle de pantalla completa en móvil. Los umbrales actuales son calidad
+crítica `< 60%`, reincidencia atribuible crítica `> 10%` y atención de dimensión
+`< 70%`; no son editables en esta fase.
+
+Matriz de Análisis: `npm test -- src/performance-analytics-flow.integration.test.tsx
+--pool=threads --maxWorkers=1 --fileParallelism=false`, build de frontend; desde
+`server/`, `npm test -- tests/performance-analytics`, persistencia PostgreSQL,
+typecheck, lint y build. La advertencia deprecada de `pg` sobre
+`client.query()` concurrente puede aparecer en la matriz PostgreSQL sin afectar
+el resultado. No cubre auditoría general, PDF/XLSX, envíos programados, umbrales
+editables ni Docker/VPS/HTTPS.
 
 Matriz de Clientes: focales de API, helpers, workspace, componentes, página y
 flujo integrado; suite frontend completa, lint y build. Desde `server/`:
