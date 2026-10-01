@@ -7,8 +7,8 @@
 | API | `npm test` | 59 archivos aprobados; 522 pruebas aprobadas y 1 omitida. |
 | API | `npm run lint`, `npm run typecheck`, `npm run build` | Aprobados. |
 | API | `DATABASE_URL=<URL_FICTICIA> npm run db:generate` | Cliente Prisma 7.9.1 generado correctamente. |
-| API | `npm test -- tests/deployment/api-container.test.ts` | 1 prueba aprobada; valida migración, exclusión de `.env`, Prisma de producción y puerto 4000. |
-| Frontend | `npm test -- src/deployment/frontend-container.test.ts` | 3 pruebas aprobadas. |
+| API | `npm test -- tests/deployment/api-container.test.ts` | 1 prueba aprobada; valida migración, exclusión de `.env`, Prisma de producción, configuración de Prisma en runtime, ausencia de build arg secreto y puerto 4000. |
+| Frontend | `npm test -- src/deployment/frontend-container.test.ts` | 3 pruebas aprobadas; valida URL de API, exclusión de `.env` y fallback SPA de Nginx. |
 | Frontend | `npx eslint vite.config.ts src/config/production-env.ts src/deployment/frontend-container.test.ts` | Aprobado. |
 | Frontend | `VITE_API_BASE_URL=https://api.example.com/api/v1 npm run build` | Aprobado. El bundle JavaScript es 643.23 kB (168.85 kB gzip); Vite informa una advertencia de tamaño, no un fallo. |
 
@@ -20,14 +20,14 @@ Este equipo no tiene el comando `docker`, por lo que no se produjeron imágenes 
 
 ```sh
 cd server
-docker build --build-arg DATABASE_URL='postgresql://docker:docker@localhost:5432/geek_solution?schema=public' -t geek-solution-api:verify .
+docker build -t geek-solution-api:verify .
 
 cd ..
 docker build --build-arg VITE_API_BASE_URL='https://api.example.com/api/v1' -t geek-solution-frontend:verify .
 docker image ls geek-solution-api:verify geek-solution-frontend:verify
 ```
 
-La URL de ejemplo para el build de API es ficticia; no usar valores de producción en argumentos de build. Registrar los tamaños mostrados por `docker image ls` en el registro operativo.
+La imagen de API usa internamente una URL ficticia solo para generar Prisma; no pasar valores de producción como argumentos de build. Registrar los tamaños mostrados por `docker image ls` en el registro operativo.
 
 ## Smoke test en Easypanel
 
@@ -38,4 +38,4 @@ La URL de ejemplo para el build de API es ficticia; no usar valores de producci�
 5. Iniciar sesión, registrar una actividad, consultar KPI y subir una evidencia de prueba; confirmar que no existen errores CORS ni cookies inseguras.
 6. Ejecutar una restauración de prueba conforme a `deploy/easypanel/postgres-backup.md` antes de operar con datos reales.
 
-La entrega queda lista para la configuración en Easypanel, con la construcción real de imágenes, la suite completa del frontend y el smoke test como verificaciones pendientes del entorno de despliegue.
+La entrega no está lista para producción hasta construir ambas imágenes, ejecutar la suite completa del frontend sin el límite local y completar este smoke test en Easypanel.

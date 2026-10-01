@@ -17,14 +17,17 @@ describe("frontend production container", () => {
   });
 
   it("passes the build argument to the static image and excludes environment files", async () => {
-    const [dockerfile, dockerignore] = await Promise.all([
+    const [dockerfile, dockerignore, nginxConfig] = await Promise.all([
       readFile(resolve(process.cwd(), "Dockerfile"), "utf8"),
       readFile(resolve(process.cwd(), ".dockerignore"), "utf8"),
+      readFile(resolve(process.cwd(), "nginx.conf"), "utf8"),
     ]);
 
     expect(dockerfile).toContain("ARG VITE_API_BASE_URL");
     expect(dockerfile).toContain("VITE_API_BASE_URL=${VITE_API_BASE_URL}");
     expect(dockerfile).toContain("nginx");
+    expect(dockerfile).toContain("nginx.conf");
+    expect(nginxConfig).toContain("try_files $uri $uri/ /index.html;");
     expect(dockerignore).toMatch(/^\.env/m);
   });
 });

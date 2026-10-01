@@ -14,7 +14,7 @@ Guarda el host interno, puerto, usuario y nombre de base únicamente en las vari
 ## 2. Crear el servicio API
 
 1. Conectar el repositorio y la rama `main`.
-2. Configurar `server` como ruta de construcción y usar su `Dockerfile` (si Easypanel pide una ruta relativa al repositorio, indicar `server/Dockerfile`).
+2. Configurar exactamente `server` como **Build Path** y `Dockerfile` como **Dockerfile**. Así el contexto de build no incluye la raíz del repositorio ni el frontend.
 3. Exponer el puerto interno `4000` y crear un dominio temporal HTTPS para la API.
 4. Añadir las variables de [api.env.example](api.env.example) como variables protegidas. Reemplazar todos los marcadores; no copiar credenciales reales a Git.
 5. Crear un volumen privado para evidencias y montarlo en `/data/evidences`. Antes del primer arranque, preparar esa raíz con permisos de dueño solamente (`0700`) mediante la terminal o tarea de inicialización de Easypanel. El proceso en producción exige una raíz existente, privada, legible y escribible.

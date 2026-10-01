@@ -14,7 +14,9 @@ describe("API production container", () => {
     };
     expect(dockerfile).toContain("node:20");
     expect(dockerfile).toContain("docker-entrypoint.sh");
-    expect(dockerfile).toContain("ARG DATABASE_URL=");
+    expect(dockerfile).not.toContain("ARG DATABASE_URL");
+    expect(dockerfile).toContain("ENV DATABASE_URL=postgresql://docker:docker@localhost:5432/geek_solution?schema=public");
+    expect(dockerfile).toContain("COPY --from=build /app/prisma.config.ts ./prisma.config.ts");
     expect(dockerfile).toContain("EXPOSE 4000");
     expect(entrypoint).toContain("set -e");
     expect(entrypoint).toContain("DATABASE_URL");
