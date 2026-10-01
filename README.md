@@ -540,6 +540,8 @@ La preparación para VPS usa tres servicios: PostgreSQL privado con volumen
 persistente, API Express/Prisma y frontend estático. La guía de configuración,
 variables protegidas, health checks, respaldos y cambio posterior a dominio
 propio está en [deploy/easypanel/README.md](deploy/easypanel/README.md).
+El registro de verificaciones locales y los pasos pendientes en VPS está en
+[docs/superpowers/verification/2026-10-01-easypanel-deployment.md](docs/superpowers/verification/2026-10-01-easypanel-deployment.md).
 
 En producción la API escucha el puerto `4000`, aplica exclusivamente
 `prisma migrate deploy` antes de iniciar y exige un volumen privado de
