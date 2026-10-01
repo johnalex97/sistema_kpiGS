@@ -24,10 +24,11 @@ function queryFromLocation(): PerformanceAnalyticsQuery {
   return { granularity, periodStart: params.get("periodStart") || mondayOfCurrentWeek() };
 }
 
-export function PerformanceAnalyticsPage({ api = createPerformanceAnalyticsApi() }: { api?: PerformanceAnalyticsApi }) {
+export function PerformanceAnalyticsPage({ api }: { api?: PerformanceAnalyticsApi }) {
   const { user } = useAuth();
+  const [defaultApi] = useState(() => createPerformanceAnalyticsApi());
   const [initialQuery] = useState(() => queryFromLocation());
-  const { state, query, setQuery, retry, exportCsv } = usePerformanceAnalytics(api, initialQuery);
+  const { state, query, setQuery, retry, exportCsv } = usePerformanceAnalytics(api ?? defaultApi, initialQuery);
   const [selected, setSelected] = useState<PerformanceTechnicianRow | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const showTeam = Boolean(user?.permissions.includes("KPI_VIEW_ALL"));

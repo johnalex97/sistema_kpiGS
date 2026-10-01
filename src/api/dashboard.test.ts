@@ -6,11 +6,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("operational dashboard API", () => {
   it("requests the dashboard without a date or with its encoded date and signal", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ data: {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return new Response(JSON.stringify({ data: {
       date: "2026-09-30", generatedAt: "2026-09-30T12:00:00.000Z",
       capabilities: { team: false, recentActivities: false, recurrences: false },
       team: [], recentActivities: [], recurrences: null,
-    } }), { status: 200 }));
+      } }), { status: 200 });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const api = createOperationalDashboardApi();
     const controller = new AbortController();

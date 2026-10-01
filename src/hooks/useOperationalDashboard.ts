@@ -44,12 +44,11 @@ export function useOperationalDashboard(
   const generationRef = useRef(0);
   const dataRef = useRef<OperationalDashboard | undefined>(undefined);
 
-  const load = useCallback(async (): Promise<void> => {
+  const fetchDashboard = useCallback(async (): Promise<void> => {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
     const generation = ++generationRef.current;
-    setState((current) => ({ status: "loading", ...(current.data ? { data: current.data } : {}) }));
     try {
       const data = await api.getOperationalDashboard(date, controller.signal);
       if (generation !== generationRef.current || controller.signal.aborted) return;
@@ -67,17 +66,28 @@ export function useOperationalDashboard(
     }
   }, [api, date]);
 
+  const refresh = useCallback(async () => {
+    setState((current) => ({ status: "loading", ...(current.data ? { data: current.data } : {}) }));
+    await fetchDashboard();
+  }, [fetchDashboard]);
+
   useEffect(() => {
-    void load();
-  }, [load]);
+    let disposed = false;
+    queueMicrotask(() => {
+      if (!disposed) void fetchDashboard();
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [fetchDashboard]);
 
   useEffect(() => {
     const poll = () => {
-      if (document.visibilityState === "visible") void load();
+      if (document.visibilityState === "visible") void refresh();
     };
     const timer = window.setInterval(poll, pollIntervalMs);
     const handleVisibility = () => {
-      if (document.visibilityState === "visible") void load();
+      if (document.visibilityState === "visible") void refresh();
       else {
         generationRef.current += 1;
         controllerRef.current?.abort();
@@ -88,18 +98,17 @@ export function useOperationalDashboard(
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [load, pollIntervalMs]);
+  }, [pollIntervalMs, refresh]);
 
   useEffect(() => () => {
     generationRef.current += 1;
     controllerRef.current?.abort();
   }, []);
 
-  const refresh = useCallback(async () => {
-    await load();
-  }, [load]);
-
   const setDate = useCallback((nextDate?: string) => {
+    generationRef.current += 1;
+    controllerRef.current?.abort();
+    setState((current) => ({ status: "loading", ...(current.data ? { data: current.data } : {}) }));
     setDateValue(nextDate);
   }, []);
 
