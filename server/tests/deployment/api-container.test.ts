@@ -15,6 +15,7 @@ describe("API production container", () => {
     expect(dockerfile).toContain("node:20");
     expect(dockerfile).toContain("docker-entrypoint.sh");
     expect(dockerfile).toContain("ARG DATABASE_URL=");
+    expect(dockerfile).toContain("EXPOSE 4000");
     expect(entrypoint).toContain("set -e");
     expect(entrypoint).toContain("DATABASE_URL");
     expect(entrypoint).toContain("./node_modules/.bin/prisma migrate deploy");
