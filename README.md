@@ -8,8 +8,8 @@ cumplimiento, eficiencia y calidad.
 
 El repositorio contiene un frontend modular conectado gradualmente a una API
 Express independiente, persistencia PostgreSQL administrada mediante Prisma y
-autenticación con sesiones revocables. La sesión, el dashboard KPI y los módulos
-de Actividades, Técnicos, Órdenes, Reincidencias y Clientes ya consumen la API real. La jornada
+autenticación con sesiones revocables. La sesión, el dashboard KPI, el análisis de
+rendimiento y los módulos de Actividades, Técnicos, Órdenes, Reincidencias y Clientes ya consumen la API real. La jornada
 visual del resumen general todavía usa datos de demostración mientras avanza la
 fase 12.
 
@@ -616,13 +616,55 @@ Las vistas utilizan URLs reales mediante una capa pequeña sobre la History API:
 - `/resumen`
 - `/actividades`
 - `/tecnicos`
+- `/analisis`
 - `/ordenes`
 - `/reincidencias`
 - `/clientes`
 
 React Router fue evaluado durante la Etapa 2, pero las versiones disponibles
 presentaban vulnerabilidades altas en la auditoría de dependencias. Para estas
-seis rutas se prefirió una implementación local pequeña y probada.
+siete rutas se prefirió una implementación local pequeña y probada.
+
+## Análisis de rendimiento técnico
+
+`/analisis` presenta una lectura autorizada de productividad, cumplimiento,
+eficiencia y calidad. La pantalla consume exclusivamente los endpoints:
+
+```text
+GET /api/v1/performance-analytics/summary
+GET /api/v1/performance-analytics/export.csv
+```
+
+Los filtros públicos son `granularity=week|month|year`, `periodStart=YYYY-MM-DD`
+y, para vistas globales, `clientId`, `branchId`, `serviceTypeId` y `orderStatus`.
+El servidor resuelve los límites de semana, mes y año con `KPI_TIME_ZONE`; no se
+debe calcular ni reinterpretar periodos desde el navegador.
+
+`KPI_VIEW_ALL` permite comparar las filas autorizadas y ver el promedio del
+equipo. `KPI_VIEW_OWN` limita la respuesta, el CSV y la pantalla a la lectura
+propia: la URL no acepta un técnico elegido por el navegador. Una respuesta sin
+filtros y con resultado consolidado es `OFFICIAL`; cualquier subconjunto
+operativo o hecho aún no consolidado se identifica como `PREVIEW`.
+
+Las alertas se explican junto a su dato de respaldo: calidad crítica bajo `60%`,
+tasa de reincidencia atribuible superior a `10%`, y atención cuando
+productividad, cumplimiento o eficiencia están bajo `70%`. El CSV se genera en
+memoria para el mismo alcance autorizado de la consulta; no queda almacenado en
+el servidor.
+
+Verificación focal:
+
+```powershell
+# raíz
+npm test -- src/performance-analytics-flow.integration.test.tsx --pool=threads --maxWorkers=1 --fileParallelism=false
+npm run build
+
+# server/
+npm test -- tests/performance-analytics
+npm run test:db -- tests/database/performance-analytics-persistence.test.ts
+npm run typecheck
+npm run build
+```
 
 ## Seguridad y limitaciones
 
@@ -632,9 +674,9 @@ sesiones opacas persistidas, permisos y auditoría sin secretos.
 
 La SPA restaura sesiones con `GET /api/v1/auth/me`, usa la cookie opaca
 `gs_session` y obliga el cambio de contraseña provisional. Dashboard KPI,
-Actividades, Técnicos, Órdenes, Reincidencias y Clientes aplican permisos y alcance desde
-la API. La gestión global de Evidencias, los
-reportes/exportaciones y el despliegue HTTPS siguen pendientes; también quedan
+Actividades, Técnicos, Órdenes, Reincidencias, Clientes y Análisis aplican permisos y alcance desde
+la API. La exportación CSV de rendimiento está disponible, pero la gestión global de Evidencias,
+reportes con PDF/XLSX, envíos programados, auditoría general y el despliegue HTTPS siguen pendientes; también quedan
 los mocks del Dashboard indicados arriba. No utilices el sistema para
 información sensible o datos personales reales hasta completar esas fases.
 

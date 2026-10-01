@@ -3,7 +3,7 @@ import { calculateWeeklyKpi } from "./kpis.calculator.js";
 import { buildWeeklyFacts } from "./kpis.facts.js";
 import { resolveWeek } from "./kpis.period.js";
 import { createKpiReadRepository } from "./kpis.read.repository.js";
-import type { CloseWeekInput, CloseWeekResult, KpiCloseRepository } from "./kpis.repository.types.js";
+import type { CloseWeekInput, CloseWeekResult, KpiAlertThresholds, KpiCloseRepository } from "./kpis.repository.types.js";
 
 const txOptions = { isolationLevel: Prisma.TransactionIsolationLevel.Serializable } as const;
 const dateOnly = (value: string) => new Date(`${value}T00:00:00.000Z`);
@@ -31,6 +31,19 @@ function sameSnapshot(current: { [key: string]: unknown }, data: Record<string, 
     if (left === null || right === null) { if (left !== right) return false; }
     else if (!new Prisma.Decimal(String(left)).equals(new Prisma.Decimal(String(right)))) return false;
   }
+  const currentMetadata = current.calculationMetadata as Record<string, unknown> | null;
+  const nextMetadata = data.calculationMetadata as Record<string, unknown> | null;
+  const currentThresholds = currentMetadata?.alertThresholds as Record<string, unknown> | undefined;
+  const nextThresholds = nextMetadata?.alertThresholds as Record<string, unknown> | undefined;
+  const thresholdKeys: Array<keyof KpiAlertThresholds> = [
+    "qualityCriticalThreshold", "recurrenceCriticalThreshold", "productivityAttentionThreshold",
+    "complianceAttentionThreshold", "efficiencyAttentionThreshold",
+  ];
+  if (currentMetadata?.alertThresholdSource !== "SNAPSHOT" || nextMetadata?.alertThresholdSource !== "SNAPSHOT") return false;
+  if (!currentThresholds || !nextThresholds || thresholdKeys.some((key) => {
+    const left = currentThresholds[key]; const right = nextThresholds[key];
+    return left === undefined || right === undefined || !new Prisma.Decimal(String(left)).equals(new Prisma.Decimal(String(right)));
+  })) return false;
   return current.appliedTarget === data.appliedTarget
     && current.registeredMinutes === data.registeredMinutes
     && current.productiveMinutes === data.productiveMinutes
@@ -49,6 +62,13 @@ export function createKpiCloseRepository(database: PrismaClient, timeZone: strin
         where: { isActive: true, validFrom: { lte: periodStart }, OR: [{ validTo: null }, { validTo: { gte: periodStart } }] },
         orderBy: [{ validFrom: "desc" }, { version: "desc" }],
       });
+      const alertThresholds: KpiAlertThresholds = {
+        qualityCriticalThreshold: Number(configuration.qualityCriticalThreshold.toFixed(2)),
+        recurrenceCriticalThreshold: Number(configuration.recurrenceCriticalThreshold.toFixed(2)),
+        productivityAttentionThreshold: Number(configuration.productivityAttentionThreshold.toFixed(2)),
+        complianceAttentionThreshold: Number(configuration.complianceAttentionThreshold.toFixed(2)),
+        efficiencyAttentionThreshold: Number(configuration.efficiencyAttentionThreshold.toFixed(2)),
+      };
       const facts = buildWeeklyFacts(rows);
       const warnings = rows.technicians.filter(({ targetJobs }) => targetJobs === null)
         .map(({ id }) => ({ code: "MISSING_TARGET" as const, technicianId: id }));
@@ -76,6 +96,12 @@ export function createKpiCloseRepository(database: PrismaClient, timeZone: strin
           qualityEffectiveWeight: calculation.dimensions.quality.effectiveWeight,
           complianceApplicability: calculation.dimensions.compliance.applicability,
           qualityApplicability: calculation.dimensions.quality.applicability,
+          calculationMetadata: {
+            orderIds: rows.orders.map(({ id }) => id),
+            recurrenceIds: rows.recurrences.map(({ id }) => id),
+            alertThresholds: { ...alertThresholds },
+            alertThresholdSource: "SNAPSHOT",
+          },
         } };
       });
       if (currentRows.length === snapshots.length && snapshots.every(({ technician, data }) => {
@@ -95,10 +121,6 @@ export function createKpiCloseRepository(database: PrismaClient, timeZone: strin
           ...(input.reason !== undefined && { calculationReason: input.reason }),
           calculatedById: input.actor.userId,
           ...(previous !== undefined && { previousResultId: previous.id }),
-          calculationMetadata: {
-            orderIds: rows.orders.map(({ id }) => id),
-            recurrenceIds: rows.recurrences.map(({ id }) => id),
-          },
         } });
         await tx.auditoria.create({ data: {
           userId: input.actor.userId,

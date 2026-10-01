@@ -18,6 +18,7 @@ import { createKpiRouter } from "../kpis/kpis.routes.js";
 import { createDashboardReadRepository } from "../dashboard/dashboard.repository.js";
 import { createDashboardRouter } from "../dashboard/dashboard.routes.js";
 import { createDashboardService } from "../dashboard/dashboard.service.js";
+import { createPerformanceAnalyticsRouter } from "../performance-analytics/performance-analytics.routes.js";
 
 export function createApiRouter(
   env: Environment,
@@ -51,6 +52,7 @@ export function createApiRouter(
   router.use("/orders", createOrdersRouter(env, database, authService));
   router.use("/kpis", createKpiRouter(env, database, authService, kpiCloseRepository));
   router.use("/dashboard", createDashboardRouter(authService, dashboardService));
+  router.use("/performance-analytics", createPerformanceAnalyticsRouter(env, database, authService));
   router.use(createActivitiesRouter(env, database, authService));
   router.use("/recurrences", createRecurrencesRouter(
     env,

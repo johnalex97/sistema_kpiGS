@@ -569,6 +569,11 @@ describe("database constraints", () => {
           complianceWeight: "0.3000",
           efficiencyWeight: "0.3000",
           qualityWeight: "0.3000",
+          qualityCriticalThreshold: "60.00",
+          recurrenceCriticalThreshold: "10.00",
+          productivityAttentionThreshold: "70.00",
+          complianceAttentionThreshold: "70.00",
+          efficiencyAttentionThreshold: "70.00",
         },
       }),
     ).rejects.toThrow();

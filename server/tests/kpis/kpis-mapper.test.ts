@@ -16,9 +16,22 @@ describe("KPI public mapper", () => {
       productivityEffectiveWeight: new Prisma.Decimal(".2"), complianceEffectiveWeight: new Prisma.Decimal(".25"), efficiencyEffectiveWeight: new Prisma.Decimal(".25"), qualityEffectiveWeight: new Prisma.Decimal(".3"),
       complianceApplicability: "APPLICABLE", qualityApplicability: "APPLICABLE", revision: 1, isCurrent: true,
       calculationType: "OFFICIAL", calculationReason: null, calculatedById: null, previousResultId: null,
-      calculationMetadata: { databaseUrl: "secret", orderIds: ["order"] }, calculatedAt: new Date("2026-08-31T01:00:00.000Z"),
+      calculationMetadata: {
+        databaseUrl: "secret", orderIds: ["order"],
+        alertThresholds: {
+          qualityCriticalThreshold: 60, recurrenceCriticalThreshold: 10,
+          productivityAttentionThreshold: 70, complianceAttentionThreshold: 70,
+          efficiencyAttentionThreshold: 70,
+        },
+        alertThresholdSource: "SNAPSHOT",
+      }, calculatedAt: new Date("2026-08-31T01:00:00.000Z"),
     });
     expect(mapped).toMatchObject({ periodStart: "2026-08-24", completedCredits: "8.5000", overallScore: "87.50" });
+    expect(mapped).toMatchObject({ alertThresholds: {
+      qualityCriticalThreshold: "60.00", recurrenceCriticalThreshold: "10.00",
+      productivityAttentionThreshold: "70.00", complianceAttentionThreshold: "70.00",
+      efficiencyAttentionThreshold: "70.00",
+    }, alertThresholdSource: "SNAPSHOT" });
     expect(mapped).not.toHaveProperty("configuracionId");
     expect(mapped).not.toHaveProperty("calculationMetadata.databaseUrl");
   });

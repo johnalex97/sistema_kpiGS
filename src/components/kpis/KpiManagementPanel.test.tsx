@@ -20,4 +20,14 @@ describe("KPI management panel", () => {
     expect(screen.getByText("Total: 90%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar ponderaciones" })).toBeDisabled();
   });
+
+  it("shows default alert limits and serializes them with two decimals", async () => {
+    const user = userEvent.setup(); const createConfiguration = vi.fn(async () => ({}));
+    render(<KpiManagementPanel api={{ createConfiguration } as never} periodStart="2026-08-24" capabilities={{ manageConfiguration: true }} onChanged={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: /Administrar KPI/i })); await user.click(screen.getByRole("button", { name: /Ponderaciones/i }));
+    expect(screen.getByLabelText("Calidad mínima (%)")).toHaveValue(60);
+    expect(screen.getByLabelText("Reincidencia máxima (%)")).toHaveValue(10);
+    await user.click(screen.getByRole("button", { name: "Guardar ponderaciones" }));
+    expect(createConfiguration).toHaveBeenCalledWith(expect.objectContaining({ qualityCriticalThreshold: "60.00", recurrenceCriticalThreshold: "10.00", productivityAttentionThreshold: "70.00", complianceAttentionThreshold: "70.00", efficiencyAttentionThreshold: "70.00" }));
+  });
 });

@@ -30,6 +30,11 @@ describe("KPI management schemas", () => {
       complianceWeight: "0.2500",
       efficiencyWeight: "0.2500",
       qualityWeight: "0.3000",
+      qualityCriticalThreshold: "60.00",
+      recurrenceCriticalThreshold: "10.00",
+      productivityAttentionThreshold: "70.00",
+      complianceAttentionThreshold: "70.00",
+      efficiencyAttentionThreshold: "70.00",
       description: "Mayor peso para calidad",
     }).success).toBe(true);
   });
@@ -41,6 +46,19 @@ describe("KPI management schemas", () => {
     };
     expect(schemas.createConfigurationSchema.safeParse(base).success).toBe(false);
     expect(schemas.createConfigurationSchema.safeParse({ ...base, validFrom: "2026-08-31", productivityWeight: "1.1000" }).success).toBe(false);
+  });
+
+  it("requires bounded alert thresholds with at most two decimals", () => {
+    const base = {
+      validFrom: "2026-08-31", productivityWeight: "0.2000", complianceWeight: "0.2500", efficiencyWeight: "0.2500", qualityWeight: "0.3000",
+      qualityCriticalThreshold: "60.00", recurrenceCriticalThreshold: "10.00", productivityAttentionThreshold: "70.00", complianceAttentionThreshold: "70.00", efficiencyAttentionThreshold: "70.00",
+    };
+    expect(schemas.createConfigurationSchema.safeParse(base).success).toBe(true);
+    expect(schemas.createConfigurationSchema.safeParse({ ...base, qualityCriticalThreshold: "-0.01" }).success).toBe(false);
+    expect(schemas.createConfigurationSchema.safeParse({ ...base, recurrenceCriticalThreshold: "100.01" }).success).toBe(false);
+    expect(schemas.createConfigurationSchema.safeParse({ ...base, productivityAttentionThreshold: "70.001" }).success).toBe(false);
+    const missing = { ...base, efficiencyAttentionThreshold: undefined };
+    expect(schemas.createConfigurationSchema.safeParse(missing).success).toBe(false);
   });
 
   it("requires a meaningful recalculation reason", () => {

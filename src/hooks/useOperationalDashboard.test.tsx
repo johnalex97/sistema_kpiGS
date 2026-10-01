@@ -81,6 +81,7 @@ describe("useOperationalDashboard", () => {
       .mockImplementationOnce(() => second.promise);
     const api = apiMock(getOperationalDashboard);
     const { result, unmount } = renderHook(() => useOperationalDashboard(api));
+    await waitFor(() => expect(getOperationalDashboard).toHaveBeenCalledTimes(1));
     const firstSignal = getOperationalDashboard.mock.calls[0]?.[1] as AbortSignal;
 
     act(() => result.current.setDate("2026-10-01"));
@@ -98,7 +99,11 @@ describe("useOperationalDashboard", () => {
     vi.useFakeTimers();
     let visibility: DocumentVisibilityState = "visible";
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
-    const getOperationalDashboard = vi.fn(async (_date?: string, _signal?: AbortSignal) => dashboard);
+    const getOperationalDashboard = vi.fn(async (date?: string, signal?: AbortSignal) => {
+      void date;
+      void signal;
+      return dashboard;
+    });
     const api = apiMock(getOperationalDashboard);
     const { result } = renderHook(() => useOperationalDashboard(api));
     await flushPromises();

@@ -2,9 +2,25 @@ import type { KpiResultRecord } from "./kpis.repository.types.js";
 
 const fixed = (value: { toFixed(digits: number): string } | null, digits: number) => value === null ? null : value.toFixed(digits);
 
+const thresholdKeys = [
+  "qualityCriticalThreshold", "recurrenceCriticalThreshold", "productivityAttentionThreshold",
+  "complianceAttentionThreshold", "efficiencyAttentionThreshold",
+] as const;
+
+function mapAlertThresholds(metadata: Record<string, unknown>) {
+  if (metadata.alertThresholdSource !== "SNAPSHOT" || typeof metadata.alertThresholds !== "object" || metadata.alertThresholds === null) return null;
+  const thresholds = metadata.alertThresholds as Record<string, unknown>;
+  const mapped = Object.fromEntries(thresholdKeys.map((key) => {
+    const value = Number(thresholds[key]);
+    return [key, Number.isFinite(value) ? value.toFixed(2) : null];
+  }));
+  return Object.values(mapped).every((value) => value !== null) ? mapped : null;
+}
+
 export function mapKpiResult(result: KpiResultRecord) {
   const metadata = typeof result.calculationMetadata === "object" && result.calculationMetadata !== null
     ? result.calculationMetadata as Record<string, unknown> : {};
+  const alertThresholds = mapAlertThresholds(metadata);
   return {
     id: result.id,
     technicianId: result.tecnicoId,
@@ -40,5 +56,6 @@ export function mapKpiResult(result: KpiResultRecord) {
       orderIds: Array.isArray(metadata.orderIds) ? metadata.orderIds : [],
       recurrenceIds: Array.isArray(metadata.recurrenceIds) ? metadata.recurrenceIds : [],
     },
+    ...(alertThresholds !== null && { alertThresholds, alertThresholdSource: "SNAPSHOT" as const }),
   };
 }

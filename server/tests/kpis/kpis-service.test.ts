@@ -56,10 +56,19 @@ describe("KPI preview service", () => {
       listConfigurations: vi.fn(async () => []),
     };
     const service = createKpiService(repository, "America/Tegucigalpa");
+    const configuration = {
+      validFrom: "2026-08-31", productivityWeight: "0.2000", complianceWeight: "0.2500",
+      efficiencyWeight: "0.2500", qualityWeight: "0.3000", qualityCriticalThreshold: "60.00",
+      recurrenceCriticalThreshold: "10.00", productivityAttentionThreshold: "70.00",
+      complianceAttentionThreshold: "70.00", efficiencyAttentionThreshold: "70.00",
+    };
     await service.listConfigurations({
       userId: "admin", technicianId: null, permissions: ["KPI_MANAGE_CONFIGURATION"], requestId: "request",
     });
     await expect(service.listConfigurations({
+      userId: "tech", technicianId: "a", permissions: ["KPI_VIEW_OWN"], requestId: "request",
+    })).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+    await expect(service.createConfiguration(configuration, {
       userId: "tech", technicianId: "a", permissions: ["KPI_VIEW_OWN"], requestId: "request",
     })).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
   });
