@@ -25,6 +25,7 @@ describe("performance analytics repository", () => {
       }]) },
       reincidencia: { findMany: vi.fn(async () => [{ id: "rec-1", originalOrderId: "order-1", tecnicos: [{ tecnicoId: "tech-a" }] }]) },
       resultadoKPI: { findMany: vi.fn(async () => []) },
+      configuracionKPI: { findFirst: vi.fn(async () => null) },
     };
     const database = {
       $transaction: vi.fn(async (operation: (client: typeof transaction) => unknown, options: unknown) => {
@@ -50,6 +51,7 @@ describe("performance analytics repository", () => {
     const transaction = {
       tecnico: { findMany: vi.fn(async () => []) }, ordenTrabajo: { findMany: vi.fn(async () => []) },
       actividad: { findMany: vi.fn(async () => []) }, reincidencia: { findMany: vi.fn(async () => []) }, resultadoKPI: { findMany: vi.fn(async () => []) },
+      configuracionKPI: { findFirst: vi.fn(async () => null) },
     };
     const repository = createPerformanceAnalyticsRepository({
       $transaction: vi.fn(async (operation: (client: typeof transaction) => unknown) => operation(transaction)),

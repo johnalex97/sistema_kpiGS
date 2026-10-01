@@ -38,6 +38,13 @@ export interface PerformanceAnalyticsSnapshot {
   recurrences: PerformanceRecurrenceFact[];
   officialResults: Prisma.ResultadoKPIGetPayload<object>[];
   previousResults: Prisma.ResultadoKPIGetPayload<object>[];
+  previewThresholds: {
+    qualityCriticalThreshold: number;
+    recurrenceCriticalThreshold: number;
+    productivityAttentionThreshold: number;
+    complianceAttentionThreshold: number;
+    efficiencyAttentionThreshold: number;
+  } | null;
 }
 
 export interface PerformanceAnalyticsRepository {

@@ -1,6 +1,6 @@
 import { ApiError } from "../utils/api-error.js";
 import { consolidateOfficialWeeks } from "../kpis/kpis.consolidation.js";
-import { createPerformanceAlerts, type PerformanceAlert } from "./performance-analytics.alerts.js";
+import { createPerformanceAlerts, type PerformanceAlert, type PerformanceAlertThresholds } from "./performance-analytics.alerts.js";
 import { resolvePerformancePeriod } from "./performance-analytics.period.js";
 import type { PerformanceAnalyticsRepository } from "./performance-analytics.repository.types.js";
 import type { PerformanceAccessScope, PerformanceActorContext, PerformanceAnalyticsQuery } from "./performance-analytics.types.js";
@@ -57,6 +57,17 @@ function expectedOfficialWeekStarts(period: { granularity: string; periodStart: 
     cursor.setUTCDate(cursor.getUTCDate() + 7);
   }
   return weeks;
+}
+
+function snapshotThresholds(result: { calculationMetadata: unknown } | undefined): PerformanceAlertThresholds | null {
+  if (!result || typeof result.calculationMetadata !== "object" || result.calculationMetadata === null) return null;
+  const metadata = result.calculationMetadata as Record<string, unknown>;
+  if (metadata.alertThresholdSource !== "SNAPSHOT" || typeof metadata.alertThresholds !== "object" || metadata.alertThresholds === null) return null;
+  const raw = metadata.alertThresholds as Record<string, unknown>;
+  const keys = ["qualityCriticalThreshold", "recurrenceCriticalThreshold", "productivityAttentionThreshold", "complianceAttentionThreshold", "efficiencyAttentionThreshold"] as const;
+  const values = keys.map((key) => Number(raw[key]));
+  if (values.some((value) => !Number.isFinite(value))) return null;
+  return Object.fromEntries(keys.map((key, index) => [key, values[index]!])) as unknown as PerformanceAlertThresholds;
 }
 
 export function createPerformanceAnalyticsService(repository: PerformanceAnalyticsRepository, timeZone: string, now: () => Date = () => new Date()) {
@@ -116,7 +127,8 @@ export function createPerformanceAnalyticsService(repository: PerformanceAnalyti
           attributableRecurrenceCredits: Number(result.attributableRecurrenceCredits),
           coverage: result.coverage,
         } : undefined;
-        return { technicianId: technician.id, code: technician.code, fullName: technician.fullName, completedJobs, registeredMinutes, productiveMinutes, pausedMinutes, attributableRecurrences, recurrenceRate, overallScore, comparison, ...(officialFacts ? { officialFacts } : {}), dimensions, alerts: createPerformanceAlerts({ dimensions, applicability: { productivity: dimensions.productivity !== null, compliance: dimensions.compliance !== null, efficiency: dimensions.efficiency !== null, quality: dimensions.quality !== null }, recurrenceRate, hasGoal: Boolean(result), hasData: activities.length > 0 || orders.length > 0 }) };
+        const officialThresholds = snapshotThresholds(snapshot.officialResults.find((item) => item.tecnicoId === technician.id));
+        return { technicianId: technician.id, code: technician.code, fullName: technician.fullName, completedJobs, registeredMinutes, productiveMinutes, pausedMinutes, attributableRecurrences, recurrenceRate, overallScore, comparison, ...(officialFacts ? { officialFacts } : {}), dimensions, alerts: createPerformanceAlerts({ dimensions, applicability: { productivity: dimensions.productivity !== null, compliance: dimensions.compliance !== null, efficiency: dimensions.efficiency !== null, quality: dimensions.quality !== null }, recurrenceRate, hasGoal: Boolean(result), hasData: activities.length > 0 || orders.length > 0, thresholds: officialThresholds ?? snapshot.previewThresholds }) };
       });
       const scores = rows.map((row) => row.overallScore).filter((value): value is number => value !== null);
       return { status: officialCompatible && !consolidated?.warnings.length && scores.length > 0 ? "OFFICIAL" : "PREVIEW", period: { granularity: period.granularity, periodStart: period.periodStart, periodEnd: period.periodEnd }, teamAverage: scope.kind === "GLOBAL" && scores.length > 0 ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null, rows, generatedAt: now().toISOString() };

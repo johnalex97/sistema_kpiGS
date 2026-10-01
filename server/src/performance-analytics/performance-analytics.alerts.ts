@@ -6,20 +6,32 @@ export interface PerformanceAlert {
   message: string;
 }
 
+export interface PerformanceAlertThresholds {
+  qualityCriticalThreshold: number;
+  recurrenceCriticalThreshold: number;
+  productivityAttentionThreshold: number;
+  complianceAttentionThreshold: number;
+  efficiencyAttentionThreshold: number;
+}
+
 interface AlertInput {
   dimensions: Record<"productivity" | "compliance" | "efficiency" | "quality", number | null>;
   applicability: Record<"productivity" | "compliance" | "efficiency" | "quality", boolean>;
   recurrenceRate: number | null;
   hasGoal: boolean;
   hasData: boolean;
+  thresholds: PerformanceAlertThresholds | null;
 }
 
 export function createPerformanceAlerts(input: AlertInput): PerformanceAlert[] {
   const alerts: PerformanceAlert[] = [];
-  if (input.applicability.quality && input.dimensions.quality !== null && input.dimensions.quality < 60) alerts.push({ level: "CRITICAL", code: "QUALITY_LOW", message: `Calidad crítica: ${input.dimensions.quality.toFixed(2)}%.` });
-  if (input.recurrenceRate !== null && input.recurrenceRate > 10) alerts.push({ level: "CRITICAL", code: "RECURRENCE_RATE_HIGH", message: `Reincidencia atribuible crítica: ${input.recurrenceRate.toFixed(2)}%.` });
-  for (const [dimension, code] of [["productivity", "PRODUCTIVITY_LOW"], ["compliance", "COMPLIANCE_LOW"], ["efficiency", "EFFICIENCY_LOW"]] as const) {
-    if (input.applicability[dimension] && input.dimensions[dimension] !== null && input.dimensions[dimension]! < 70) alerts.push({ level: "ATTENTION", code, message: `${dimension} requiere atención: ${input.dimensions[dimension]!.toFixed(2)}%.` });
+  if (input.thresholds) {
+    const { thresholds } = input;
+    if (input.applicability.quality && input.dimensions.quality !== null && input.dimensions.quality < thresholds.qualityCriticalThreshold) alerts.push({ level: "CRITICAL", code: "QUALITY_LOW", message: `Calidad crítica: ${input.dimensions.quality.toFixed(2)}% (límite: ${thresholds.qualityCriticalThreshold.toFixed(2)}%).` });
+    if (input.recurrenceRate !== null && input.recurrenceRate > thresholds.recurrenceCriticalThreshold) alerts.push({ level: "CRITICAL", code: "RECURRENCE_RATE_HIGH", message: `Reincidencia atribuible crítica: ${input.recurrenceRate.toFixed(2)}% (límite: ${thresholds.recurrenceCriticalThreshold.toFixed(2)}%).` });
+    for (const [dimension, code, limit] of [["productivity", "PRODUCTIVITY_LOW", thresholds.productivityAttentionThreshold], ["compliance", "COMPLIANCE_LOW", thresholds.complianceAttentionThreshold], ["efficiency", "EFFICIENCY_LOW", thresholds.efficiencyAttentionThreshold]] as const) {
+      if (input.applicability[dimension] && input.dimensions[dimension] !== null && input.dimensions[dimension]! < limit) alerts.push({ level: "ATTENTION", code, message: `${dimension} requiere atención: ${input.dimensions[dimension]!.toFixed(2)}% (límite: ${limit.toFixed(2)}%).` });
+    }
   }
   if (!input.hasGoal) alerts.push({ level: "INFO", code: "MISSING_GOAL", message: "No hay meta aplicable para evaluar productividad." });
   if (!input.hasData) alerts.push({ level: "INFO", code: "INSUFFICIENT_DATA", message: "No hay datos operativos suficientes para evaluar el periodo." });

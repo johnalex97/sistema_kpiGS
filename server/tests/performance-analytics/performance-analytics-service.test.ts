@@ -52,6 +52,18 @@ describe("performance analytics service", () => {
     expect(result.rows[0]?.alerts.some(({ code }) => code === "EFFICIENCY_LOW")).toBe(false);
   });
 
+  it("uses the effective preview limits when no official result exists", async () => {
+    const repository = { readSnapshot: vi.fn(async () => ({ ...snapshot, previewThresholds: {
+      qualityCriticalThreshold: 60, recurrenceCriticalThreshold: 10, productivityAttentionThreshold: 70,
+      complianceAttentionThreshold: 70, efficiencyAttentionThreshold: 80,
+    } })) };
+    const service = createPerformanceAnalyticsService(repository as never, "America/Tegucigalpa");
+    const result = await service.getSummary({ granularity: "WEEK", periodStart: "2026-05-04", clientId: "a12f3b45-c678-4d90-8123-456789abcdef" }, { userId: "user", technicianId: "tech-a", permissions: ["KPI_VIEW_OWN"], requestId: "request" });
+
+    expect(result.rows[0]?.alerts.map(({ code }) => code)).toContain("EFFICIENCY_LOW");
+    expect(result.rows[0]?.alerts.find(({ code }) => code === "EFFICIENCY_LOW")?.message).toContain("límite: 80.00%");
+  });
+
   it("counts a completed order assigned to the technician even when its activity predates the period", async () => {
     const repository = { readSnapshot: vi.fn(async () => ({
       ...snapshot,
