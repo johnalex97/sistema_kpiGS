@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PerformanceTable } from "./PerformanceTable";
 import type { PerformanceTechnicianRow } from "../../models/performance-analytics";
@@ -14,5 +15,15 @@ describe("PerformanceTable", () => {
     expect(screen.getByText("Calidad crítica: 61%.")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("button", { name: /Ana López/ }), { key: "Enter" });
     expect(select).toHaveBeenCalledWith(row);
+  });
+
+  it("orders the team by the selected performance signal", async () => {
+    const user = userEvent.setup();
+    const highScore = { ...row, technicianId: "tech-2", code: "TEC-02", fullName: "Beto", overallScore: 90, dimensions: { ...row.dimensions, quality: 55 } };
+    render(<PerformanceTable rows={[row, highScore]} showTeam onSelect={vi.fn()} />);
+
+    expect(screen.getAllByRole("button", { name: /Ver detalle/ })[0]).toHaveAccessibleName(/Beto/);
+    await user.selectOptions(screen.getByLabelText("Ordenar comparativa por"), "quality");
+    expect(screen.getAllByRole("button", { name: /Ver detalle/ })[0]).toHaveAccessibleName(/Ana/);
   });
 });

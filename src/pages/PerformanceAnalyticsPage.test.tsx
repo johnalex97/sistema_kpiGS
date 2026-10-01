@@ -35,6 +35,19 @@ describe("PerformanceAnalyticsPage", () => {
     await waitFor(() => expect(current.exportCsv).toHaveBeenCalled());
   });
 
+  it("applies an operational status filter to the analysis and its shared URL", async () => {
+    window.history.replaceState({}, "", "/analisis?granularity=WEEK&periodStart=2026-05-04");
+    const current = api();
+    const user = userEvent.setup();
+    render(<AuthContext.Provider value={authValue(["KPI_VIEW_ALL"])}><PerformanceAnalyticsPage api={current} /></AuthContext.Provider>);
+
+    await screen.findByRole("button", { name: /Ver detalle de Ana L/ });
+    await user.selectOptions(screen.getByLabelText("Estado de orden"), "COMPLETED");
+
+    await waitFor(() => expect(current.getSummary).toHaveBeenLastCalledWith(expect.objectContaining({ orderStatus: "COMPLETED" }), expect.any(AbortSignal)));
+    expect(window.location.search).toContain("orderStatus=COMPLETED");
+  });
+
   it("does not expose team ranking or average to an own-scope reader and opens a technician detail", async () => {
     const user = userEvent.setup();
     render(<AuthContext.Provider value={authValue(["KPI_VIEW_OWN"])}><PerformanceAnalyticsPage api={api()} /></AuthContext.Provider>);
@@ -44,6 +57,31 @@ describe("PerformanceAnalyticsPage", () => {
     expect(screen.queryByText("Comparativa de técnicos")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Ver detalle de Ana López/ }));
     expect(screen.getByRole("dialog", { name: /Detalle de Ana López/, hidden: true })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { hidden: true })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Ver detalle de Ana López/ }));
+    await user.selectOptions(screen.getByLabelText("Periodo"), "MONTH");
+    await waitFor(() => expect(screen.queryByRole("dialog", { hidden: true })).not.toBeInTheDocument());
+  });
+
+  it("closes a technician detail while a new authorized query is loading", async () => {
+    const current = api();
+    let resolveSecondRequest: ((value: typeof summary) => void) | undefined;
+    (current.getSummary as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(summary)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecondRequest = resolve; }));
+    const user = userEvent.setup();
+    render(<AuthContext.Provider value={authValue(["KPI_VIEW_OWN"])}><PerformanceAnalyticsPage api={current} /></AuthContext.Provider>);
+
+    await screen.findByRole("button", { name: /Ver detalle de Ana L/ });
+    await user.click(screen.getByRole("button", { name: /Ver detalle de Ana L/ }));
+    expect(screen.getByRole("dialog", { name: /Detalle de Ana L/, hidden: true })).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Periodo"), "MONTH");
+    expect(screen.queryByRole("dialog", { hidden: true })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Periodo")).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Exportar CSV" })).toBeDisabled();
+    resolveSecondRequest?.(summary);
   });
 
   it("guides the user when the authorized period has no data", async () => {

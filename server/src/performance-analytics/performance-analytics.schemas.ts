@@ -31,7 +31,13 @@ export const performanceAnalyticsQuerySchema = z.object({
   branchId: z.uuid().optional(),
   serviceTypeId: z.uuid().optional(),
   orderStatus: orderStatusSchema.optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const start = new Date(`${value.periodStart}T00:00:00.000Z`);
+  const invalid = value.granularity === "WEEK" && start.getUTCDay() !== 1
+    || value.granularity === "MONTH" && start.getUTCDate() !== 1
+    || value.granularity === "YEAR" && (start.getUTCMonth() !== 0 || start.getUTCDate() !== 1);
+  if (invalid) context.addIssue({ code: "custom", path: ["periodStart"], message: "La fecha inicial no corresponde a la granularidad" });
+});
 
 export function parsePerformanceAnalyticsQuery(input: unknown): PerformanceAnalyticsQuery {
   const query = performanceAnalyticsQuerySchema.parse(input);

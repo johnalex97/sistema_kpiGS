@@ -14,7 +14,7 @@ describe("performance analytics repository", () => {
   it("reads facts in one repeatable-read snapshot and maps partial activity participation", async () => {
     const transaction = {
       tecnico: { findMany: vi.fn(async () => [{ id: "tech-a", code: "TEC-01", fullName: "Ana" }]) },
-      ordenTrabajo: { findMany: vi.fn(async () => [{ id: "order-1", status: "COMPLETED", scheduledFor: null, endedAt: new Date("2026-05-05T12:00:00.000Z"), totalMinutes: 120 }]) },
+      ordenTrabajo: { findMany: vi.fn(async () => [{ id: "order-1", status: "COMPLETED", scheduledFor: null, endedAt: new Date("2026-05-05T12:00:00.000Z"), totalMinutes: 120, tecnicos: [{ tecnicoId: "tech-a" }] }]) },
       actividad: { findMany: vi.fn(async () => [{
         id: "activity-1", orderId: "order-1", startedAt: new Date("2026-05-05T08:00:00.000Z"), endedAt: new Date("2026-05-05T10:00:00.000Z"), pausedMinutes: 20, productiveMinutes: 80,
         tecnicos: [{ tecnicoId: "tech-a", participationPercentage: { toNumber: () => 50 } }],
@@ -42,6 +42,7 @@ describe("performance analytics repository", () => {
       technicianId: "tech-a", registeredMinutes: 50, productiveMinutes: 40, pausedMinutes: 10,
     })]);
     expect(snapshot.recurrences).toEqual([{ id: "rec-1", originalOrderId: "order-1", technicianIds: ["tech-a"] }]);
+    expect(snapshot.orders).toEqual([expect.objectContaining({ id: "order-1", technicianIds: ["tech-a"] })]);
     expect(database.$transaction).toHaveBeenCalledTimes(1);
   });
 

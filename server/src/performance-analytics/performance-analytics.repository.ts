@@ -22,8 +22,17 @@ function orderWhere(input: PerformanceSnapshotInput): Prisma.OrdenTrabajoWhereIn
 }
 
 function activityPauseMinutes(activity: { pausedMinutes: number; pausas: Array<{ startedAt: Date; endedAt: Date | null }> }): number {
-  const captured = activity.pausas.reduce((total, pause) => total + (pause.endedAt ? Math.max(0, Math.round((pause.endedAt.getTime() - pause.startedAt.getTime()) / minute)) : 0), 0);
+  const captured = Math.max(0, Math.round(activity.pausas.reduce((total, pause) => total + (pause.endedAt ? pause.endedAt.getTime() - pause.startedAt.getTime() : 0), 0) / minute));
   return captured || activity.pausedMinutes;
+}
+
+function officialResultPeriod(input: PerformanceSnapshotInput): { gte: Date; lt: Date } {
+  const start = new Date(`${input.period.periodStart}T00:00:00.000Z`);
+  const endExclusive = new Date(start);
+  if (input.period.granularity === "WEEK") endExclusive.setUTCDate(endExclusive.getUTCDate() + 7);
+  else if (input.period.granularity === "MONTH") endExclusive.setUTCMonth(endExclusive.getUTCMonth() + 1, 1);
+  else endExclusive.setUTCFullYear(endExclusive.getUTCFullYear() + 1, 0, 1);
+  return { gte: start, lt: endExclusive };
 }
 
 export function createPerformanceAnalyticsRepository(database: PrismaClient): PerformanceAnalyticsRepository {
@@ -34,7 +43,7 @@ export function createPerformanceAnalyticsRepository(database: PrismaClient): Pe
           deletedAt: null,
           status: { not: "INACTIVE" as const },
           ...(input.scope.kind === "TECHNICIAN" ? { id: input.scope.technicianId } : {}),
-          ...(input.query.technicianId ? { id: input.query.technicianId } : {}),
+          ...(input.scope.kind === "GLOBAL" && input.query.technicianId ? { id: input.query.technicianId } : {}),
         };
         const scopedOrderWhere = orderWhere(input);
         const activityWhere: Prisma.ActividadWhereInput = {
@@ -44,23 +53,23 @@ export function createPerformanceAnalyticsRepository(database: PrismaClient): Pe
           sucursal: { is: { deletedAt: null, isActive: true, cliente: { is: { deletedAt: null, isActive: true } } } },
           AND: [{ OR: [{ ordenId: null }, { orden: { is: { deletedAt: null } } }] }],
           ...(input.scope.kind === "TECHNICIAN" ? { tecnicos: { some: { tecnicoId: input.scope.technicianId } } } : {}),
-          ...(input.query.technicianId ? { tecnicos: { some: { tecnicoId: input.query.technicianId } } } : {}),
+          ...(input.scope.kind === "GLOBAL" && input.query.technicianId ? { tecnicos: { some: { tecnicoId: input.query.technicianId } } } : {}),
           ...(input.query.branchId ? { sucursalId: input.query.branchId } : {}),
           ...(input.query.clientId ? { sucursal: { is: { clienteId: input.query.clientId, deletedAt: null, isActive: true, cliente: { is: { deletedAt: null, isActive: true } } } } } : {}),
           ...(input.query.serviceTypeId || input.query.orderStatus ? { orden: { is: { deletedAt: null, ...(input.query.serviceTypeId ? { tipoServicioId: input.query.serviceTypeId } : {}), ...(input.query.orderStatus ? { status: input.query.orderStatus } : {}) } } } : {}),
         };
         const [technicians, orders, activities, recurrences, officialResults, previousResults] = await Promise.all([
           transaction.tecnico.findMany({ where: technicianWhere, select: { id: true, code: true, fullName: true }, orderBy: [{ fullName: "asc" }, { id: "asc" }] }),
-          transaction.ordenTrabajo.findMany({ where: scopedOrderWhere, select: { id: true, status: true, scheduledFor: true, endedAt: true, totalMinutes: true }, orderBy: [{ endedAt: "asc" }, { id: "asc" }] }),
+          transaction.ordenTrabajo.findMany({ where: scopedOrderWhere, select: { id: true, status: true, scheduledFor: true, endedAt: true, totalMinutes: true, tecnicos: { where: { unassignedAt: null }, select: { tecnicoId: true } } }, orderBy: [{ endedAt: "asc" }, { id: "asc" }] }),
           transaction.actividad.findMany({ where: activityWhere, select: { id: true, ordenId: true, startedAt: true, endedAt: true, pausedMinutes: true, productiveMinutes: true, tecnicos: { select: { tecnicoId: true, participationPercentage: true } }, pausas: { select: { startedAt: true, endedAt: true } } }, orderBy: [{ endedAt: "asc" }, { id: "asc" }] }),
           transaction.reincidencia.findMany({ where: { status: "CLOSED", responsibility: "TECHNICAL_WORK", ordenOriginal: { is: scopedOrderWhere } }, select: { id: true, originalOrderId: true, tecnicos: { where: { affectsQuality: true }, select: { tecnicoId: true } } }, orderBy: { id: "asc" } }),
-          transaction.resultadoKPI.findMany({ where: { isCurrent: true, periodStart: { gte: new Date(`${input.period.periodStart}T00:00:00.000Z`) }, periodEnd: { lte: new Date(`${input.period.periodEnd}T00:00:00.000Z`) }, ...(input.scope.kind === "TECHNICIAN" ? { tecnicoId: input.scope.technicianId } : {}), ...(input.query.technicianId ? { tecnicoId: input.query.technicianId } : {}) }, orderBy: [{ periodStart: "asc" }, { tecnicoId: "asc" }] }),
-          transaction.resultadoKPI.findMany({ where: { isCurrent: true, periodEnd: { lt: new Date(`${input.period.periodStart}T00:00:00.000Z`) }, ...(input.scope.kind === "TECHNICIAN" ? { tecnicoId: input.scope.technicianId } : {}), ...(input.query.technicianId ? { tecnicoId: input.query.technicianId } : {}) }, orderBy: [{ periodEnd: "desc" }, { tecnicoId: "asc" }] }),
+          transaction.resultadoKPI.findMany({ where: { isCurrent: true, periodEnd: officialResultPeriod(input), ...(input.scope.kind === "TECHNICIAN" ? { tecnicoId: input.scope.technicianId } : {}), ...(input.scope.kind === "GLOBAL" && input.query.technicianId ? { tecnicoId: input.query.technicianId } : {}) }, orderBy: [{ periodStart: "asc" }, { tecnicoId: "asc" }] }),
+          transaction.resultadoKPI.findMany({ where: { isCurrent: true, periodEnd: { lt: new Date(`${input.period.periodStart}T00:00:00.000Z`) }, ...(input.scope.kind === "TECHNICIAN" ? { tecnicoId: input.scope.technicianId } : {}), ...(input.scope.kind === "GLOBAL" && input.query.technicianId ? { tecnicoId: input.query.technicianId } : {}) }, orderBy: [{ periodEnd: "desc" }, { tecnicoId: "asc" }] }),
         ]);
         const allowedIds = new Set(technicians.map(({ id }) => id));
         return {
           technicians,
-          orders,
+          orders: orders.map(({ tecnicos, ...order }) => ({ ...order, technicianIds: tecnicos.map(({ tecnicoId }) => tecnicoId) })),
           activities: activities.flatMap((activity) => {
             if (!activity.startedAt || !activity.endedAt) return [];
             const pausedMinutes = activityPauseMinutes(activity);

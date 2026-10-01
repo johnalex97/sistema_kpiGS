@@ -37,6 +37,8 @@ describe("performance analytics query schema", () => {
     { granularity: "day", periodStart: "2026-05-04" },
     { granularity: "week", periodStart: "2026-05-04", technicianId: "not-a-uuid" },
     { granularity: "week", periodStart: "2026-05-04", orderStatus: "DONE" },
+    { granularity: "month", periodStart: "2026-05-04" },
+    { granularity: "year", periodStart: "2026-05-01" },
   ])("rejects malformed public query %#", (query) => {
     expect(() => parsePerformanceAnalyticsQuery(query)).toThrow();
   });

@@ -19,6 +19,7 @@ export interface PerformanceActivityFact {
 export interface PerformanceOrderFact {
   id: string;
   status: string;
+  technicianIds?: string[];
   scheduledFor: Date | null;
   endedAt: Date | null;
   totalMinutes: number | null;
