@@ -26,6 +26,14 @@ export type KpiRepository = KpiFactsRepository & KpiManagementRepository;
 
 export type KpiResultRecord = Prisma.ResultadoKPIGetPayload<object>;
 
+export interface KpiAlertThresholds {
+  qualityCriticalThreshold: number;
+  recurrenceCriticalThreshold: number;
+  productivityAttentionThreshold: number;
+  complianceAttentionThreshold: number;
+  efficiencyAttentionThreshold: number;
+}
+
 export interface CloseWeekInput {
   week: KpiWeek;
   actor: KpiActorContext;

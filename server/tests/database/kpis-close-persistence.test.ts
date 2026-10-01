@@ -34,6 +34,15 @@ describe("weekly KPI close persistence", () => {
     expect(first.kind).toBe("CLOSED");
     expect(first.results.length).toBeGreaterThan(0);
     expect(first.results.every((result) => result.revision === 1 && result.isCurrent)).toBe(true);
+    expect(first.results.every(({ calculationMetadata }) => {
+      const metadata = calculationMetadata as { alertThresholds?: Record<string, number>; alertThresholdSource?: string };
+      return metadata.alertThresholdSource === "SNAPSHOT"
+        && metadata.alertThresholds?.qualityCriticalThreshold === 60
+        && metadata.alertThresholds?.recurrenceCriticalThreshold === 10
+        && metadata.alertThresholds?.productivityAttentionThreshold === 70
+        && metadata.alertThresholds?.complianceAttentionThreshold === 70
+        && metadata.alertThresholds?.efficiencyAttentionThreshold === 70;
+    })).toBe(true);
 
     const repeated = await repository.closeWeek({ week, actor });
     expect(repeated.kind).toBe("UNCHANGED");
