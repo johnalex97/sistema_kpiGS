@@ -86,4 +86,16 @@ describe("performance analytics service", () => {
     expect(result.status).toBe("OFFICIAL");
     expect(result.rows[0]).toMatchObject({ overallScore: 78, dimensions: { productivity: 80, compliance: 90, efficiency: 70, quality: 75 } });
   });
+
+  it("does not apply an arbitrary threshold when official weeks use mixed limits", async () => {
+    const withThresholds = (periodStart: string, periodEnd: string, threshold: number) => ({
+      ...officialWeek(periodStart, periodEnd), qualityScore: decimal("55.00"), calculationMetadata: { alertThresholdSource: "SNAPSHOT", alertThresholds: { qualityCriticalThreshold: threshold, recurrenceCriticalThreshold: 10, productivityAttentionThreshold: 70, complianceAttentionThreshold: 70, efficiencyAttentionThreshold: 70 } },
+    });
+    const repository = { readSnapshot: vi.fn(async () => ({ ...snapshot, officialResults: [
+      withThresholds("2026-04-27", "2026-05-03", 60), withThresholds("2026-05-04", "2026-05-10", 50), withThresholds("2026-05-11", "2026-05-17", 60), withThresholds("2026-05-18", "2026-05-24", 60), withThresholds("2026-05-25", "2026-05-31", 60),
+    ] })) };
+    const service = createPerformanceAnalyticsService(repository as never, "America/Tegucigalpa");
+    const result = await service.getSummary({ granularity: "MONTH", periodStart: "2026-05-01" }, { userId: "admin", technicianId: null, permissions: ["KPI_VIEW_ALL"], requestId: "request" });
+    expect(result.rows[0]?.alerts.some(({ code }) => code === "QUALITY_LOW")).toBe(false);
+  });
 });
