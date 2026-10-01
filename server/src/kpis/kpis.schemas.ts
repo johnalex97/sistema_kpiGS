@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const weightPattern = /^(?:0(?:\.\d{1,4})?|1(?:\.0{1,4})?)$/;
+const percentagePattern = /^(?:(?:0|[1-9]\d?)(?:\.\d{1,2})?|100(?:\.0{1,2})?)$/;
 
 function calendarDate(value: string): boolean {
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -18,6 +19,10 @@ const localDate = z.string().regex(datePattern).refine(calendarDate, "La fecha n
 const positiveGoal = z.number().int().positive();
 const optionalObservation = z.string().trim().max(500).nullable().optional();
 const weight = z.string().regex(weightPattern, "El peso debe estar entre 0 y 1 con hasta cuatro decimales");
+const alertThreshold = z.string().regex(
+  percentagePattern,
+  "El umbral debe estar entre 0 y 100 con hasta dos decimales",
+);
 
 export function createKpiSchemas(today: () => string) {
   const targetShape = {
@@ -45,6 +50,11 @@ export function createKpiSchemas(today: () => string) {
     complianceWeight: weight,
     efficiencyWeight: weight,
     qualityWeight: weight,
+    qualityCriticalThreshold: alertThreshold,
+    recurrenceCriticalThreshold: alertThreshold,
+    productivityAttentionThreshold: alertThreshold,
+    complianceAttentionThreshold: alertThreshold,
+    efficiencyAttentionThreshold: alertThreshold,
     description: z.string().trim().min(1).max(500).nullable().optional(),
   }).strict().superRefine((input, context) => {
     const start = new Date(`${input.validFrom}T00:00:00.000Z`);

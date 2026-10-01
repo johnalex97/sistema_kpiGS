@@ -745,18 +745,23 @@ model Evidencia {
 }
 
 model ConfiguracionKPI {
-  id                 String    @id @default(uuid()) @db.Uuid
-  version            Int       @unique
-  validFrom          DateTime  @map("valid_from") @db.Date
-  validTo            DateTime? @map("valid_to") @db.Date
-  productivityWeight Decimal   @map("productivity_weight") @db.Decimal(5, 4)
-  complianceWeight   Decimal   @map("compliance_weight") @db.Decimal(5, 4)
-  efficiencyWeight   Decimal   @map("efficiency_weight") @db.Decimal(5, 4)
-  qualityWeight      Decimal   @map("quality_weight") @db.Decimal(5, 4)
-  isActive           Boolean   @default(true) @map("is_active")
-  description        String?   @db.VarChar(500)
-  createdById        String?   @map("created_by_id") @db.Uuid
-  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  id                             String    @id @default(uuid()) @db.Uuid
+  version                        Int       @unique
+  validFrom                      DateTime  @map("valid_from") @db.Date
+  validTo                        DateTime? @map("valid_to") @db.Date
+  productivityWeight             Decimal   @map("productivity_weight") @db.Decimal(5, 4)
+  complianceWeight               Decimal   @map("compliance_weight") @db.Decimal(5, 4)
+  efficiencyWeight               Decimal   @map("efficiency_weight") @db.Decimal(5, 4)
+  qualityWeight                  Decimal   @map("quality_weight") @db.Decimal(5, 4)
+  qualityCriticalThreshold       Decimal   @map("quality_critical_threshold") @db.Decimal(5, 2)
+  recurrenceCriticalThreshold    Decimal   @map("recurrence_critical_threshold") @db.Decimal(5, 2)
+  productivityAttentionThreshold Decimal   @map("productivity_attention_threshold") @db.Decimal(5, 2)
+  complianceAttentionThreshold   Decimal   @map("compliance_attention_threshold") @db.Decimal(5, 2)
+  efficiencyAttentionThreshold   Decimal   @map("efficiency_attention_threshold") @db.Decimal(5, 2)
+  isActive                       Boolean   @default(true) @map("is_active")
+  description                    String?   @db.VarChar(500)
+  createdById                    String?   @map("created_by_id") @db.Uuid
+  createdAt                      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   createdBy Usuario?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
   results   ResultadoKPI[]
