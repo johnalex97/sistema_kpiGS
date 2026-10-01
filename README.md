@@ -534,9 +534,23 @@ npm run start
 
 ## Variables de entorno
 
-El frontend usa `VITE_API_BASE_URL` para apuntar a la API versionada; si se
-omite, utiliza `http://localhost:4000/api/v1`. El backend valida las variables
-descritas en `server/.env.example`, incluyendo:
+## Despliegue en Easypanel
+
+La preparación para VPS usa tres servicios: PostgreSQL privado con volumen
+persistente, API Express/Prisma y frontend estático. La guía de configuración,
+variables protegidas, health checks, respaldos y cambio posterior a dominio
+propio está en [deploy/easypanel/README.md](deploy/easypanel/README.md).
+El registro de verificaciones locales y los pasos pendientes en VPS está en
+[docs/superpowers/verification/2026-10-01-easypanel-deployment.md](docs/superpowers/verification/2026-10-01-easypanel-deployment.md).
+
+En producción la API escucha el puerto `4000`, aplica exclusivamente
+`prisma migrate deploy` antes de iniciar y exige un volumen privado de
+evidencias. El frontend requiere `VITE_API_BASE_URL` durante el build.
+
+El frontend usa `VITE_API_BASE_URL` para apuntar a la API versionada. En
+desarrollo, si se omite utiliza `http://localhost:4000/api/v1`; en un build de
+producción es obligatoria. El backend valida las variables descritas en
+`server/.env.example`, incluyendo:
 
 ```env
 DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/Sistema_kpiGS?schema=public
