@@ -26,3 +26,14 @@ describe("clients application route", () => {
     expect(canAccessPage("Clientes", ["ORDERS_VIEW_ALL"])).toBe(false);
   });
 });
+
+describe("performance analytics route", () => {
+  it("maps /analisis and gates it with either KPI reading scope", () => {
+    expect(getPathFromPage("Análisis")).toBe("/analisis");
+    expect(getPageFromPath("/analisis")).toBe("Análisis");
+    expect(isKnownInternalPath("/analisis")).toBe(true);
+    expect(canAccessPage("Análisis", ["KPI_VIEW_ALL"])).toBe(true);
+    expect(canAccessPage("Análisis", ["KPI_VIEW_OWN"])).toBe(true);
+    expect(canAccessPage("Análisis", [])).toBe(false);
+  });
+});

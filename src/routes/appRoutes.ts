@@ -5,6 +5,7 @@ export const pageDescriptions: Record<Page, string> = {
   Órdenes: "Coordina visitas, responsables y avance operativo desde un solo lugar.",
   Actividades: "Consulta y filtra todo el trabajo registrado por el equipo.",
   Técnicos: "Compara productividad, cumplimiento y calidad por técnico.",
+  Análisis: "Consulta el desempeño, las alertas y la evolución autorizada del equipo.",
   Reincidencias: "Detecta trabajos repetidos, causas y técnicos participantes.",
   Clientes: "Consulta empresas, ubicaciones y contactos para atender cada servicio.",
 };
@@ -14,6 +15,7 @@ const pageByPath: Record<PagePath, Page> = {
   "/ordenes": "Órdenes",
   "/actividades": "Actividades",
   "/tecnicos": "Técnicos",
+  "/analisis": "Análisis",
   "/reincidencias": "Reincidencias",
   "/clientes": "Clientes",
 };
@@ -23,6 +25,7 @@ export const pagePermissions: Record<Page, string[]> = {
   Órdenes: ["ORDERS_VIEW_ALL", "ORDERS_VIEW_OWN"],
   Actividades: ["ACTIVITIES_VIEW_ALL", "ACTIVITIES_CREATE_OWN"],
   Técnicos: ["TECHNICIANS_VIEW"],
+  Análisis: ["KPI_VIEW_ALL", "KPI_VIEW_OWN"],
   Reincidencias: ["RECURRENCES_VIEW_ALL", "RECURRENCES_VIEW_OWN"],
   Clientes: ["CLIENTS_VIEW"],
 };
