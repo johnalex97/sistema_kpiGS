@@ -70,6 +70,11 @@ function snapshotThresholds(result: { calculationMetadata: unknown } | undefined
   return Object.fromEntries(keys.map((key, index) => [key, values[index]!])) as unknown as PerformanceAlertThresholds;
 }
 
+function relatedConfigurationThresholds(result: { configuracion?: { qualityCriticalThreshold: { toNumber(): number }; recurrenceCriticalThreshold: { toNumber(): number }; productivityAttentionThreshold: { toNumber(): number }; complianceAttentionThreshold: { toNumber(): number }; efficiencyAttentionThreshold: { toNumber(): number } } } | undefined): PerformanceAlertThresholds | null {
+  const configuration = result?.configuracion;
+  return configuration ? { qualityCriticalThreshold: configuration.qualityCriticalThreshold.toNumber(), recurrenceCriticalThreshold: configuration.recurrenceCriticalThreshold.toNumber(), productivityAttentionThreshold: configuration.productivityAttentionThreshold.toNumber(), complianceAttentionThreshold: configuration.complianceAttentionThreshold.toNumber(), efficiencyAttentionThreshold: configuration.efficiencyAttentionThreshold.toNumber() } : null;
+}
+
 export function createPerformanceAnalyticsService(repository: PerformanceAnalyticsRepository, timeZone: string, now: () => Date = () => new Date()) {
   return {
     async getSummary(query: PerformanceAnalyticsQuery, actor: PerformanceActorContext): Promise<PerformanceAnalyticsSummary> {
@@ -127,7 +132,8 @@ export function createPerformanceAnalyticsService(repository: PerformanceAnalyti
           attributableRecurrenceCredits: Number(result.attributableRecurrenceCredits),
           coverage: result.coverage,
         } : undefined;
-        const officialThresholds = snapshotThresholds(snapshot.officialResults.find((item) => item.tecnicoId === technician.id));
+        const officialResult = snapshot.officialResults.find((item) => item.tecnicoId === technician.id);
+        const officialThresholds = snapshotThresholds(officialResult) ?? relatedConfigurationThresholds(officialResult);
         return { technicianId: technician.id, code: technician.code, fullName: technician.fullName, completedJobs, registeredMinutes, productiveMinutes, pausedMinutes, attributableRecurrences, recurrenceRate, overallScore, comparison, ...(officialFacts ? { officialFacts } : {}), dimensions, alerts: createPerformanceAlerts({ dimensions, applicability: { productivity: dimensions.productivity !== null, compliance: dimensions.compliance !== null, efficiency: dimensions.efficiency !== null, quality: dimensions.quality !== null }, recurrenceRate, hasGoal: Boolean(result), hasData: activities.length > 0 || orders.length > 0, thresholds: officialThresholds ?? snapshot.previewThresholds }) };
       });
       const scores = rows.map((row) => row.overallScore).filter((value): value is number => value !== null);

@@ -57,8 +57,7 @@ describe("KPI management schemas", () => {
     expect(schemas.createConfigurationSchema.safeParse({ ...base, qualityCriticalThreshold: "-0.01" }).success).toBe(false);
     expect(schemas.createConfigurationSchema.safeParse({ ...base, recurrenceCriticalThreshold: "100.01" }).success).toBe(false);
     expect(schemas.createConfigurationSchema.safeParse({ ...base, productivityAttentionThreshold: "70.001" }).success).toBe(false);
-    const missing = { ...base };
-    delete missing.efficiencyAttentionThreshold;
+    const missing = { ...base, efficiencyAttentionThreshold: undefined };
     expect(schemas.createConfigurationSchema.safeParse(missing).success).toBe(false);
   });
 

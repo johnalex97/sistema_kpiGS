@@ -36,7 +36,7 @@ export interface PerformanceAnalyticsSnapshot {
   orders: PerformanceOrderFact[];
   activities: PerformanceActivityFact[];
   recurrences: PerformanceRecurrenceFact[];
-  officialResults: Prisma.ResultadoKPIGetPayload<object>[];
+  officialResults: Prisma.ResultadoKPIGetPayload<{ include: { configuracion: true } }>[];
   previousResults: Prisma.ResultadoKPIGetPayload<object>[];
   previewThresholds: {
     qualityCriticalThreshold: number;
