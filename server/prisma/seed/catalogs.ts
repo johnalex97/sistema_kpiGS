@@ -85,16 +85,18 @@ export interface SeedCatalogs {
 
 export async function seedCatalogs(
   database: SeedClient,
+  options: { production?: boolean } = {},
 ): Promise<SeedCatalogs> {
+  const production = options.production === true;
   const roles: Record<string, string> = {};
   for (const item of roleData) {
     const role = await database.rol.upsert({
       where: { code: item.code },
-      update: { name: item.name, isActive: true, deletedAt: null },
+      update: production ? {} : { name: item.name, isActive: true, deletedAt: null },
       create: {
         code: item.code,
         name: item.name,
-        description: `Rol ficticio ${item.name.toLowerCase()}`,
+        description: production ? `Rol ${item.name.toLowerCase()}` : `Rol ficticio ${item.name.toLowerCase()}`,
       },
     });
     roles[item.code] = role.id;
@@ -105,7 +107,7 @@ export async function seedCatalogs(
     const description = `Permiso ${item.code.toLowerCase()}`;
     const permission = await database.permiso.upsert({
       where: { code: item.code },
-      update: { resource: item.resource, action: item.action, description },
+      update: production ? {} : { resource: item.resource, action: item.action, description },
       create: {
         ...item,
         description,
@@ -172,11 +174,11 @@ export async function seedCatalogs(
   for (const [code, name] of serviceTypeData) {
     const serviceType = await database.tipoServicio.upsert({
       where: { code },
-      update: { name, isActive: true, deletedAt: null },
+      update: production ? {} : { name, isActive: true, deletedAt: null },
       create: {
         code,
         name,
-        description: `${name} de demostración`,
+        description: production ? name : `${name} de demostración`,
         displayOrder: serviceTypeData.findIndex(([value]) => value === code) + 1,
       },
     });
@@ -187,11 +189,11 @@ export async function seedCatalogs(
   for (const [code, name] of activityTypeData) {
     const activityType = await database.tipoActividad.upsert({
       where: { code },
-      update: { name, isActive: true, deletedAt: null },
+      update: production ? {} : { name, isActive: true, deletedAt: null },
       create: {
         code,
         name,
-        description: `${name} de demostración`,
+        description: production ? name : `${name} de demostración`,
         displayOrder:
           activityTypeData.findIndex(([value]) => value === code) + 1,
       },
@@ -203,11 +205,11 @@ export async function seedCatalogs(
   for (const [code, name] of recurrenceCauseData) {
     const cause = await database.causaReincidencia.upsert({
       where: { code },
-      update: { name, isActive: true, deletedAt: null },
+      update: production ? {} : { name, isActive: true, deletedAt: null },
       create: {
         code,
         name,
-        description: `${name} de demostración`,
+        description: production ? name : `${name} de demostración`,
         displayOrder:
           recurrenceCauseData.findIndex(([value]) => value === code) + 1,
       },
@@ -216,7 +218,7 @@ export async function seedCatalogs(
   }
 
   const materials: Record<string, string> = {};
-  for (const [code, name, unit, referenceCost] of materialData) {
+  for (const [code, name, unit, referenceCost] of production ? [] : materialData) {
     const material = await database.material.upsert({
       where: { code },
       update: { name, unit, referenceCost, isActive: true, deletedAt: null },

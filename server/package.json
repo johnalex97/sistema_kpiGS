@@ -19,6 +19,8 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
+    "db:init:production": "node dist/src/scripts/initialize-production-catalogs.js",
+    "deploy:check": "node dist/src/scripts/check-production.js",
     "db:verify": "tsx database/run-sql.ts database/verify-database.sql",
     "evidences:verify": "tsx scripts/verify-evidences.ts",
     "kpis:verify": "tsx scripts/verify-kpis.ts"

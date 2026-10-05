@@ -33,6 +33,8 @@ Usa un health check HTTP para `/` en el puerto `80`. El frontend no almacena sec
 
 ## 4. Validación de salida
 
+Antes de registrar trabajo real, ejecutar `npm run db:init:production` desde la consola **Sh** de la API para preparar los catálogos sin datos ficticios; después ejecutar `npm run deploy:check`. Seguir [validacion-produccion.md](validacion-produccion.md) para las comprobaciones funcionales y de respaldos. Estos comandos están compilados en la imagen y no requieren `tsx` ni dependencias de desarrollo.
+
 1. Abrir `https://<API_TEMPORARY_DOMAIN>/api/v1/health` y confirmar `200`.
 2. Abrir el dominio temporal del frontend, iniciar sesión y comprobar que no existen errores CORS en el navegador.
 3. Registrar una actividad de prueba y confirmar que aparece en el historial y en los KPI permitidos para el usuario.

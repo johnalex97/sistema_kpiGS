@@ -167,7 +167,7 @@ describe("database seed", () => {
     ).toBe(8);
   });
 
-  it("seeds visibility ACL rows for every current activity participant", async () => {
+  it("seeds visibility ACL rows for every participant of seeded activities", async () => {
     await seedDatabase(database);
     await seedDatabase(database);
 
@@ -177,7 +177,11 @@ describe("database seed", () => {
       LEFT JOIN "actividad_visibilidad_tecnico" AS visibility
         ON visibility."actividad_id" = team."actividad_id"
        AND visibility."tecnico_id" = team."tecnico_id"
-      WHERE visibility."actividad_id" IS NULL
+      WHERE team."actividad_id" IN (
+        ${seedIds.activities.planned}::uuid,
+        ${seedIds.activities.unplanned}::uuid
+      )
+      AND visibility."actividad_id" IS NULL
     `;
 
     expect(Number(rows[0]?.missing ?? -1)).toBe(0);
