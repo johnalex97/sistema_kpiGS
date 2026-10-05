@@ -16,6 +16,17 @@ afterEach(() => {
 });
 
 describe("AppShell", () => {
+  it("abre Configuración y Usuarios desde el menú del administrador", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ data: {
+      items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
+    } }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    renderWithAuth(<AppShell />, { user: { ...limitedUser, roles: ["ADMIN"], permissions: ["USERS_MANAGE"] } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Configuración" }));
+    expect(window.location.pathname).toBe("/configuracion");
+    expect(screen.getByRole("heading", { level: 1, name: "Configuración" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Usuarios" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nuevo usuario" })).toBeInTheDocument();
+  });
   it("abre el listado persistente de Clientes desde la navegación autorizada", async () => {
     const user = userEvent.setup();
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ data: {

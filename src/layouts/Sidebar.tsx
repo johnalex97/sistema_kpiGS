@@ -47,7 +47,7 @@ export function Sidebar({ page, visiblePages, onChange, open, onClose }: Sidebar
           ))}
           <p className="nav-label nav-label--second">Administración</p>
           <button type="button"><BarChart3 size={19} /><span>Reportes</span></button>
-          <button type="button"><Settings size={19} /><span>Configuración</span></button>
+          {visiblePages.includes("Configuración") && <button type="button" onClick={() => onChange("Configuración")} className={page === "Configuración" ? "active" : ""} aria-current={page === "Configuración" ? "page" : undefined}><Settings size={19} /><span>Configuración</span></button>}
         </nav>
         <div className="sidebar-card">
           <div className="sidebar-card__head"><span>Meta semanal</span><b>79%</b></div>

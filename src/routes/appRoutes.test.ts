@@ -6,6 +6,15 @@ import {
   isKnownInternalPath,
 } from "./appRoutes";
 
+describe("configuración de usuarios", () => {
+  it("permite la configuración solo con el permiso de gestionar usuarios", () => {
+    expect(getPageFromPath("/configuracion")).toBe("Configuración");
+    expect(isKnownInternalPath("/configuracion")).toBe(true);
+    expect(canAccessPage("Configuración", ["USERS_MANAGE"])).toBe(true);
+    expect(canAccessPage("Configuración", ["TECHNICIANS_MANAGE"])).toBe(false);
+  });
+});
+
 describe("orders application route", () => {
   it("maps the orders page and allows both read scopes", () => {
     expect(getPathFromPage("Órdenes")).toBe("/ordenes");

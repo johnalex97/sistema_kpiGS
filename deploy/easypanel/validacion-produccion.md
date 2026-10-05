@@ -23,7 +23,9 @@ Usar registros claramente identificados como prueba y anotar sus identificadores
 
 - [ ] Cambiar la contraseña inicial del administrador y comprobar un nuevo inicio de sesión.
 - [ ] Crear un cliente con ubicación y contactos; guardar y volver a abrirlo.
-- [ ] Crear un técnico. Para probar su inicio de sesión, primero provisionar una cuenta activa con rol `TECHNICIAN` y vincularla al perfil: el formulario de técnico no crea automáticamente usuarios ni contraseñas. La administración de cuentas desde consola o un módulo dedicado debe validarse por separado.
+- [ ] Desde una cuenta con `USERS_MANAGE`, abrir **Configuración → Usuarios → Nuevo usuario**. Crear la cuenta con nombre, correo y contraseña temporal; el rol asignado es `TECHNICIAN`.
+- [ ] Crear o editar el perfil del técnico y seleccionar esa cuenta en **Acceso al sistema → Usuario vinculado**. La creación de cuenta y el perfil laboral son operaciones independientes.
+- [ ] Iniciar sesión como técnico en una ventana privada, cambiar la contraseña temporal y comprobar sus permisos. Verificar que no pueda acceder a **Configuración → Usuarios**.
 - [ ] Crear una orden, seleccionar tipo de servicio y asignar el técnico.
 - [ ] Registrar una actividad, comprobar transiciones disponibles y completar el trabajo con sus tiempos reales.
 - [ ] Adjuntar una evidencia, descargarla y comprobar permisos de acceso.
@@ -44,4 +46,4 @@ Si una operación falla, guardar mensaje, ruta, fecha e identificador de solicit
 - [ ] Restaurar el volumen en una ubicación aislada, conservar privacidad y comprobar una descarga con la base restaurada.
 - [ ] Registrar fecha, commit desplegado, retención acordada y resultado de restauración. Coordinar las copias de base y archivos para recuperar un mismo punto de operación.
 
-Pendientes que requieren acceso a Easypanel: ejecutar comandos de catálogos, configurar el proveedor de respaldos y realizar la prueba funcional y restauración. No dar por configurados los respaldos solo por crear un volumen persistente.
+Pendientes que requieren acceso a Easypanel: redesplegar API y frontend, ejecutar comandos de catálogos, configurar el proveedor de respaldos y realizar la prueba funcional y restauración. No dar por configurados los respaldos solo por crear un volumen persistente.
