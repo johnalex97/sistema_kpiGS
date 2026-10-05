@@ -14,7 +14,7 @@ import { PerformanceAnalyticsPage } from "../pages/PerformanceAnalyticsPage";
 import { canAccessPage, pageDescriptions } from "../routes/appRoutes";
 import { Sidebar } from "./Sidebar";
 import { AccessDeniedPage } from "../pages/AccessDeniedPage";
-import { UsersSettingsPage } from "../pages/UsersSettingsPage";
+import { SettingsPage } from "../pages/SettingsPage";
 
 function PageContent({ page, search, onGoRecurrence, onClearSearch, onGoActivities, onGoTechnicians }: { page: Page; search: string; onGoRecurrence: () => void; onClearSearch: () => void; onGoActivities: () => void; onGoTechnicians: () => void }) {
   switch (page) {
@@ -24,7 +24,7 @@ function PageContent({ page, search, onGoRecurrence, onClearSearch, onGoActiviti
     case "Análisis": return <PerformanceAnalyticsPage />;
     case "Reincidencias": return <RecurrencesPage search={search} />;
     case "Clientes": return <ClientsPage search={search} onClearSearch={onClearSearch} />;
-    case "Configuración": return <UsersSettingsPage />;
+    case "Configuración": return <SettingsPage />;
     default: return <DashboardPage onGoRecurrence={onGoRecurrence} onGoActivities={onGoActivities} onGoTechnicians={onGoTechnicians} />;
   }
 }

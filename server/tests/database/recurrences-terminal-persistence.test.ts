@@ -249,6 +249,15 @@ beforeEach(createFixture);
 afterEach(cleanupFixture);
 afterAll(disconnectTestDatabase);
 
+it("cierra y ajusta un caso conservando su causa desactivada, sin admitir nuevas causas inactivas", async () => {
+  await database.causaReincidencia.update({ where: { id: ids.activeCause }, data: { isActive: false } });
+  const repository = createRecurrencesWorkflowRepository(database);
+  expect((await repository.closeRecurrence(ids.recurrence, { version: 3 }, actor, now)).kind).toBe("UPDATED");
+  expect((await repository.adjustClosedRecurrence(ids.recurrence, { version: 4, reason: "Actualizar observaciones del caso", observations: "Actualizada" }, actor, now)).kind).toBe("UPDATED");
+  expect((await repository.adjustClosedRecurrence(ids.recurrence, { version: 5, reason: "Asignación nueva de causa inactiva", causeId: ids.inactiveCause }, actor, now)).kind).toBe("RECURRENCE_CAUSE_NOT_FOUND");
+  expect((await database.reincidencia.findUniqueOrThrow({ where: { id: ids.recurrence } })).causeId).toBe(ids.activeCause);
+});
+
 describe("recurrence dismissal persistence", () => {
   // Mutation caught: a partial dismissal leaves a quality fact active or deletes immutable related history.
   it.each(["OPEN", "ANALYSIS"] as const)("DISMISS %s sets the exact triplet, clears every quality flag, and preserves linked history", async (status) => {
@@ -370,7 +379,7 @@ describe("recurrence closure persistence", () => {
 
   // Mutation caught: CLOSE skips one of its terminal revalidations.
   it.each([
-    ["inactive cause", async () => database.reincidencia.update({ where: { id: ids.recurrence }, data: { causeId: ids.inactiveCause } }), "RECURRENCE_CAUSE_NOT_FOUND"],
+    ["deleted cause", async () => database.causaReincidencia.update({ where: { id: ids.activeCause }, data: { deletedAt: now } }), "RECURRENCE_CAUSE_NOT_FOUND"],
     ["undetermined responsibility", async () => database.reincidencia.update({ where: { id: ids.recurrence }, data: { responsibility: "UNDETERMINED" } }), "RECURRENCE_QUALITY_INVALID"],
     ["missing analysis", async () => database.reincidencia.update({ where: { id: ids.recurrence }, data: { analysis: " " } }), "RECURRENCE_DOCUMENTATION_INCOMPLETE"],
     ["missing corrective action", async () => database.reincidencia.update({ where: { id: ids.recurrence }, data: { correctiveAction: null } }), "RECURRENCE_DOCUMENTATION_INCOMPLETE"],

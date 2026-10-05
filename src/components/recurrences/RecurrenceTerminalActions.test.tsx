@@ -30,6 +30,11 @@ const recurrence: RecurrenceDetail = {
 };
 
 describe("acciones terminales de reincidencias", () => {
+  it("conserva visible la causa asignada que ya no está activa", () => {
+    render(<RecurrenceAdjustmentForm recurrence={recurrence} catalog={{ ...catalog, causes: [] }} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.getByRole("option", { name: "Retrabajo (inactiva)" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Causa")).toHaveValue("cause-1");
+  });
   it("exige un motivo documentado para descartar y conserva el borrador ante rechazo", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn().mockResolvedValue(false);

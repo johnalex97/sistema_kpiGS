@@ -52,6 +52,11 @@ async function completeCreateForm(api: OrderLookupApi) {
 }
 
 describe("OrderForm", () => {
+  it("conserva visible el servicio asignado que ya no está activo", () => {
+    render(<OrderForm mode="edit" order={order} catalog={{ serviceTypes: [], materials: [] }} lookupApi={lookupApi()} pending={false} error={null} fieldErrors={[]} onCancel={vi.fn()} onSubmit={vi.fn()} />);
+    expect(screen.getByRole("option", { name: "Soporte técnico (inactiva)" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Tipo de servicio" })).toHaveValue("service-1");
+  });
   it("conserva la sucursal al volver a elegir el cliente vigente", async () => {
     const api = lookupApi();
     render(<OrderForm mode="create" catalog={catalog} lookupApi={api} pending={false} error={null} fieldErrors={[]} onCancel={vi.fn()} onSubmit={vi.fn(async () => true)} />);

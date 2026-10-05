@@ -202,6 +202,23 @@ describe("activities timer operation repository", () => {
   });
   afterAll(async () => { await removeFixture(fixture); await disconnectTestDatabase(); });
 
+  it("opera y ajusta una actividad existente con tipo desactivado sin permitir asignarlo a nuevos trabajos", async () => {
+    const id = await createPendingActivity(fixture);
+    const repository = createActivitiesOperationRepository(database);
+    await database.tipoActividad.updateMany({ where: { id: { in: [fixture.typeId, fixture.adjustmentTypeId] } }, data: { isActive: false } });
+    try {
+      expect((await repository.startActivity(id, { version: 1 }, fixture.actor, startedAt)).kind).toBe("UPDATED");
+      expect((await repository.pauseActivity(id, { version: 2, reason: "Pausa de prueba" }, fixture.actor, new Date("2026-08-06T12:01:00Z"))).kind).toBe("UPDATED");
+      expect((await repository.resumeActivity(id, { version: 3 }, fixture.actor, new Date("2026-08-06T12:02:00Z"))).kind).toBe("UPDATED");
+      expect((await repository.completeActivity(id, { version: 4, result: "Trabajo terminado" }, fixture.actor, new Date("2026-08-06T12:03:00Z"))).kind).toBe("UPDATED");
+      expect((await repository.adjustCompletedActivity(id, { version: 5, reason: "Actualizar descripción histórica", activityTypeId: fixture.typeId, description: "Actualizada" }, fixture.actor, new Date("2026-08-06T12:04:00Z"))).kind).toBe("UPDATED");
+      expect((await repository.adjustCompletedActivity(id, { version: 6, reason: "Asignación nueva no permitida", activityTypeId: fixture.adjustmentTypeId }, fixture.actor, new Date("2026-08-06T12:05:00Z"))).kind).toBe("ACTIVITY_TYPE_NOT_FOUND");
+      expect((await createActivitiesMutationRepository(database).createActivity(input(fixture), fixture.actor, startedAt)).kind).toBe("ACTIVITY_TYPE_NOT_FOUND");
+    } finally {
+      await database.tipoActividad.updateMany({ where: { id: { in: [fixture.typeId, fixture.adjustmentTypeId] } }, data: { isActive: true } });
+    }
+  });
+
   it("starts a pending activity with the injected server time on the whole team and one audit/version increment", async () => {
     const created = await createActivitiesMutationRepository(database).createActivity({
       ...input(fixture),

@@ -252,7 +252,7 @@ export function createOrdersReadRepository(
         database.tipoServicio.findMany({
           where: { isActive: true, deletedAt: null },
           select: { id: true, code: true, name: true },
-          orderBy: [{ name: "asc" }, { id: "asc" }],
+          orderBy: [{ displayOrder: "asc" }, { name: "asc" }, { id: "asc" }],
         }),
         database.material.findMany({
           where: {

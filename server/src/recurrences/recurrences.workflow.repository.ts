@@ -1088,7 +1088,7 @@ async function closeInTransaction(
   const activities = await lockCompletedActivities(transaction, currentOrderIds);
   const actorUser = await lockUser(transaction, actor.userId);
   if (!userIsActive(actorUser)) reject("RECURRENCE_NOT_FOUND");
-  if (cause === null || !cause.isActive || cause.deletedAt !== null) reject("RECURRENCE_CAUSE_NOT_FOUND");
+  if (cause === null || cause.deletedAt !== null) reject("RECURRENCE_CAUSE_NOT_FOUND");
   if (record.responsibility === "UNDETERMINED") reject("RECURRENCE_QUALITY_INVALID");
   if (!record.analysis?.trim() || !record.correctiveAction?.trim()) reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
   if (requiresPreventiveAction(record.impact, record.responsibility) && !record.preventiveAction?.trim()) {
@@ -1215,7 +1215,7 @@ async function adjustInTransaction(
   if (!userIsActive(actorUser)) reject("RECURRENCE_NOT_FOUND");
   const reason = validReason(input.reason);
   if (reason === null) reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
-  if (cause === null || !cause.isActive || cause.deletedAt !== null) reject("RECURRENCE_CAUSE_NOT_FOUND");
+  if (cause === null || cause.deletedAt !== null || (!cause.isActive && nextCauseId !== record.causeId)) reject("RECURRENCE_CAUSE_NOT_FOUND");
   if (pairedCostIsInvalid(input) || (input.estimatedCost !== undefined && !isValidCost(input.estimatedCost))) {
     reject("RECURRENCE_DOCUMENTATION_INCOMPLETE");
   }

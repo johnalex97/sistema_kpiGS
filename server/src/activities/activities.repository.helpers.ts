@@ -112,9 +112,10 @@ export async function findProductiveSegments(
 async function activeActivityType(
   transaction: Prisma.TransactionClient,
   activityTypeId: string,
+  allowInactive = false,
 ): Promise<boolean> {
   return (await transaction.tipoActividad.findFirst({
-    where: { id: activityTypeId, isActive: true, deletedAt: null }, select: { id: true },
+    where: { id: activityTypeId, ...(!allowInactive && { isActive: true }), deletedAt: null }, select: { id: true },
   })) !== null;
 }
 
@@ -142,8 +143,9 @@ export async function validateActivityContext(
   transaction: Prisma.TransactionClient,
   input: CreateActivityInput | ManualActivityInput,
   actor: ActivityActorContext,
+  retainedActivityTypeId?: string,
 ): Promise<ValidatedActivityContext | { kind: ActivityFailureKind }> {
-  if (!(await activeActivityType(transaction, input.activityTypeId))) {
+  if (!(await activeActivityType(transaction, input.activityTypeId, input.activityTypeId === retainedActivityTypeId))) {
     return { kind: "ACTIVITY_TYPE_NOT_FOUND" };
   }
 
@@ -214,7 +216,7 @@ export async function validateCompletedAdjustmentContext(
   endedAt: Date,
   historicalCoverageChanged: boolean,
 ): Promise<ValidatedActivityContext | { kind: ActivityFailureKind }> {
-  if (input.activityTypeId !== undefined && !(await activeActivityType(transaction, input.activityTypeId))) {
+  if (input.activityTypeId !== undefined && !(await activeActivityType(transaction, input.activityTypeId, input.activityTypeId === activity.tipoActividad.id))) {
     return { kind: "ACTIVITY_TYPE_NOT_FOUND" };
   }
 
@@ -325,7 +327,6 @@ export async function validateOperationalActivityContext(
     SELECT "id"
     FROM "tipo_actividad"
     WHERE "id" = ${activity.tipoActividad.id}::uuid
-      AND "is_active" = true
       AND "deleted_at" IS NULL
     FOR UPDATE
   `;

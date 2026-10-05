@@ -1,0 +1,29 @@
+.settings-workspace { display: grid; gap: 18px; }
+.settings-sections, .catalog-kinds { display: flex; gap: 8px; flex-wrap: wrap; }
+.settings-sections > button, .catalog-kinds > button { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 12px 18px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink-2); background: var(--white); font-weight: 600; cursor: pointer; }
+.settings-sections > button[aria-pressed="true"] { color: var(--white); background: var(--ink-2); border-color: var(--ink-2); }
+.catalog-kinds { padding: 18px 24px; border-bottom: 1px solid var(--line); background: var(--paper); }
+.catalog-kinds > button[aria-pressed="true"] { border-color: var(--teal); background: var(--teal-soft); box-shadow: inset 0 -3px var(--teal); }
+.catalogs-workspace button:focus-visible, .settings-sections button:focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
+.catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 22px 24px 0; }
+.catalog-toolbar h3, .catalog-editor h3 { margin: 0 0 8px; color: var(--ink); font: 700 19px/1.3 "Bahnschrift", "Segoe UI", sans-serif; }
+.catalog-toolbar p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.catalog-editor h3 { margin-bottom: 20px; }
+.catalog-editor textarea { padding: 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--white); resize: vertical; min-height: 90px; font: inherit; }
+.catalog-editor input[readonly] { color: var(--muted); background: var(--paper); font-family: "Consolas", monospace; }
+.catalog-active { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: 13px; }
+.catalog-active input { width: 20px; height: 20px; accent-color: var(--teal); }
+.catalog-retention { margin: 16px 0 0; padding: 12px 15px; border-left: 3px solid var(--teal); background: var(--teal-soft); color: var(--ink-2); font-size: 12px; line-height: 1.7; }
+.catalog-loading { padding: 20px 24px; color: var(--muted); }
+.catalog-table code { display: block; color: var(--ink-2); font: 11px/1.8 "Consolas", monospace; overflow-wrap: anywhere; }
+.catalog-table td:first-child { max-width: 420px; overflow-wrap: anywhere; }
+.catalog-row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.catalog-history { margin: 24px; padding: 22px; background: var(--paper); border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 8px; }
+.catalog-history > header { display: flex; gap: 16px; justify-content: space-between; align-items: center; }
+.catalog-history h3 { margin: 6px 0; color: var(--ink); font-size: 18px; }
+.catalog-history > ol { list-style: none; padding: 0; margin: 20px 0 0; }
+.catalog-history > ol > li { padding: 16px 0; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.catalog-history time { display: block; color: var(--muted); }
+.catalog-history li p { margin: 0 0 10px; }
+.catalog-history li ul { padding-left: 20px; }
+@media (max-width: 650px) { .catalog-toolbar, .catalog-history > header { flex-direction: column; align-items: flex-start; } .catalog-kinds { padding: 16px; } .catalog-history { margin: 16px; padding: 16px; } }

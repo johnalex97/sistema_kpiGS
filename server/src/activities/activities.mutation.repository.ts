@@ -263,7 +263,7 @@ async function updateActivity(
   if (!before) return { kind: "ACTIVITY_NOT_FOUND" };
   if (before.status !== "PENDING") return { kind: "INVALID_ACTIVITY_STATE" };
   if (before.version !== input.version) return { kind: "VERSION_CONFLICT" };
-  if (input.activityTypeId !== undefined && !(await transaction.tipoActividad.findFirst({ where: { id: input.activityTypeId, isActive: true, deletedAt: null }, select: { id: true } }))) {
+  if (input.activityTypeId !== undefined && !(await transaction.tipoActividad.findFirst({ where: { id: input.activityTypeId, ...(input.activityTypeId !== before.tipoActividad.id && { isActive: true }), deletedAt: null }, select: { id: true } }))) {
     return { kind: "ACTIVITY_TYPE_NOT_FOUND" };
   }
   const changed = await transaction.actividad.updateMany({
@@ -300,7 +300,7 @@ async function replaceActivityTeam(
     activityTypeId: before.tipoActividad.id,
     description: before.description,
     team: input.team,
-  }, actor);
+  }, actor, before.tipoActividad.id);
   if ("kind" in context) return context;
   const changed = await transaction.actividad.updateMany({
     where: { id, version: input.version, status: "PENDING", deletedAt: null },

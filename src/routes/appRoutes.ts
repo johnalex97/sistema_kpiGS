@@ -8,7 +8,7 @@ export const pageDescriptions: Record<Page, string> = {
   Análisis: "Consulta el desempeño, las alertas y la evolución autorizada del equipo.",
   Reincidencias: "Detecta trabajos repetidos, causas y técnicos participantes.",
   Clientes: "Consulta empresas, ubicaciones y contactos para atender cada servicio.",
-  Configuración: "Administra las cuentas de acceso del equipo de Geek Solution.",
+  Configuración: "Administra los accesos y catálogos de Geek Solution.",
 };
 
 const pageByPath: Record<PagePath, Page> = {

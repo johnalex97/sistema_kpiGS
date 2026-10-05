@@ -161,7 +161,8 @@ describe("ActivityForm", () => {
       observations: "Llevar escalera", team: [], pauses: [],
     };
     const onSubmit = vi.fn(async () => undefined);
-    render(<ActivityForm variant="edit" initialActivity={initialActivity} activityTypes={activityTypes} lookupApi={lookupApi()} actor={technicianActor} onSubmit={onSubmit} onCancel={vi.fn()} />);
+    render(<ActivityForm variant="edit" initialActivity={initialActivity} activityTypes={[]} lookupApi={lookupApi()} actor={technicianActor} onSubmit={onSubmit} onCancel={vi.fn()} />);
+    expect(screen.getByRole("option", { name: "Soporte (inactiva)" })).toBeInTheDocument();
 
     expect(screen.queryByText("Modo de registro")).not.toBeInTheDocument();
     expect(screen.queryByText("Origen del trabajo")).not.toBeInTheDocument();

@@ -902,7 +902,7 @@ describe("orders mutation repository administrative editing", () => {
     expect(result).toEqual({ kind: "RESOURCE_INACTIVE" });
   });
 
-  it("revalidates the stored service when changing the branch and leaves the aggregate untouched", async () => {
+  it("rejects a deleted stored service when changing the branch and leaves the aggregate untouched", async () => {
     const repository = createOrdersMutationRepository(database);
     const orderId = fixture.orderIds.PENDING;
     const before = await database.ordenTrabajo.findUniqueOrThrow({
@@ -917,7 +917,7 @@ describe("orders mutation repository administrative editing", () => {
 
     await database.tipoServicio.update({
       where: { id: fixture.parents.activeServiceTypeId },
-      data: { isActive: false },
+      data: { deletedAt: now },
     });
     try {
       await expect(
@@ -951,7 +951,7 @@ describe("orders mutation repository administrative editing", () => {
     } finally {
       await database.tipoServicio.update({
         where: { id: fixture.parents.activeServiceTypeId },
-        data: { isActive: true },
+        data: { isActive: true, deletedAt: null },
       });
     }
   });

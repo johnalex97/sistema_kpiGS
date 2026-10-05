@@ -762,18 +762,12 @@ async function updateOrder(
     return { kind: "INVALID_ORDER_TRANSITION" } as const;
   }
 
-  const parentsChanged =
-    (input.branchId !== undefined && input.branchId !== locked.branchId) ||
-    (input.serviceTypeId !== undefined &&
-      input.serviceTypeId !== locked.serviceTypeId);
-  if (
-    parentsChanged &&
-    !(await hasActiveParents(
-      transaction,
-      input.branchId ?? locked.branchId,
-      input.serviceTypeId ?? locked.serviceTypeId,
-    ))
-  ) {
+  const branchChanged = input.branchId !== undefined && input.branchId !== locked.branchId;
+  const serviceChanged = input.serviceTypeId !== undefined && input.serviceTypeId !== locked.serviceTypeId;
+  const retainedService = serviceChanged ? true : await transaction.tipoServicio.findFirst({ where: { id: locked.serviceTypeId, deletedAt: null }, select: { id: true } });
+  if ((branchChanged || serviceChanged) &&
+      (!(await hasActiveBranch(transaction, input.branchId ?? locked.branchId)) || !retainedService ||
+      (serviceChanged && !(await hasActiveServiceType(transaction, input.serviceTypeId!))))) {
     return { kind: "RESOURCE_INACTIVE" } as const;
   }
 
