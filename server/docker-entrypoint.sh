@@ -6,5 +6,6 @@ if [ -z "${DATABASE_URL:-}" ]; then
   exit 1
 fi
 
+node dist/src/scripts/prepare-evidence-storage.js
 ./node_modules/.bin/prisma migrate deploy
 exec npm start

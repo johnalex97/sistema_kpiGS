@@ -17,7 +17,7 @@ Guarda el host interno, puerto, usuario y nombre de base únicamente en las vari
 2. Configurar exactamente `server` como **Build Path** y `Dockerfile` como **Dockerfile**. Así el contexto de build no incluye la raíz del repositorio ni el frontend.
 3. Exponer el puerto interno `4000` y crear un dominio temporal HTTPS para la API.
 4. Añadir las variables de [api.env.example](api.env.example) como variables protegidas. Reemplazar todos los marcadores; no copiar credenciales reales a Git.
-5. Crear un volumen privado para evidencias y montarlo en `/data/evidences`. Antes del primer arranque, preparar esa raíz con permisos de dueño solamente (`0700`) mediante la terminal o tarea de inicialización de Easypanel. El proceso en producción exige una raíz existente, privada, legible y escribible.
+5. Crear un volumen privado para evidencias y montarlo en `/data/evidences`, con `EVIDENCE_STORAGE_PATH=/data/evidences`. El entrypoint configura automáticamente permisos de dueño solamente (`0700`) antes de iniciar en producción. La raíz debe existir, ser un directorio real y permitir lectura y escritura; si falta el montaje o falla la preparación, el contenedor se detiene con un mensaje de diagnóstico.
 6. Desplegar. El entrypoint ejecuta `prisma migrate deploy`; si falla, la API no inicia. No ejecutar `prisma db push`.
 
 Configura el health check HTTP como `GET /api/v1/health` sobre el puerto `4000`. Espera una respuesta `200` antes de publicar el frontend. Si Easypanel permite intervalo y espera inicial, usar una espera que cubra la migración más lenta esperada; no declarar saludable el servicio antes de completar las migraciones.
