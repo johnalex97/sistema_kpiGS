@@ -12,4 +12,13 @@ export const usersApi = {
   changeRole(id: string, role: UserRole, version: number) {
     return requestJson<UserAccount>(`/users/${encodeURIComponent(id)}/role`, { method: "PATCH", body: JSON.stringify({ role, version }) });
   },
+  changeStatus(id: string, status: "ACTIVE" | "INACTIVE", version: number) {
+    return requestJson<UserAccount>(`/users/${encodeURIComponent(id)}/status`, { method: "PATCH", body: JSON.stringify({ status, version }) });
+  },
+  unlock(id: string, version: number) {
+    return requestJson<UserAccount>(`/users/${encodeURIComponent(id)}/unlock`, { method: "POST", body: JSON.stringify({ version }) });
+  },
+  resetPassword(id: string, temporaryPassword: string, version: number) {
+    return requestJson<UserAccount>(`/users/${encodeURIComponent(id)}/reset-password`, { method: "POST", body: JSON.stringify({ temporaryPassword, version }) });
+  },
 };

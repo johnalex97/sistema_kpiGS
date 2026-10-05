@@ -9,6 +9,7 @@ import { requireAllowedOrigin } from "../middlewares/origin.middleware.js";
 import { requirePasswordChanged, requirePermission } from "../middlewares/permission.middleware.js";
 import { ApiError } from "../utils/api-error.js";
 import { changeUserRole } from "./users.roles.js";
+import { changeUserAccess, type UserAccessChange } from "./users.access.js";
 
 const createSchema = z.object({
   displayName: z.string().trim().min(2).max(160),
@@ -28,10 +29,14 @@ const querySchema = z.object({
 
 const roleSchema = z.object({ role: z.enum(["ADMIN", "SUPERVISOR", "TECHNICIAN"]), version: z.number().int().positive() }).strict();
 const userIdSchema = z.object({ id: z.string().uuid() });
+const versionSchema = z.object({ version: z.number().int().positive() }).strict();
+const statusSchema = versionSchema.extend({ status: z.enum(["ACTIVE", "INACTIVE"]) });
+const resetPasswordSchema = versionSchema.extend({ temporaryPassword: createSchema.shape.temporaryPassword });
 
 const userSelect = {
   id: true, email: true, displayName: true, status: true,
   mustChangePassword: true, createdAt: true, version: true,
+  failedLoginAttempts: true, lockedUntil: true,
   roles: { select: { rol: { select: { code: true } } } },
   tecnico: { select: { id: true, fullName: true } },
 } satisfies Prisma.UsuarioSelect;
@@ -132,6 +137,45 @@ export function createUsersRouter(env: Environment, database: PrismaClient, auth
         }
       }
     } catch (error) { next(error); }
+  });
+  async function accessAction(req: Request, res: Response, action: UserAccessChange["action"]) {
+    if (!req.auth!.roles.includes("ADMIN")) throw new ApiError(403, "Solo un administrador puede gestionar accesos", "FORBIDDEN");
+    const { id } = parse(userIdSchema, req.params);
+    let input: UserAccessChange;
+    if (action === "status") input = { action, ...parse(statusSchema, req.body) };
+    else if (action === "unlock") input = { action, ...parse(versionSchema, req.body) };
+    else {
+      const parsed = parse(resetPasswordSchema, req.body);
+      input = { action, version: parsed.version, passwordHash: await hashPassword(parsed.temporaryPassword) };
+    }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const user = await database.$transaction(async tx => {
+          await changeUserAccess(tx, id, input, {
+            userId: req.auth!.userId, requestId: req.requestId,
+            ipAddress: req.ip || null, userAgent: req.header("user-agent")?.slice(0, 500) ?? null,
+          });
+          return tx.usuario.findUniqueOrThrow({ where: { id }, select: userSelect });
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        respond(req, res, 200, action === "status" ? "Estado de cuenta actualizado" : action === "unlock" ? "Intentos fallidos restablecidos" : "Contraseña temporal restablecida", publicUser(user));
+        return;
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+          if (attempt < 3) continue;
+          throw new ApiError(409, "Otro administrador está modificando accesos. Actualiza e intenta de nuevo", "USER_VERSION_CONFLICT");
+        }
+        throw error;
+      }
+    }
+  }
+  router.patch("/:id/status", requireAllowedOrigin(env.CORS_ORIGINS), ...security, async (req, res, next) => {
+    try { await accessAction(req, res, "status"); } catch (error) { next(error); }
+  });
+  router.post("/:id/unlock", requireAllowedOrigin(env.CORS_ORIGINS), ...security, async (req, res, next) => {
+    try { await accessAction(req, res, "unlock"); } catch (error) { next(error); }
+  });
+  router.post("/:id/reset-password", requireAllowedOrigin(env.CORS_ORIGINS), ...security, async (req, res, next) => {
+    try { await accessAction(req, res, "reset-password"); } catch (error) { next(error); }
   });
   return router;
 }

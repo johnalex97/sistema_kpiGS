@@ -15,6 +15,6 @@ export function SettingsPage() {
       <button type="button" disabled={saving} aria-pressed={section === "users"} onClick={() => setSection("users")}><Users size={18} aria-hidden="true" />Usuarios</button>
       {administrator && <button type="button" disabled={saving} aria-pressed={section === "catalogs"} onClick={() => setSection("catalogs")}><BookOpen size={18} aria-hidden="true" />Catálogos</button>}
     </nav>
-    {section === "catalogs" && administrator ? <CatalogsSettingsPage onSavingChange={setSaving} /> : <UsersSettingsPage />}
+    {section === "catalogs" && administrator ? <CatalogsSettingsPage onSavingChange={setSaving} /> : <UsersSettingsPage onSavingChange={setSaving} />}
   </div>;
 }

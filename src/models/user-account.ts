@@ -8,6 +8,8 @@ export interface UserAccount {
   tecnico: { id: string; fullName: string } | null;
   createdAt: string;
   version: number;
+  failedLoginAttempts: number;
+  lockedUntil: string | null;
 }
 
 export type UserRole = "ADMIN" | "SUPERVISOR" | "TECHNICIAN";

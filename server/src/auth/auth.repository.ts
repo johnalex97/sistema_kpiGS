@@ -1,4 +1,5 @@
 import type { PrismaClient } from "../../generated/prisma/client.js";
+import { ApiError } from "../utils/api-error.js";
 import type {
   AuthPrincipal,
   AuthRequestContext,
@@ -34,6 +35,7 @@ interface AuthorizationUser {
 }
 
 export interface LoginAccount extends AuthorizationUser {
+  version: number;
   status: string;
   passwordHash: string | null;
   failedLoginAttempts: number;
@@ -85,6 +87,8 @@ export interface AuthRepository {
   ): Promise<void>;
   completeLogin(input: {
     userId: string;
+    expectedPasswordHash: string;
+    expectedVersion: number;
     tokenHash: string;
     now: Date;
     expiresAt: Date;
@@ -101,6 +105,9 @@ export interface AuthRepository {
   ): Promise<void>;
   changePasswordAndRotateSession(input: {
     userId: string;
+    sessionId: string;
+    expectedPasswordHash: string;
+    expectedVersion: number;
     passwordHash: string;
     tokenHash: string;
     now: Date;
@@ -136,11 +143,13 @@ export function createAuthRepository(database: PrismaClient): AuthRepository {
           : null;
 
       await database.$transaction(async (transaction) => {
-        await transaction.usuario.update({
-          where: { id: account.id },
+        const changed = await transaction.usuario.updateMany({
+          where: { id: account.id, version: account.version, passwordHash: account.passwordHash,
+            status: "ACTIVE", deletedAt: null,
+          },
           data: { failedLoginAttempts: attempts, lockedUntil },
         });
-        if (lockedUntil) {
+        if (changed.count === 1 && lockedUntil) {
           await transaction.auditoria.create({
             data: {
               userId: account.id,
@@ -157,17 +166,22 @@ export function createAuthRepository(database: PrismaClient): AuthRepository {
       });
     },
 
-    async completeLogin({ userId, tokenHash, now, expiresAt, context }) {
+    async completeLogin({ userId, expectedPasswordHash, expectedVersion, tokenHash, now, expiresAt, context }) {
       return database.$transaction(async (transaction) => {
-        const user = await transaction.usuario.update({
-          where: { id: userId },
+        // La comprobación y el bloqueo de fila ocurren antes de emitir la sesión.
+        const changed = await transaction.usuario.updateMany({
+          where: { id: userId, status: "ACTIVE", deletedAt: null,
+            passwordHash: expectedPasswordHash, version: expectedVersion,
+            OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
+          },
           data: {
             failedLoginAttempts: 0,
             lockedUntil: null,
             lastLoginAt: now,
           },
-          include: authorizationInclude,
         });
+        if (changed.count !== 1) throw new ApiError(401, "Credenciales inválidas o cuenta no disponible", "INVALID_CREDENTIALS");
+        const user = await transaction.usuario.findUniqueOrThrow({ where: { id: userId }, include: authorizationInclude });
         const session = await transaction.sesion.create({
           data: {
             userId,
@@ -239,6 +253,9 @@ export function createAuthRepository(database: PrismaClient): AuthRepository {
 
     async changePasswordAndRotateSession({
       userId,
+      sessionId,
+      expectedPasswordHash,
+      expectedVersion,
       passwordHash,
       tokenHash,
       now,
@@ -246,17 +263,21 @@ export function createAuthRepository(database: PrismaClient): AuthRepository {
       context,
     }) {
       return database.$transaction(async (transaction) => {
-        const user = await transaction.usuario.update({
-          where: { id: userId },
+        const changed = await transaction.usuario.updateMany({
+          where: { id: userId, status: "ACTIVE", deletedAt: null, passwordHash: expectedPasswordHash, version: expectedVersion },
           data: {
             passwordHash,
             passwordChangedAt: now,
             mustChangePassword: false,
             failedLoginAttempts: 0,
             lockedUntil: null,
+            version: { increment: 1 },
           },
-          include: authorizationInclude,
         });
+        if (changed.count !== 1) throw new ApiError(401, "Credenciales inválidas o cuenta no disponible", "INVALID_CREDENTIALS");
+        const currentSession = await transaction.sesion.findFirst({ where: { id: sessionId, userId, revokedAt: null, expiresAt: { gt: now } }, select: { id: true } });
+        if (!currentSession) throw new ApiError(401, "La sesión ya no está disponible. Inicia sesión nuevamente", "INVALID_CREDENTIALS");
+        const user = await transaction.usuario.findUniqueOrThrow({ where: { id: userId }, include: authorizationInclude });
         await transaction.sesion.updateMany({
           where: { userId, revokedAt: null },
           data: { revokedAt: now },

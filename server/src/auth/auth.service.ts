@@ -103,6 +103,8 @@ export function createAuthService({
       const token = createSessionToken();
       const result = await repository.completeLogin({
         userId: account.id,
+        expectedPasswordHash: account.passwordHash!,
+        expectedVersion: account.version,
         tokenHash: token.tokenHash,
         now: currentTime,
         expiresAt: new Date(
@@ -171,6 +173,9 @@ export function createAuthService({
       const token = createSessionToken();
       const result = await repository.changePasswordAndRotateSession({
         userId: principal.userId,
+        sessionId: principal.sessionId,
+        expectedPasswordHash: account.passwordHash,
+        expectedVersion: account.version,
         passwordHash,
         tokenHash: token.tokenHash,
         now: currentTime,

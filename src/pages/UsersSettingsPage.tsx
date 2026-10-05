@@ -3,17 +3,18 @@ import { Search, ShieldCheck, UserPlus } from "lucide-react";
 import { usersApi } from "../api/users";
 import { useAuth } from "../auth/useAuth";
 import { PasswordField } from "../components/auth/PasswordField";
+import { UserAccessForm, type AccessAction } from "../components/users/UserAccessForm";
 import type { UserAccount, UserAccountPage, UserRole } from "../models/user-account";
 import "../components/users/users.css";
 
 const roleLabels: Record<string, string> = { ADMIN: "Administrador", SUPERVISOR: "Supervisor", TECHNICIAN: "Técnico" };
 const statusLabels: Record<string, string> = { ACTIVE: "Activa", PENDING: "Pendiente", INACTIVE: "Inactiva", BLOCKED: "Bloqueada" };
 
-export function UsersSettingsPage() {
+export function UsersSettingsPage({ onSavingChange }: { onSavingChange?: (saving: boolean) => void }) {
   const { hasPermission, user } = useAuth();
   const allowed = hasPermission("USERS_MANAGE");
   const canChangeRoles = allowed && user?.roles.includes("ADMIN");
-  const [listState, setListState] = useState<{ key: string; data: UserAccountPage | null; error: string | null }>({ key: "", data: null, error: null });
+  const [listState, setListState] = useState<{ key: string; data: UserAccountPage | null; error: string | null; checkedAt: number }>({ key: "", data: null, error: null, checkedAt: 0 });
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -36,6 +37,18 @@ export function UsersSettingsPage() {
   const [roleSaving, setRoleSaving] = useState(false);
   const roleSavingRef = useRef(false);
   const [roleError, setRoleError] = useState<string | null>(null);
+  const [access, setAccess] = useState<{ account: UserAccount; action: AccessAction } | null>(null);
+  const [accessSaving, setAccessSaving] = useState(false);
+  const busy = saving || roleSaving || accessSaving;
+  useEffect(() => {
+    onSavingChange?.(busy);
+    return () => onSavingChange?.(false);
+  }, [busy, onSavingChange]);
+
+  function openAccess(account: UserAccount, action: AccessAction) {
+    clearForm(); setOpen(false); setEditing(null); setRoleError(null); setNotice(null);
+    setAccess({ account, action });
+  }
 
   async function saveRole(event: FormEvent) {
     event.preventDefault();
@@ -58,9 +71,9 @@ export function UsersSettingsPage() {
     if (!allowed) return;
     const controller = new AbortController();
     void usersApi.list(query, page, controller.signal).then(result => {
-      if (!controller.signal.aborted) setListState({ key: requestKey, data: result, error: null });
+      if (!controller.signal.aborted) setListState({ key: requestKey, data: result, error: null, checkedAt: Date.now() });
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setListState(current => ({ key: requestKey, data: current.data, error: error instanceof Error ? error.message : "No fue posible consultar los usuarios" }));
+      if (!controller.signal.aborted) setListState(current => ({ ...current, key: requestKey, error: error instanceof Error ? error.message : "No fue posible consultar los usuarios" }));
     });
     return () => controller.abort();
   }, [allowed, query, page, requestKey]);
@@ -94,12 +107,13 @@ export function UsersSettingsPage() {
 
   if (!allowed) return <p>No tienes permiso para administrar usuarios.</p>;
 
-  return <section className="users-workspace" aria-labelledby="users-heading">
+  return <section className="users-workspace users-accounts-workspace" aria-labelledby="users-heading">
     <header className="users-header">
-      <div><p className="eyebrow">Acceso del equipo</p><h2 id="users-heading">Usuarios</h2><p>Crea las cuentas con las que tus técnicos registran su jornada.</p></div>
-      <button className="button button--primary" type="button" disabled={open || roleSaving} onClick={() => { clearForm(); setEditing(null); setNotice(null); setOpen(true); }}><UserPlus size={17} aria-hidden="true" />Nuevo usuario</button>
+      <div><p className="eyebrow">Acceso del equipo</p><h2 id="users-heading">Usuarios</h2><p>Administra las cuentas y el acceso del equipo sin perder su historial laboral.</p></div>
+      <button className="button button--primary" type="button" disabled={open || busy} onClick={() => { clearForm(); setEditing(null); setAccess(null); setNotice(null); setOpen(true); }}><UserPlus size={17} aria-hidden="true" />Nuevo usuario</button>
     </header>
     {notice && <p className="users-notice" role="status">{notice}</p>}
+    {access && canChangeRoles && <UserAccessForm key={`${access.account.id}-${access.action}`} account={access.account} action={access.action} onCancel={() => setAccess(null)} onSavingChange={setAccessSaving} onSaved={message => { setNotice(message); setAccess(null); setRevision(value => value + 1); }} />}
     {editing && canChangeRoles && <form className="users-form" aria-labelledby="users-role-heading" onSubmit={event => void saveRole(event)}>
       <div className="users-form-intro"><ShieldCheck size={23} aria-hidden="true" /><div><h3 id="users-role-heading">Cambiar rol de {editing.displayName}</h3><p>{editing.email} · Rol actual: {editing.roles.map(role => roleLabels[role] ?? role).join(", ") || "Sin rol"}</p></div></div>
       <fieldset disabled={roleSaving}>
@@ -131,8 +145,20 @@ export function UsersSettingsPage() {
     {listError && <div className="users-error" role="alert">{listError} <button type="button" onClick={() => setRevision(value => value + 1)}>Reintentar</button></div>}
     {loading && <p className="users-help">Consultando usuarios…</p>}
     {!listError && data && <>
-      <div className="users-table-wrap" aria-busy={loading}><table className="users-table"><caption className="sr-only">Cuentas de acceso al sistema</caption><thead><tr><th scope="col">Usuario</th><th scope="col">Rol</th><th scope="col">Estado</th><th scope="col">Perfil del técnico</th><th scope="col">Primer acceso</th>{canChangeRoles && <th scope="col">Acciones</th>}</tr></thead><tbody>
-        {data.items.map(account => <tr key={account.id}><td><strong>{account.displayName}</strong><span>{account.email}</span></td><td>{account.roles.map(role => roleLabels[role] ?? role).join(", ") || "Sin rol"}</td><td><span className={`users-badge ${account.status === "ACTIVE" ? "is-active" : ""}`}>{statusLabels[account.status] ?? account.status}</span></td><td>{account.tecnico?.fullName ?? (account.roles.includes("TECHNICIAN") ? "Sin vincular" : "No aplica")}</td><td>{account.mustChangePassword ? "Cambio de contraseña pendiente" : "Contraseña actualizada"}</td>{canChangeRoles && <td>{account.id === user?.id ? "Tu cuenta" : <button className="button button--secondary" type="button" aria-label={`Cambiar rol de ${account.displayName}`} disabled={loading || saving || roleSaving} onClick={() => { clearForm(); setOpen(false); setNotice(null); setRoleError(null); setEditing(account); setNewRole(account.roles.length === 1 && ["ADMIN", "SUPERVISOR", "TECHNICIAN"].includes(account.roles[0]) ? account.roles[0] as UserRole : "TECHNICIAN"); }}>Cambiar rol</button>}</td>}</tr>)}
+      <div className="users-table-wrap" aria-busy={loading}><table className="users-table" role="table"><caption className="sr-only">Cuentas de acceso al sistema</caption><thead role="rowgroup"><tr role="row"><th scope="col">Usuario</th><th scope="col">Rol</th><th scope="col">Estado</th><th scope="col">Perfil del técnico</th><th scope="col">Contraseña</th>{canChangeRoles && <th scope="col">Acciones</th>}</tr></thead><tbody role="rowgroup">
+        {data.items.map(account => <tr key={account.id} role="row">
+          <td role="cell" data-label="Usuario"><span className="users-cell-label" aria-hidden="true">Usuario</span><strong>{account.displayName}</strong><span>{account.email}</span></td>
+          <td role="cell" data-label="Rol"><span className="users-cell-label" aria-hidden="true">Rol</span>{account.roles.map(role => roleLabels[role] ?? role).join(", ") || "Sin rol"}</td>
+          <td role="cell" data-label="Estado"><span className="users-cell-label" aria-hidden="true">Estado</span><span className={`users-badge ${account.status === "ACTIVE" ? "is-active" : ""}`}>{statusLabels[account.status] ?? account.status}</span>{(account.failedLoginAttempts ?? 0) > 0 && <p className="users-lock-detail">{account.failedLoginAttempts} intentos fallidos{account.lockedUntil && new Date(account.lockedUntil).getTime() > listState.checkedAt ? " · Bloqueo temporal" : ""}</p>}</td>
+          <td role="cell" data-label="Perfil del técnico"><span className="users-cell-label" aria-hidden="true">Perfil del técnico</span>{account.tecnico?.fullName ?? (account.roles.includes("TECHNICIAN") ? "Sin vincular" : "No aplica")}</td>
+          <td role="cell" data-label="Contraseña"><span className="users-cell-label" aria-hidden="true">Contraseña</span>{account.mustChangePassword ? "Cambio de contraseña pendiente" : "Contraseña actualizada"}</td>
+          {canChangeRoles && <td role="cell" data-label="Acciones"><span className="users-cell-label" aria-hidden="true">Acciones</span>{account.id === user?.id ? "Tu cuenta" : <div className="users-row-actions">
+            <button className="button button--secondary" type="button" aria-label={`Cambiar rol de ${account.displayName}`} disabled={loading || busy} onClick={() => { clearForm(); setOpen(false); setAccess(null); setNotice(null); setRoleError(null); setEditing(account); setNewRole(account.roles.length === 1 && ["ADMIN", "SUPERVISOR", "TECHNICIAN"].includes(account.roles[0]) ? account.roles[0] as UserRole : "TECHNICIAN"); }}>Cambiar rol</button>
+            <button className="button button--secondary" type="button" disabled={loading || busy} aria-label={`${account.status === "ACTIVE" ? "Desactivar" : "Activar"} cuenta de ${account.displayName}`} onClick={() => openAccess(account, account.status === "ACTIVE" ? "deactivate" : "activate")}>{account.status === "ACTIVE" ? "Desactivar" : "Activar"}</button>
+            <button className="button button--secondary" type="button" disabled={loading || busy || (!(account.failedLoginAttempts > 0) && !account.lockedUntil)} aria-label={`Desbloquear cuenta de ${account.displayName}`} onClick={() => openAccess(account, "unlock")}>Desbloquear</button>
+            <button className="button button--secondary" type="button" disabled={loading || busy} aria-label={`Restablecer contraseña de ${account.displayName}`} onClick={() => openAccess(account, "reset-password")}>Restablecer contraseña</button>
+          </div>}</td>}
+        </tr>)}
       </tbody></table></div>
       {data.items.length === 0 && <p className="users-empty">No hay usuarios para esta búsqueda. Puedes crear una cuenta con Nuevo usuario.</p>}
       <footer className="users-pagination"><span>{data.pagination.totalItems} cuentas · Página {page} de {Math.max(1, data.pagination.totalPages)}</span><div><button type="button" className="button button--secondary" disabled={loading || page <= 1} onClick={() => setPage(value => value - 1)}>Anterior</button><button type="button" className="button button--secondary" disabled={loading || page >= data.pagination.totalPages} onClick={() => setPage(value => value + 1)}>Siguiente</button></div></footer>
