@@ -6,7 +6,7 @@ import { UsersSettingsPage } from "./UsersSettingsPage";
 
 const administrator = { ...adminUser, permissions: [...adminUser.permissions, "USERS_MANAGE"] };
 const account = { id: "new-user", email: "ana@example.test", displayName: "Ana Técnica", status: "ACTIVE",
-  mustChangePassword: true, roles: ["TECHNICIAN"], tecnico: null, createdAt: "2026-10-05T00:00:00Z" };
+  mustChangePassword: true, roles: ["TECHNICIAN"], tecnico: null, version: 1, createdAt: "2026-10-05T00:00:00Z" };
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify({ data }), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -23,6 +23,52 @@ async function fillForm() {
 }
 
 describe("usuarios en configuración", () => {
+  it("conserva el editor y el rol original cuando el servidor rechaza el cambio", async () => {
+    vi.mocked(fetch).mockImplementation(async (_input, init) => init?.method === "PATCH"
+      ? new Response(JSON.stringify({ errors: [{ code: "USER_VERSION_CONFLICT", message: "La cuenta cambió. Actualiza el listado" }] }), { status: 409 })
+      : json({ items: [account], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }));
+    renderWithAuth(<UsersSettingsPage />, { user: administrator });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: `Cambiar rol de ${account.displayName}` }));
+    await user.selectOptions(screen.getByLabelText("Nuevo rol"), "SUPERVISOR");
+    await user.click(screen.getByRole("button", { name: "Guardar rol" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("La cuenta cambió");
+    expect(screen.getByLabelText("Nuevo rol")).toHaveValue("SUPERVISOR");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Guardar rol" })).toBeEnabled());
+  });
+
+  it("no permite cambiar roles a un supervisor aunque pueda gestionar usuarios", async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ items: [account], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }));
+    renderWithAuth(<UsersSettingsPage />, { user: { ...administrator, roles: ["SUPERVISOR"] } });
+    await screen.findByText(account.email);
+    expect(screen.queryByRole("button", { name: `Cambiar rol de ${account.displayName}` })).not.toBeInTheDocument();
+  });
+
+  it("cambia el rol después de confirmar y actualiza el listado", async () => {
+    let changed = false;
+    vi.mocked(fetch).mockImplementation(async (_input, init) => {
+      if (init?.method === "PATCH") { changed = true; return json({ ...account, roles: ["SUPERVISOR"], version: 2 }); }
+      return json({ items: [{ ...account, roles: changed ? ["SUPERVISOR"] : ["TECHNICIAN"] }], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } });
+    });
+    renderWithAuth(<UsersSettingsPage />, { user: administrator });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: `Cambiar rol de ${account.displayName}` }));
+    await user.selectOptions(screen.getByLabelText("Nuevo rol"), "SUPERVISOR");
+    expect(screen.getByText(/Se cerrarán las sesiones/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Guardar rol" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Rol actualizado");
+    const mutation = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(String(mutation?.[1]?.body))).toEqual({ role: "SUPERVISOR", version: 1 });
+    expect(await screen.findByText("Supervisor")).toBeInTheDocument();
+  });
+
+  it("no muestra el cambio de rol para la cuenta del administrador conectado", async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ items: [{ ...account, id: administrator.id, displayName: administrator.displayName, roles: ["ADMIN"] }], pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } }));
+    renderWithAuth(<UsersSettingsPage />, { user: administrator });
+    await screen.findByText(account.email);
+    expect(screen.queryByRole("button", { name: `Cambiar rol de ${administrator.displayName}` })).not.toBeInTheDocument();
+  });
   it("crea la cuenta y muestra cómo vincularla sin conservar la contraseña en pantalla", async () => {
     let created = false;
     vi.mocked(fetch).mockImplementation(async (_input, init) => {

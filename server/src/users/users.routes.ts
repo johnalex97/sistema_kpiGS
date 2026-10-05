@@ -8,6 +8,7 @@ import { createAuthenticationMiddleware } from "../middlewares/authentication.mi
 import { requireAllowedOrigin } from "../middlewares/origin.middleware.js";
 import { requirePasswordChanged, requirePermission } from "../middlewares/permission.middleware.js";
 import { ApiError } from "../utils/api-error.js";
+import { changeUserRole } from "./users.roles.js";
 
 const createSchema = z.object({
   displayName: z.string().trim().min(2).max(160),
@@ -25,9 +26,12 @@ const querySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 }).strict();
 
+const roleSchema = z.object({ role: z.enum(["ADMIN", "SUPERVISOR", "TECHNICIAN"]), version: z.number().int().positive() }).strict();
+const userIdSchema = z.object({ id: z.string().uuid() });
+
 const userSelect = {
   id: true, email: true, displayName: true, status: true,
-  mustChangePassword: true, createdAt: true,
+  mustChangePassword: true, createdAt: true, version: true,
   roles: { select: { rol: { select: { code: true } } } },
   tecnico: { select: { id: true, fullName: true } },
 } satisfies Prisma.UsuarioSelect;
@@ -102,6 +106,32 @@ export function createUsersRouter(env: Environment, database: PrismaClient, auth
         next(new ApiError(409, "Ya existe una cuenta con ese correo", "USER_EMAIL_EXISTS"));
       } else { next(error); }
     }
+  });
+  router.patch("/:id/role", requireAllowedOrigin(env.CORS_ORIGINS), ...security, async (req, res, next) => {
+    try {
+      if (!req.auth!.roles.includes("ADMIN")) throw new ApiError(403, "Solo un administrador puede cambiar roles", "FORBIDDEN");
+      const { id } = parse(userIdSchema, req.params);
+      const input = parse(roleSchema, req.body);
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const user = await database.$transaction(async tx => {
+            await changeUserRole(tx, id, input, {
+              userId: req.auth!.userId, requestId: req.requestId,
+              ipAddress: req.ip || null, userAgent: req.header("user-agent")?.slice(0, 500) ?? null,
+            });
+            return tx.usuario.findUniqueOrThrow({ where: { id }, select: userSelect });
+          }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+          respond(req, res, 200, "Rol actualizado", publicUser(user));
+          return;
+        } catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+            if (attempt < 3) continue;
+            throw new ApiError(409, "Otro administrador está modificando roles. Actualiza e intenta de nuevo", "USER_VERSION_CONFLICT");
+          }
+          throw error;
+        }
+      }
+    } catch (error) { next(error); }
   });
   return router;
 }

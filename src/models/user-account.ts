@@ -7,7 +7,10 @@ export interface UserAccount {
   roles: string[];
   tecnico: { id: string; fullName: string } | null;
   createdAt: string;
+  version: number;
 }
+
+export type UserRole = "ADMIN" | "SUPERVISOR" | "TECHNICIAN";
 
 export interface UserAccountPage {
   items: UserAccount[];

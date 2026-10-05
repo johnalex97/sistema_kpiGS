@@ -1,5 +1,5 @@
 import { requestJson } from "./http";
-import type { CreateUserAccountInput, UserAccount, UserAccountPage } from "../models/user-account";
+import type { CreateUserAccountInput, UserAccount, UserAccountPage, UserRole } from "../models/user-account";
 
 export const usersApi = {
   list(search: string, page: number, signal?: AbortSignal) {
@@ -8,5 +8,8 @@ export const usersApi = {
   },
   create(input: CreateUserAccountInput) {
     return requestJson<UserAccount>("/users", { method: "POST", body: JSON.stringify(input) });
+  },
+  changeRole(id: string, role: UserRole, version: number) {
+    return requestJson<UserAccount>(`/users/${encodeURIComponent(id)}/role`, { method: "PATCH", body: JSON.stringify({ role, version }) });
   },
 };

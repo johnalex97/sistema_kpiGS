@@ -190,7 +190,9 @@ async function userEligibility(
     !user ||
     user.status !== "ACTIVE" ||
     user.deletedAt !== null ||
-    user.roles.length === 0
+    // Una promoción conserva el vínculo laboral existente; los vínculos nuevos
+    // siguen exigiendo el rol TECHNICIAN.
+    (user.roles.length === 0 && (!excludedTechnicianId || user.tecnico?.id !== excludedTechnicianId))
   ) {
     return { kind: "NOT_ELIGIBLE" };
   }
