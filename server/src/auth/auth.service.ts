@@ -31,7 +31,7 @@ export interface AuthService {
     input: LoginInput,
     context: AuthRequestContext,
   ): Promise<{ user: PublicUser; rawToken: string }>;
-  authenticate(rawToken: string): Promise<AuthPrincipal | null>;
+  authenticate(rawToken: string, options?: { touchSession?: boolean }): Promise<AuthPrincipal | null>;
   logout(
     rawToken: string | null,
     context: AuthRequestContext,
@@ -115,7 +115,7 @@ export function createAuthService({
       return { user: result.user, rawToken: token.rawToken };
     },
 
-    async authenticate(rawToken) {
+    async authenticate(rawToken, options) {
       const currentTime = now();
       const session = await repository.findSessionPrincipal(
         hashSessionToken(rawToken),
@@ -128,7 +128,7 @@ export function createAuthService({
       ) {
         return null;
       }
-      if (shouldTouchSession(session.lastSeenAt, currentTime)) {
+      if (options?.touchSession !== false && shouldTouchSession(session.lastSeenAt, currentTime)) {
         await repository.touchSession(session.id, currentTime);
       }
       return mapStoredPrincipal(session);

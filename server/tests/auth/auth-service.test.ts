@@ -73,6 +73,22 @@ function createService() {
 }
 
 describe("authentication service login", () => {
+  it("passive checks preserve last activity and still enforce idle expiration", async () => {
+    const password = "GeekPassive-2026!";
+    const user = await createAdminUser(password);
+    let clock = fixedNow;
+    const service = createAuthService({ repository: createAuthRepository(database), now: () => clock,
+      config: { sessionTtlMinutes: 480, sessionIdleMinutes: 30, maxFailedAttempts: 5, lockMinutes: 15 } });
+    try {
+      const login = await service.login({ email: user.email, password }, requestContext);
+      clock = new Date(fixedNow.getTime() + 10 * 60_000);
+      expect(await service.authenticate(login.rawToken, { touchSession: false })).not.toBeNull();
+      const session = await database.sesion.findFirstOrThrow({ where: { userId: user.id } });
+      expect(session.lastSeenAt).toEqual(fixedNow);
+      clock = new Date(fixedNow.getTime() + 31 * 60_000);
+      expect(await service.authenticate(login.rawToken, { touchSession: false })).toBeNull();
+    } finally { await cleanupUser(user.id); }
+  });
   it("creates a persisted session and returns public authorization data", async () => {
     const password = "GeekLogin-2026!";
     const user = await createAdminUser(password);

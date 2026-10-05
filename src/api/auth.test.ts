@@ -16,6 +16,17 @@ beforeEach(() => vi.mocked(fetch).mockReset());
 afterEach(() => vi.mocked(fetch).mockReset());
 
 describe("authApi", () => {
+  it("consulta la sesión pasiva con cancelación y sin emitir un cierre global", async () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeUnauthorized(listener);
+    const signal = new AbortController().signal;
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ errors: [] }), { status: 401 }));
+    try {
+      await authApi.me({ passive: true, signal }).catch(() => undefined);
+      expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/auth/session"), expect.objectContaining({ signal, credentials: "include" }));
+      expect(listener).not.toHaveBeenCalled();
+    } finally { unsubscribe(); }
+  });
   it("normaliza el correo y envía login con cookies", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ data: { user } }), {
       status: 200,

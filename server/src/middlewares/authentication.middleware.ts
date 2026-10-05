@@ -23,12 +23,13 @@ export function readSessionCookie(cookieHeader: string | undefined): string | nu
 
 export function createAuthenticationMiddleware(
   authService: AuthService,
+  options?: { touchSession?: boolean },
 ): RequestHandler {
   return async (request, _response, next) => {
     try {
       const rawToken = readSessionCookie(request.header("cookie"));
       const principal = rawToken
-        ? await authService.authenticate(rawToken)
+        ? await authService.authenticate(rawToken, options)
         : null;
       if (!principal) {
         next(

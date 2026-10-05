@@ -19,6 +19,7 @@ export function createAuthRouter(
     controller.login,
   );
   router.get("/me", authentication, controller.me);
+  router.get("/session", createAuthenticationMiddleware(service, { touchSession: false }), controller.me);
   router.post(
     "/change-password",
     requireAllowedOrigin(env.CORS_ORIGINS),

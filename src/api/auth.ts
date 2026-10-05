@@ -7,7 +7,7 @@ interface UserEnvelope {
 
 export interface AuthApi {
   login(input: LoginInput): Promise<AuthUser>;
-  me(): Promise<AuthUser>;
+  me(options?: { passive?: boolean; signal?: AbortSignal }): Promise<AuthUser>;
   changePassword(input: ChangePasswordInput): Promise<AuthUser>;
   logout(): Promise<void>;
 }
@@ -21,8 +21,8 @@ export const authApi: AuthApi = {
     return result.user;
   },
 
-  async me() {
-    return (await requestJson<UserEnvelope>("/auth/me", {}, { notifyUnauthorized: false })).user;
+  async me(options) {
+    return (await requestJson<UserEnvelope>(options?.passive ? "/auth/session" : "/auth/me", { signal: options?.signal }, { notifyUnauthorized: false })).user;
   },
 
   async changePassword(input) {

@@ -69,6 +69,26 @@ async function cleanupHttpUser(userId: string): Promise<void> {
 }
 
 describe("authentication HTTP API", () => {
+  it("checks session passively without refreshing activity and rejects a disabled account", async () => {
+    const password = "GeekPassive-2026!";
+    const admin = await createHttpAdmin(password);
+    const app = createApp({ env, logger: silentLogger, database });
+    try {
+      const login = await request(app).post("/api/v1/auth/login").set("Origin", allowedOrigin)
+        .send({ email: admin.email, password }).expect(200);
+      const cookie = firstSetCookie(login.headers).split(";")[0]!;
+      const lastSeenAt = new Date(Date.now() - 120_000);
+      await database.sesion.updateMany({ where: { userId: admin.id }, data: { lastSeenAt } });
+      const response = await request(app).get("/api/v1/auth/session").set("Cookie", cookie).expect(200);
+      expect(response.body.data.user.id).toBe(admin.id);
+      expect(response.headers["cache-control"]).toBe("no-store");
+      expect(JSON.stringify(response.body)).not.toContain("passwordHash");
+      expect((await database.sesion.findFirstOrThrow({ where: { userId: admin.id } })).lastSeenAt).toEqual(lastSeenAt);
+      await database.usuario.update({ where: { id: admin.id }, data: { status: "INACTIVE" } });
+      await request(app).get("/api/v1/auth/session").set("Cookie", cookie).expect(401);
+      await request(app).get("/api/v1/auth/session").expect(401);
+    } finally { await cleanupHttpUser(admin.id); }
+  });
   it("logs in with the public contract and a protected local cookie", async () => {
     const password = "GeekHttp-2026!";
     const admin = await createHttpAdmin(password);
