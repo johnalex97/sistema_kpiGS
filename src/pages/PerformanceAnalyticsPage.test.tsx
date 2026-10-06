@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "../auth/AuthContext";
 import type { PerformanceAnalyticsApi } from "../api/performance-analytics";
 import { PerformanceAnalyticsPage } from "./PerformanceAnalyticsPage";
+const historyApi = { getTrend: vi.fn(() => new Promise<never>(() => {})), searchTechnicians: vi.fn().mockResolvedValue({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } }) };
 
 const summary = {
   status: "PREVIEW" as const,
@@ -22,11 +23,22 @@ function api(rows = summary.rows): PerformanceAnalyticsApi {
 }
 
 describe("PerformanceAnalyticsPage", () => {
+  it("opens the independent history from detail and leaves reports unchanged", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<AuthContext.Provider value={authValue(["KPI_VIEW_ALL"])}><PerformanceAnalyticsPage api={api()} historyApi={historyApi} /></AuthContext.Provider>);
+    await user.click(await screen.findByRole("button", { name: /Ver detalle de Ana L/ }));
+    await user.click(screen.getByRole("button", { name: "Ver historial" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Panel de historial del técnico" })).toHaveFocus();
+    await waitFor(() => expect(historyApi.getTrend).toHaveBeenCalledWith("tech-1", expect.objectContaining({ granularity: "WEEK" }), expect.any(AbortSignal)));
+    rerender(<AuthContext.Provider value={authValue(["KPI_VIEW_ALL"])}><PerformanceAnalyticsPage api={api()} historyApi={historyApi} reportMode /></AuthContext.Provider>);
+    expect(screen.queryByRole("heading", { name: "Historial del técnico" })).not.toBeInTheDocument();
+  });
   it("persists selected period in the URL and lets an authorized user download the CSV", async () => {
     window.history.replaceState({}, "", "/analisis?granularity=WEEK&periodStart=2026-05-04");
     const current = api();
     const user = userEvent.setup();
-    render(<AuthContext.Provider value={authValue(["KPI_VIEW_ALL"])}><PerformanceAnalyticsPage api={current} /></AuthContext.Provider>);
+    render(<AuthContext.Provider value={authValue(["KPI_VIEW_ALL"])}><PerformanceAnalyticsPage api={current} historyApi={historyApi} /></AuthContext.Provider>);
 
     await screen.findByText("Ana López");
     await user.selectOptions(screen.getByLabelText("Periodo"), "MONTH");
@@ -39,7 +51,7 @@ describe("PerformanceAnalyticsPage", () => {
     window.history.replaceState({}, "", "/analisis?granularity=WEEK&periodStart=2026-05-04");
     const current = api();
     const user = userEvent.setup();
-    render(<AuthContext.Provider value={authValue(["KPI_VIEW_ALL"])}><PerformanceAnalyticsPage api={current} /></AuthContext.Provider>);
+    render(<AuthContext.Provider value={authValue(["KPI_VIEW_ALL"])}><PerformanceAnalyticsPage api={current} historyApi={historyApi} /></AuthContext.Provider>);
 
     await screen.findByRole("button", { name: /Ver detalle de Ana L/ });
     await user.selectOptions(screen.getByLabelText("Estado de orden"), "COMPLETED");
@@ -50,7 +62,7 @@ describe("PerformanceAnalyticsPage", () => {
 
   it("does not expose team ranking or average to an own-scope reader and opens a technician detail", async () => {
     const user = userEvent.setup();
-    render(<AuthContext.Provider value={authValue(["KPI_VIEW_OWN"])}><PerformanceAnalyticsPage api={api()} /></AuthContext.Provider>);
+    render(<AuthContext.Provider value={authValue(["KPI_VIEW_OWN"])}><PerformanceAnalyticsPage api={api()} historyApi={historyApi} /></AuthContext.Provider>);
 
     await screen.findByText("Ana López");
     expect(screen.queryByText("Promedio del equipo")).not.toBeInTheDocument();
@@ -71,7 +83,7 @@ describe("PerformanceAnalyticsPage", () => {
       .mockResolvedValueOnce(summary)
       .mockImplementationOnce(() => new Promise((resolve) => { resolveSecondRequest = resolve; }));
     const user = userEvent.setup();
-    render(<AuthContext.Provider value={authValue(["KPI_VIEW_OWN"])}><PerformanceAnalyticsPage api={current} /></AuthContext.Provider>);
+    render(<AuthContext.Provider value={authValue(["KPI_VIEW_OWN"])}><PerformanceAnalyticsPage api={current} historyApi={historyApi} /></AuthContext.Provider>);
 
     await screen.findByRole("button", { name: /Ver detalle de Ana L/ });
     await user.click(screen.getByRole("button", { name: /Ver detalle de Ana L/ }));
@@ -85,7 +97,7 @@ describe("PerformanceAnalyticsPage", () => {
   });
 
   it("guides the user when the authorized period has no data", async () => {
-    render(<AuthContext.Provider value={authValue(["KPI_VIEW_OWN"])}><PerformanceAnalyticsPage api={api([])} /></AuthContext.Provider>);
+    render(<AuthContext.Provider value={authValue(["KPI_VIEW_OWN"])}><PerformanceAnalyticsPage api={api([])} historyApi={historyApi} /></AuthContext.Provider>);
     expect(await screen.findByRole("status", { name: "Sin datos de rendimiento" })).toHaveTextContent("No hay trabajo registrado");
   });
 });

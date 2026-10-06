@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { KpiHistoryApi } from "../api/kpi-history";
+import { KpiHistoryPanel } from "../components/kpi-history/KpiHistoryPanel";
 import { AlertTriangle, Download, RefreshCw } from "lucide-react";
 import { useAuth } from "../auth/useAuth";
 import { createPerformanceAnalyticsApi, type PerformanceAnalyticsApi } from "../api/performance-analytics";
@@ -24,7 +26,7 @@ function queryFromLocation(): PerformanceAnalyticsQuery {
   return { granularity, periodStart: params.get("periodStart") || mondayOfCurrentWeek(), clientId: optional("clientId"), branchId: optional("branchId"), serviceTypeId: optional("serviceTypeId"), orderStatus: optional("orderStatus") };
 }
 
-export function PerformanceAnalyticsPage({ api, lookupApi, reportMode = false }: { api?: PerformanceAnalyticsApi; lookupApi?: OrderLookupApi; reportMode?: boolean }) {
+export function PerformanceAnalyticsPage({ api, lookupApi, historyApi, reportMode = false }: { api?: PerformanceAnalyticsApi; lookupApi?: OrderLookupApi; historyApi?: KpiHistoryApi; reportMode?: boolean }) {
   const { user } = useAuth();
   const [defaultApi] = useState(() => createPerformanceAnalyticsApi());
   const [defaultLookupApi] = useState(() => createOrderLookupApi());
@@ -32,6 +34,9 @@ export function PerformanceAnalyticsPage({ api, lookupApi, reportMode = false }:
   const { state, query, setQuery, retry, exportCsv } = usePerformanceAnalytics(api ?? defaultApi, initialQuery);
   const [selectedTechnicianId, setSelectedTechnicianId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const historyAnchor = useRef<HTMLDivElement>(null);
+  const session = JSON.stringify([user?.id, user?.technicianId, user?.permissions]);
+  const [historySelection, setHistorySelection] = useState<{ id: string; session: string; revision: number } | null>(null);
   const showTeam = Boolean(user?.permissions.includes("KPI_VIEW_ALL"));
   const selected = state.status === "success"
     ? state.data.rows.find(({ technicianId }) => technicianId === selectedTechnicianId) ?? null
@@ -72,6 +77,10 @@ export function PerformanceAnalyticsPage({ api, lookupApi, reportMode = false }:
     {state.status === "error" && <section className="performance-state performance-state--error" role="alert"><AlertTriangle size={18} /><div><strong>No fue posible cargar el análisis</strong><p>{state.message}</p></div><button className="button" type="button" onClick={retry}><RefreshCw size={16} />Reintentar</button></section>}
     {state.status === "empty" && <section className="performance-state" role="status" aria-label="Sin datos de rendimiento"><Download size={18} /><div><strong>No hay trabajo registrado en este periodo.</strong><p>Cambia la fecha o consulta otra ventana de rendimiento.</p></div></section>}
     {state.data && state.data.rows.length > 0 && <section className="performance-results"><header><div><p className="eyebrow">{showTeam ? "Comparativa autorizada" : "Tu lectura individual"}</p><h3>{showTeam ? "Rendimiento por técnico" : "Mi rendimiento"}</h3></div><span>{state.data.rows.length} registro{state.data.rows.length === 1 ? "" : "s"}</span></header><PerformanceTable rows={state.data.rows} showTeam={showTeam} onSelect={(row) => setSelectedTechnicianId(row.technicianId)} /></section>}
-    {selected && <PerformanceDetail row={selected} onClose={() => setSelectedTechnicianId(null)} />}
+    {!reportMode && <div className="performance-history-anchor" ref={historyAnchor} role="region" aria-label="Panel de historial del técnico" tabIndex={-1}><KpiHistoryPanel key={`${session}:${historySelection?.revision ?? 0}`} api={historyApi} initialTechnicianId={historySelection?.session === session ? historySelection.id : null} /></div>}
+    {selected && <PerformanceDetail row={selected} onClose={() => setSelectedTechnicianId(null)} onViewHistory={reportMode ? undefined : () => {
+      setHistorySelection(previous => ({ id: selected.technicianId, session, revision: (previous?.revision ?? 0) + 1 }));
+      setSelectedTechnicianId(null); historyAnchor.current?.focus();
+    }} />}
   </div>;
 }

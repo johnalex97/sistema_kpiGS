@@ -1,0 +1,36 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, expect, it } from "vitest";
+import { createKpiHistoryRepository } from "../../src/kpis/kpis.history.repository.js";
+import { createKpiHistoryService } from "../../src/kpis/kpis.history.service.js";
+import { historyRow } from "../kpis/kpis-history-fixture.js";
+import { database, disconnectTestDatabase } from "./database-test-context.js";
+afterAll(disconnectTestDatabase);
+it("reads scoped current snapshots for former staff and new technicians without writing",async()=>{
+  const rollback=new Error("rollback fixtures");
+  await expect(database.$transaction(async tx=>{
+    const token=randomUUID(), formerId=randomUUID(), freshId=randomUUID();
+    await tx.tecnico.create({data:{id:formerId,code:"OLD-"+token.slice(0,8),fullName:"Hist "+token,status:"INACTIVE",deletedAt:new Date()}});
+    await tx.tecnico.create({data:{id:freshId,code:"NEW-"+token.slice(0,8),fullName:"Hist "+token+" nueva"}});
+    const latest=await tx.configuracionKPI.findFirst({orderBy:{version:"desc"}});
+    const config=await tx.configuracionKPI.create({data:{version:(latest?.version??0)+1,validFrom:new Date("2026-10-05T00:00:00Z"),productivityWeight:".2",complianceWeight:".25",efficiencyWeight:".25",qualityWeight:".3",qualityCriticalThreshold:60,recurrenceCriticalThreshold:10,productivityAttentionThreshold:70,complianceAttentionThreshold:70,efficiencyAttentionThreshold:70}});
+    const {tecnico:_tech,calculationMetadata:_metadata,...base}=historyRow();
+    void _tech; void _metadata;
+    await tx.resultadoKPI.create({data:{...base,id:randomUUID(),tecnicoId:formerId,configuracionId:config.id,isCurrent:false}});
+    await tx.resultadoKPI.create({data:{...base,id:randomUUID(),tecnicoId:formerId,configuracionId:config.id,revision:2}});
+    const before=[await tx.resultadoKPI.count(),await tx.auditoria.count(),await tx.solicitudRevisionKPI.count()];
+    const repo=createKpiHistoryRepository(tx), all={kind:"ALL"} as const;
+    const page=await repo.searchTechnicians({search:token,page:1,pageSize:20},all);
+    expect(page.items).toHaveLength(2);expect(page.items.find(t=>t.id===formerId)?.inactive).toBe(true);
+    const own=await repo.searchTechnicians({search:token,page:1,pageSize:20},{kind:"TECHNICIAN",technicianId:freshId});
+    expect(own.items.map(t=>t.id)).toEqual([freshId]);
+    expect(await repo.findTechnician(formerId,{kind:"TECHNICIAN",technicianId:freshId})).toBeNull();
+    expect(await repo.findResults(formerId,all,"2026-10-01","2026-10-06")).toHaveLength(0);
+    expect((await repo.findResults(formerId,all,"2026-10-01","2026-10-12")).map(r=>r.revision)).toEqual([2]);
+    const service=createKpiHistoryService(repo,"America/Tegucigalpa",()=>new Date("2026-10-12T12:00:00Z"));
+    const actor={userId:randomUUID(),technicianId:null,permissions:["KPI_VIEW_ALL"],requestId:token};
+    expect((await service.getTrend(freshId,{granularity:"WEEK"},actor)).points.every(p=>p.status==="NO_DATA")).toBe(true);
+    expect((await service.getTrend(formerId,{granularity:"MONTH"},actor)).points[11]?.status).toBe("REVISED");
+    expect([await tx.resultadoKPI.count(),await tx.auditoria.count(),await tx.solicitudRevisionKPI.count()]).toEqual(before);
+    throw rollback;
+  },{timeout:15000})).rejects.toBe(rollback);
+});
