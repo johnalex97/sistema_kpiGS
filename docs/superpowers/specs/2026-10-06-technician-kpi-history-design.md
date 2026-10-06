@@ -1,6 +1,6 @@
 # Historial de rendimiento por técnico
 
-Fecha: 2026-10-06. Estado: diseño propuesto para revisión del usuario.
+Fecha: 2026-10-06. Estado: diseño aprobado por el usuario para preparar el plan de implementación.
 
 ## Objetivo y alcance aprobado
 

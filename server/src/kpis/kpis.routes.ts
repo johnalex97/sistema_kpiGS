@@ -10,6 +10,9 @@ import type { KpiCloseRepository } from "./kpis.repository.types.js";
 import { createKpiReadRepository } from "./kpis.read.repository.js";
 import { createKpiManagementRepository } from "./kpis.management.repository.js";
 import { createKpiService } from "./kpis.service.js";
+import { createKpiHistoryRepository } from "./kpis.history.repository.js";
+import { createKpiHistoryService } from "./kpis.history.service.js";
+import { createKpiHistoryController } from "./kpis.history.controller.js";
 
 export function createKpiRouter(env: Environment, database: PrismaClient, authService: AuthService, closeRepository: KpiCloseRepository) {
   const router = Router();
@@ -17,6 +20,9 @@ export function createKpiRouter(env: Environment, database: PrismaClient, authSe
   const service = createKpiService({ ...createKpiReadRepository(database), ...createKpiManagementRepository(database), ...closeRepository }, env.KPI_TIME_ZONE);
   const controller = createKpiController(service, env.KPI_TIME_ZONE);
   const read = [authentication, requirePasswordChanged, requireAnyPermission("KPI_VIEW_ALL", "KPI_VIEW_OWN")] as const;
+  const history = createKpiHistoryController(createKpiHistoryService(createKpiHistoryRepository(database), env.KPI_TIME_ZONE), env.KPI_TIME_ZONE);
+  router.get("/history/technicians", ...read, history.technicians);
+  router.get("/technicians/:technicianId/trend", ...read, history.trend);
   const mutation = (permission: string) => [requireAllowedOrigin(env.CORS_ORIGINS), authentication, requirePasswordChanged, requirePermission(permission)] as const;
   router.get("/weekly", ...read, controller.weekly);
   router.get("/ranking", ...read, controller.ranking);

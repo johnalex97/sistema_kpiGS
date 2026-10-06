@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./layouts/AppShell";
 import type { AuthUser } from "./models/auth";
 import { renderWithAuth } from "./test/auth-test-utils";
+import { historyFixture } from "./api/kpi-history.fixture";
 
 const summary = { status: "PREVIEW", period: { granularity: "WEEK", periodStart: "2026-05-04", periodEnd: "2026-05-10" }, generatedAt: "2026-05-11T12:00:00.000Z", teamAverage: 74.2, rows: [{ technicianId: "tech-1", code: "TEC-001", fullName: "Ana López", overallScore: 71.5, comparison: -2, completedJobs: 4, registeredMinutes: 210, productiveMinutes: 170, pausedMinutes: 40, attributableRecurrences: 1, recurrenceRate: 25, dimensions: { productivity: 77, compliance: 74, efficiency: 71, quality: 55 }, alerts: [{ level: "CRITICAL", code: "QUALITY_LOW", message: "Calidad crítica: 55%." }] }] };
 const ownUser: AuthUser = { id: "user-ana", email: "ana@geek.test", displayName: "Ana López", mustChangePassword: false, technicianId: "tech-1", roles: ["TECHNICIAN"], permissions: ["KPI_VIEW_OWN"] };
@@ -22,6 +23,8 @@ describe("recorrido integrado de análisis de rendimiento", () => {
     vi.mocked(fetch).mockReset().mockImplementation(async (input) => {
       const url = new URL(String(input));
       requests.push(`${url.pathname}${url.search}`);
+      if (url.pathname.endsWith("/kpis/history/technicians")) return json({ items: [], pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 } });
+      if (url.pathname.endsWith("/kpis/technicians/tech-1/trend")) return json({ ...historyFixture, referenceDate: url.searchParams.get("endDate"), technician: { ...historyFixture.technician, id: "tech-1", fullName: "Perfil histórico autorizado" } });
       if (url.pathname.endsWith("/performance-analytics/summary")) {
         if (rejectNextSummary) { rejectNextSummary = false; return json({ code: "TEMPORARY", message: "El origen aún se está actualizando." }, 503); }
         return json(summary);
