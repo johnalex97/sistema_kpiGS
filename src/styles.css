@@ -50,7 +50,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sidebar-card__head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #b9ccd6; }
 .sidebar-card__head b { color: #fff; font: 700 15px/1 "Bahnschrift", sans-serif; }
 .mini-progress { height: 5px; margin: 13px 0 9px; background: rgba(255,255,255,.1); border-radius: 3px; overflow: hidden; }
-.mini-progress i { display: block; width: 79%; height: 100%; background: var(--teal); }
+.mini-progress i { display: block; width: 0; height: 100%; background: var(--teal); }
 .sidebar-card p { margin: 0 0 13px; color: #718c9e; font-size: 11px; }
 .sidebar-card button { padding: 0; border: 0; background: none; color: #d8ebef; font-size: 11px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .sidebar-foot { padding: 18px 8px 2px; display: flex; align-items: center; gap: 9px; color: #9eb3c0; font-size: 10px; }

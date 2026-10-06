@@ -1,11 +1,11 @@
 import {
-  ArrowRight,
   BarChart3,
   Settings,
   X,
 } from "lucide-react";
 import { navItems } from "../mocks/data";
 import type { Page } from "../models/app";
+import { WeeklyGoalCard } from "../components/reports/WeeklyGoalCard";
 
 interface SidebarProps {
   page: Page;
@@ -46,15 +46,10 @@ export function Sidebar({ page, visiblePages, onChange, open, onClose }: Sidebar
             </button>
           ))}
           <p className="nav-label nav-label--second">Administración</p>
-          <button type="button"><BarChart3 size={19} /><span>Reportes</span></button>
+          {visiblePages.includes("Reportes") && <button type="button" onClick={() => onChange("Reportes")} className={page === "Reportes" ? "active" : ""} aria-current={page === "Reportes" ? "page" : undefined}><BarChart3 size={19} /><span>Reportes</span></button>}
           {visiblePages.includes("Configuración") && <button type="button" onClick={() => onChange("Configuración")} className={page === "Configuración" ? "active" : ""} aria-current={page === "Configuración" ? "page" : undefined}><Settings size={19} /><span>Configuración</span></button>}
         </nav>
-        <div className="sidebar-card">
-          <div className="sidebar-card__head"><span>Meta semanal</span><b>79%</b></div>
-          <div className="mini-progress"><i /></div>
-          <p>126 de 160 actividades</p>
-          <button type="button">Ver detalle <ArrowRight size={14} /></button>
-        </div>
+        {visiblePages.includes("Reportes") && <WeeklyGoalCard onDetail={() => onChange("Reportes")} />}
         <div className="sidebar-foot">
           <i />
           <span>Geek Service en línea<small>Actualizado hace 2 min</small></span>

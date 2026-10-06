@@ -27,7 +27,6 @@ export function createKpiReadRepository(database: PrismaClient | Prisma.Transact
         },
         orderBy: [{ fullName: "asc" }, { id: "asc" }],
       });
-      const technicianIds = technicians.map(({ id }) => id);
       const [configuration, orders, recurrences] = await Promise.all([
         database.configuracionKPI.findFirst({
           where: {
@@ -56,7 +55,7 @@ export function createKpiReadRepository(database: PrismaClient | Prisma.Transact
                 pausedMinutes: true,
                 productiveMinutes: true,
                 tecnicos: {
-                  where: { tecnicoId: { in: technicianIds } },
+                  // All participation contributes to the denominator; only scoped facts are public.
                   select: { tecnicoId: true, participationPercentage: true },
                 },
               },
@@ -76,7 +75,7 @@ export function createKpiReadRepository(database: PrismaClient | Prisma.Transact
             id: true,
             originalOrderId: true,
             tecnicos: {
-              where: { affectsQuality: true, tecnicoId: { in: technicianIds } },
+              where: { affectsQuality: true },
               select: { tecnicoId: true },
             },
           },

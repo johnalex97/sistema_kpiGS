@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { buildWeeklyFacts } from "../../src/kpis/kpis.facts.js";
 
 describe("weekly KPI fact allocation", () => {
+  it("keeps proportional job and recurrence credits in own scope without returning peers", () => {
+    const facts = buildWeeklyFacts({
+      technicians: [{ id: "a", code: "A", fullName: "Ana", targetJobs: 10 }],
+      weights: { productivity: "0.2", compliance: "0.25", efficiency: "0.25", quality: "0.3" },
+      orders: [{ id: "o", scheduledFor: new Date("2026-10-05T20:00:00Z"), endedAt: new Date("2026-10-05T19:00:00Z") }],
+      activities: [
+        { id: "act-a", orderId: "o", technicianId: "a", registeredMinutes: 40, productiveMinutes: 40 },
+        { id: "act-b", orderId: "o", technicianId: "b", registeredMinutes: 60, productiveMinutes: 60 },
+      ],
+      recurrences: [{ id: "r", originalOrderId: "o", attributableTechnicianIds: ["a", "b"] }],
+    });
+    expect(facts.get("a")).toMatchObject({ completedCredits: "0.4000", eligibleCredits: "0.4000", onTimeEligibleCredits: "0.4000", attributableRecurrenceCredits: "0.4000", registeredMinutes: 40, productiveMinutes: 40 });
+    expect([...facts.keys()]).toEqual(["a"]);
+  });
   it("allocates one order and one recurrence by productive minutes", () => {
     const facts = buildWeeklyFacts({
       technicians: [

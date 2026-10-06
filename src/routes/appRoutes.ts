@@ -9,6 +9,7 @@ export const pageDescriptions: Record<Page, string> = {
   Reincidencias: "Detecta trabajos repetidos, causas y técnicos participantes.",
   Clientes: "Consulta empresas, ubicaciones y contactos para atender cada servicio.",
   Configuración: "Administra los accesos y catálogos de Geek Solution.",
+  Reportes: "Consulta metas, ejecución y calidad con datos reales; descarga los resultados del periodo.",
 };
 
 const pageByPath: Record<PagePath, Page> = {
@@ -20,6 +21,7 @@ const pageByPath: Record<PagePath, Page> = {
   "/reincidencias": "Reincidencias",
   "/clientes": "Clientes",
   "/configuracion": "Configuración",
+  "/reportes": "Reportes",
 };
 
 export const pagePermissions: Record<Page, string[]> = {
@@ -31,6 +33,7 @@ export const pagePermissions: Record<Page, string[]> = {
   Reincidencias: ["RECURRENCES_VIEW_ALL", "RECURRENCES_VIEW_OWN"],
   Clientes: ["CLIENTS_VIEW"],
   Configuración: ["USERS_MANAGE"],
+  Reportes: ["KPI_VIEW_ALL", "KPI_VIEW_OWN"],
 };
 
 export function canAccessPage(page: Page, permissions: string[]) {

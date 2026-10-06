@@ -25,9 +25,10 @@ export function buildWeeklyFacts(rows: WeeklySourceRows): Map<string, WeeklyKpiF
   const minutesByOrder = new Map<string, Map<string, number>>();
   for (const activity of rows.activities) {
     const fact = facts.get(activity.technicianId);
-    if (!fact) continue;
-    fact.registeredMinutes += activity.registeredMinutes;
-    fact.productiveMinutes += activity.productiveMinutes;
+    if (fact) {
+      fact.registeredMinutes += activity.registeredMinutes;
+      fact.productiveMinutes += activity.productiveMinutes;
+    }
     if (!activity.orderId || activity.productiveMinutes <= 0) continue;
     const order = minutesByOrder.get(activity.orderId) ?? new Map<string, number>();
     order.set(activity.technicianId, (order.get(activity.technicianId) ?? 0) + activity.productiveMinutes);
@@ -55,15 +56,15 @@ export function buildWeeklyFacts(rows: WeeklySourceRows): Map<string, WeeklyKpiF
 
   for (const recurrence of rows.recurrences) {
     const minutes = minutesByOrder.get(recurrence.originalOrderId);
-    const attributable = [...new Set(recurrence.attributableTechnicianIds)]
-      .filter((technicianId) => facts.has(technicianId));
+    const attributable = [...new Set(recurrence.attributableTechnicianIds)];
     if (attributable.length === 0) continue;
     const total = attributable.reduce((sum, technicianId) => sum + (minutes?.get(technicianId) ?? 0), 0);
     for (const technicianId of attributable) {
+      const fact = facts.get(technicianId);
+      if (!fact) continue;
       const share = attributable.length === 1 || total === 0
         ? new Prisma.Decimal(1).div(attributable.length)
         : new Prisma.Decimal(minutes?.get(technicianId) ?? 0).div(total);
-      const fact = facts.get(technicianId)!;
       fact.attributableRecurrenceCredits = credit(
         new Prisma.Decimal(fact.attributableRecurrenceCredits).plus(share),
       );

@@ -30,7 +30,7 @@ describe("catálogos en Configuración", () => {
     expect(screen.getByRole("button", { name: "Usuarios" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Causas de reincidencia" })).toBeDisabled();
     finish(json(option));
-    expect(await screen.findByRole("status")).toHaveTextContent("Opción actualizada");
+    expect(await within(screen.getByRole("main")).findByRole("status")).toHaveTextContent("Opción actualizada");
     expect(screen.getByRole("button", { name: "Usuarios" })).toBeEnabled();
   });
   it("abre los tres catálogos desde Configuración sin perder Usuarios", async () => {
@@ -55,7 +55,7 @@ describe("catálogos en Configuración", () => {
     await user.type(screen.getByLabelText("Código interno"), "NEW_INSTALL");
     await user.type(screen.getByLabelText("Nombre"), "Nueva instalación");
     await user.click(screen.getByRole("button", { name: "Crear opción" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Opción creada");
+    expect(await within(screen.getByRole("main")).findByRole("status")).toHaveTextContent("Opción creada");
     expect(await screen.findByText("Nueva instalación")).toBeInTheDocument();
     const mutation = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "POST");
     expect(JSON.parse(String(mutation?.[1]?.body))).toMatchObject({ name: "Nueva instalación", code: "NEW_INSTALL", isActive: true });
@@ -73,7 +73,7 @@ describe("catálogos en Configuración", () => {
     await user.click(screen.getByLabelText("Disponible en nuevos trabajos"));
     expect(screen.getByText(/Los trabajos existentes conservarán/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Opción actualizada");
+    expect(await within(screen.getByRole("main")).findByRole("status")).toHaveTextContent("Opción actualizada");
     expect(await screen.findByText("Inactiva")).toBeInTheDocument();
     const mutation = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "PATCH");
     expect(JSON.parse(String(mutation?.[1]?.body))).toMatchObject({ isActive: false, updatedAt: option.updatedAt });
@@ -91,7 +91,7 @@ describe("catálogos en Configuración", () => {
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("La opción cambió");
     expect(screen.getByLabelText("Nombre")).toHaveValue("Nombre propuesto");
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("main")).queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("muestra el autor y los cambios del historial", async () => {

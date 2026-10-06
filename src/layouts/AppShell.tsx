@@ -15,6 +15,8 @@ import { canAccessPage, pageDescriptions } from "../routes/appRoutes";
 import { Sidebar } from "./Sidebar";
 import { AccessDeniedPage } from "../pages/AccessDeniedPage";
 import { SettingsPage } from "../pages/SettingsPage";
+import { ReportsPage } from "../pages/ReportsPage";
+import { WeeklyGoalProvider } from "../components/reports/WeeklyGoalProvider";
 
 function PageContent({ page, search, onGoRecurrence, onClearSearch, onGoActivities, onGoTechnicians }: { page: Page; search: string; onGoRecurrence: () => void; onClearSearch: () => void; onGoActivities: () => void; onGoTechnicians: () => void }) {
   switch (page) {
@@ -25,6 +27,7 @@ function PageContent({ page, search, onGoRecurrence, onClearSearch, onGoActiviti
     case "Reincidencias": return <RecurrencesPage search={search} />;
     case "Clientes": return <ClientsPage search={search} onClearSearch={onClearSearch} />;
     case "Configuración": return <SettingsPage />;
+    case "Reportes": return <ReportsPage />;
     default: return <DashboardPage onGoRecurrence={onGoRecurrence} onGoActivities={onGoActivities} onGoTechnicians={onGoTechnicians} />;
   }
 }
@@ -34,7 +37,7 @@ export function AppShell() {
   const { page, navigate } = useAppRoute();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const visiblePages = useMemo(() => user ? (["Resumen", "Órdenes", "Actividades", "Técnicos", "Análisis", "Reincidencias", "Clientes", "Configuración"] as Page[])
+  const visiblePages = useMemo(() => user ? (["Resumen", "Órdenes", "Actividades", "Técnicos", "Análisis", "Reincidencias", "Clientes", "Configuración", "Reportes"] as Page[])
     .filter((candidate) => canAccessPage(candidate, user.permissions)) : [], [user]);
   const hasPageAccess = user ? canAccessPage(page, user.permissions) : false;
 
@@ -44,7 +47,7 @@ export function AppShell() {
   }, [navigate]);
 
   return (
-    <div className="app-shell">
+    <WeeklyGoalProvider refreshKey={page}><div className="app-shell">
       <a className="skip-link" href="#main-content">Saltar al contenido principal</a>
       <Sidebar page={page} visiblePages={visiblePages} onChange={changePage} open={mobileOpen} onClose={() => setMobileOpen(false)} />
       <main id="main-content" tabIndex={-1}>
@@ -64,6 +67,6 @@ export function AppShell() {
           </> : <AccessDeniedPage fallbackPage={visiblePages[0]} onGoToFallback={() => visiblePages[0] && changePage(visiblePages[0])} />}
         </div>
       </main>
-    </div>
+    </div></WeeklyGoalProvider>
   );
 }
