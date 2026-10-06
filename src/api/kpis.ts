@@ -52,3 +52,11 @@ export function createKpiApi(): KpiApi {
   };
 }
 export { ApiClientError };
+
+export interface KpiTargetRecord { id: string; tecnicoId: string; targetJobs: number; targetProductiveMinutes: number; observation: string | null; tecnico: { fullName: string; code: string }; }
+export interface KpiConfigurationRecord { id: string; version: number; validFrom: string; validTo: string | null; isActive: boolean; productivityWeight: string; complianceWeight: string; efficiencyWeight: string; qualityWeight: string; }
+export const createKpiManagementApi = () => ({
+  targets: (periodStart: string, signal?: AbortSignal) => requestJson<KpiTargetRecord[]>(`/kpis/targets?periodStart=${periodStart}`, { signal }),
+  configurations: (signal?: AbortSignal) => requestJson<KpiConfigurationRecord[]>("/kpis/configurations", { signal }),
+  updateTarget: (id: string, input: Record<string, unknown>) => requestJson(`/kpis/targets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) }),
+});

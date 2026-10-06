@@ -105,6 +105,9 @@ export function createKpiManagementRepository(database: PrismaClient): KpiManage
       try {
         return await serializable(database, async (tx) => {
           await tx.$executeRaw`LOCK TABLE "configuracion_kpi" IN SHARE ROW EXCLUSIVE MODE`;
+          if (input.initialize && (await tx.configuracionKPI.count() > 0 || await tx.resultadoKPI.count() > 0)) {
+            throw new ApiError(409, "La inicialización solo está permitida sin configuraciones ni resultados oficiales", "KPI_INITIALIZATION_NOT_ALLOWED");
+          }
           const validFrom = dateOnly(input.validFrom);
           const future = await tx.configuracionKPI.findFirst({
             where: { validFrom: { gte: validFrom } }, select: { id: true },

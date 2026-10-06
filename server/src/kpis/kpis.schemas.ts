@@ -45,6 +45,7 @@ export function createKpiSchemas(today: () => string) {
     observation: optionalObservation,
   }).strict();
   const createConfigurationSchema = z.object({
+    initialize: z.boolean().optional(),
     validFrom: localDate,
     productivityWeight: weight,
     complianceWeight: weight,
@@ -58,8 +59,10 @@ export function createKpiSchemas(today: () => string) {
     description: z.string().trim().min(1).max(500).nullable().optional(),
   }).strict().superRefine((input, context) => {
     const start = new Date(`${input.validFrom}T00:00:00.000Z`);
-    if (start.getUTCDay() !== 1 || input.validFrom <= today()) {
-      context.addIssue({ code: "custom", message: "La configuración debe iniciar un lunes futuro" });
+    const monday = new Date(`${today()}T00:00:00.000Z`);
+    monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
+    if (start.getUTCDay() !== 1 || (input.initialize ? input.validFrom !== monday.toISOString().slice(0, 10) : input.validFrom <= today())) {
+      context.addIssue({ code: "custom", message: input.initialize ? "La configuración inicial debe comenzar el lunes de la semana actual" : "La configuración debe iniciar un lunes futuro" });
     }
     const weights = [input.productivityWeight, input.complianceWeight, input.efficiencyWeight, input.qualityWeight];
     const scaledSum = weights.reduce((sum, value) => sum + Math.round(Number(value) * 10_000), 0);

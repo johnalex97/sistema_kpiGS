@@ -3,7 +3,7 @@ import type { ZodError } from "zod";
 import { ApiError } from "../utils/api-error.js";
 import type { KpiActorContext } from "./kpis.types.js";
 import {
-  createConfigurationSchema, createTargetSchema, kpiPeriodQuerySchema,
+  createKpiSchemas, createTargetSchema, kpiPeriodQuerySchema,
   kpiTargetParamsSchema, kpiTechnicianParamsSchema, kpiWeekParamsSchema,
   recalculationReasonSchema, updateTargetSchema,
 } from "./kpis.schemas.js";
@@ -28,7 +28,12 @@ function success(request: Request, response: Response, message: string, data: un
   response.status(status).json({ success: true, message, data, errors: [], meta: { requestId: request.requestId } });
 }
 
-export function createKpiController(service: KpiService) {
+export function createKpiController(service: KpiService, timeZone = "America/Tegucigalpa") {
+  const { createConfigurationSchema } = createKpiSchemas(() => {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const part = (type: string) => parts.find(value => value.type === type)!.value;
+    return `${part("year")}-${part("month")}-${part("day")}`;
+  });
   return {
     weekly: async (req: Request, res: Response, next: NextFunction) => { try {
       success(req, res, "Indicadores KPI consultados", await service.getDashboard(parse(kpiPeriodQuerySchema.safeParse(req.query)), actor(req)));

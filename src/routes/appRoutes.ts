@@ -32,7 +32,7 @@ export const pagePermissions: Record<Page, string[]> = {
   Análisis: ["KPI_VIEW_ALL", "KPI_VIEW_OWN"],
   Reincidencias: ["RECURRENCES_VIEW_ALL", "RECURRENCES_VIEW_OWN"],
   Clientes: ["CLIENTS_VIEW"],
-  Configuración: ["USERS_MANAGE"],
+  Configuración: ["USERS_MANAGE", "KPI_MANAGE_TARGETS", "KPI_MANAGE_CONFIGURATION"],
   Reportes: ["KPI_VIEW_ALL", "KPI_VIEW_OWN"],
 };
 

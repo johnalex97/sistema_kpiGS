@@ -4,6 +4,13 @@ import { createKpiSchemas } from "../../src/kpis/kpis.schemas.js";
 const schemas = createKpiSchemas(() => "2026-08-24");
 
 describe("KPI management schemas", () => {
+  it("permits explicit initialization only for the current Monday", () => {
+    const input = { initialize: true, validFrom: "2026-08-24", productivityWeight: "0.2000", complianceWeight: "0.2500", efficiencyWeight: "0.2500", qualityWeight: "0.3000", qualityCriticalThreshold: "60.00", recurrenceCriticalThreshold: "10.00", productivityAttentionThreshold: "70.00", complianceAttentionThreshold: "70.00", efficiencyAttentionThreshold: "70.00" };
+    expect(schemas.createConfigurationSchema.safeParse(input).success).toBe(true);
+    expect(schemas.createConfigurationSchema.safeParse({ ...input, initialize: false }).success).toBe(false);
+    expect(schemas.createConfigurationSchema.safeParse({ ...input, validFrom: "2026-08-17" }).success).toBe(false);
+    expect(schemas.createConfigurationSchema.safeParse({ ...input, validFrom: "2026-08-31" }).success).toBe(false);
+  });
   it("accepts a complete Monday-Sunday weekly target", () => {
     expect(schemas.createTargetSchema.safeParse({
       technicianId: "11111111-1111-4111-8111-111111111111",
