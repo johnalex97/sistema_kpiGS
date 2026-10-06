@@ -10,13 +10,14 @@ import { KpiTrend } from "../components/kpis/KpiTrend";
 import { KpiManagementPanel } from "../components/kpis/KpiManagementPanel";
 import { useKpiDashboard } from "../hooks/useKpiDashboard";
 import { useOperationalDashboard } from "../hooks/useOperationalDashboard";
+import { currentWeekStart } from "../hooks/technician-workspace.helpers";
 
 interface DashboardPageProps { onGoRecurrence: () => void; onGoActivities: () => void; onGoTechnicians: () => void; kpiApi?: KpiApi; operationalApi?: OperationalDashboardApi; }
 const defaultKpiApi = createKpiApi();
 const defaultOperationalApi = createOperationalDashboardApi();
 
 export function DashboardPage({ onGoRecurrence, onGoActivities, onGoTechnicians, kpiApi = defaultKpiApi, operationalApi = defaultOperationalApi }: DashboardPageProps) {
-  const dashboard = useKpiDashboard(kpiApi, { periodStart: "2026-08-24", granularity: "WEEK" });
+  const dashboard = useKpiDashboard(kpiApi, { periodStart: currentWeekStart(new Date()), granularity: "WEEK" });
   const operational = useOperationalDashboard(operationalApi);
   const data = dashboard.state.data;
   const lead = data?.items[0];
@@ -29,7 +30,7 @@ export function DashboardPage({ onGoRecurrence, onGoActivities, onGoTechnicians,
     {data && lead && <>
       <div className={`kpi-status kpi-status--${data.status.toLowerCase()}`}><strong>{data.status === "PREVIEW" ? "Vista previa" : data.status === "REVISED" ? "Resultado revisado" : "Resultado oficial"}</strong><span>{data.status === "PREVIEW" ? "Aún no se ha cerrado la semana" : `Oficial hasta ${lead.periodEnd ?? dashboard.period.periodStart}`}</span></div>
       {data.warnings.some(({ code }) => code === "MISSING_TARGET") && <div className="kpi-message kpi-message--warning">Hay técnicos sin meta configurada en este periodo.</div>}
-      <KpiScoreCards item={lead} />
+      <KpiScoreCards items={data.items} status={data.status} />
       <section className="dashboard-grid kpi-analysis-grid"><KpiTrend items={data.items} /><KpiRanking items={data.items} /></section>
     </>}
     <div className="dashboard-operational-actions"><button className="button button--ghost" type="button" onClick={() => void operational.refresh()}>Actualizar jornada</button>{operational.state.status === "loading" && operational.state.data && <span role="status">Actualizando jornada…</span>}</div>

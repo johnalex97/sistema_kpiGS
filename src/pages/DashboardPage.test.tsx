@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DashboardPage } from "./DashboardPage";
 
@@ -15,8 +15,19 @@ describe("KPI dashboard", () => {
     expect((await screen.findAllByText("86.40"))[0]).toBeInTheDocument();
     expect(screen.getByText("No aplica")).toBeInTheDocument();
     expect(screen.getAllByText("Ana López")[0]).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /tendencia KPI/i })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Comparación entre técnicos" })).toBeInTheDocument();
     expect(screen.getByText(/Oficial hasta/i)).toBeInTheDocument();
+  });
+
+  it("abre la semana actual de Honduras incluso antes de medianoche local del lunes UTC", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-05T05:30:00Z"));
+    try {
+      const getDashboard = vi.fn(async () => ({ status: "PREVIEW", items: [], warnings: [], capabilities: {} }));
+      render(<DashboardPage onGoRecurrence={() => undefined} onGoActivities={() => undefined} onGoTechnicians={() => undefined} kpiApi={{ getDashboard } as never} />);
+      await waitFor(() => expect(getDashboard).toHaveBeenCalledWith({ periodStart: "2026-09-28", granularity: "WEEK" }, expect.any(AbortSignal)));
+      expect(screen.getByText("2026-09-28")).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
   });
 
   it("permite actualizar la jornada operativa manualmente", async () => {
